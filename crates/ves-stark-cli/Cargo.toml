@@ -1,0 +1,25 @@
+[package]
+name = "ves-stark-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tool for VES STARK proof generation and verification"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "ves-stark"
+path = "src/main.rs"
+
+[dependencies]
+ves-stark-primitives = { path = "../ves-stark-primitives" }
+ves-stark-air = { path = "../ves-stark-air" }
+ves-stark-prover = { path = "../ves-stark-prover" }
+ves-stark-verifier = { path = "../ves-stark-verifier" }
+ves-stark-batch = { path = "../ves-stark-batch" }
+clap = { version = "4", features = ["derive"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+hex = { workspace = true }
+base64 = "0.22"
+anyhow = { workspace = true }
+rayon = "1.8"

@@ -1,0 +1,39 @@
+[package]
+name = "ves-stark-batch"
+version = "0.1.0"
+edition = "2021"
+description = "Batch state transition proofs for VES compliance"
+license = "MIT"
+
+[dependencies]
+# Internal dependencies
+ves-stark-primitives = { path = "../ves-stark-primitives" }
+ves-stark-air = { path = "../ves-stark-air" }
+ves-stark-prover = { path = "../ves-stark-prover" }
+ves-stark-verifier = { path = "../ves-stark-verifier" }
+
+# Winterfell STARK
+winter-air = "0.10"
+winter-prover = "0.10"
+winter-verifier = "0.10"
+winter-math = "0.10"
+winter-crypto = "0.10"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_bytes = "0.11"
+
+# Utilities
+thiserror = "2.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+rayon = "1.8"
+hex = "0.4"
+
+[dev-dependencies]
+criterion = "0.5"
+
+# Benchmark will be added after implementation is complete
+# [[bench]]
+# name = "batch_benchmark"
+# harness = false

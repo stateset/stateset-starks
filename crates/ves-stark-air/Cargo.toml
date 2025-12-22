@@ -1,0 +1,19 @@
+[package]
+name = "ves-stark-air"
+description = "AIR constraint definitions for VES STARK proofs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ves-stark-primitives = { path = "../ves-stark-primitives" }
+winter-air = { workspace = true }
+winter-math = { workspace = true }
+winter-utils = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+rand = { workspace = true }
+uuid = { workspace = true }

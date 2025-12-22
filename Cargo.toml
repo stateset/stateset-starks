@@ -1,0 +1,85 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ves-stark-primitives",
+    "crates/ves-stark-air",
+    "crates/ves-stark-prover",
+    "crates/ves-stark-verifier",
+    "crates/ves-stark-batch",
+    "crates/ves-stark-client",
+    "crates/ves-stark-cli",
+]
+
+[package]
+name = "ves-stark"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+ves-stark-primitives = { path = "crates/ves-stark-primitives" }
+ves-stark-air = { path = "crates/ves-stark-air" }
+ves-stark-prover = { path = "crates/ves-stark-prover" }
+ves-stark-verifier = { path = "crates/ves-stark-verifier" }
+ves-stark-client = { path = "crates/ves-stark-client" }
+
+[dev-dependencies]
+uuid = { workspace = true }
+serde_json = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "stark_bench"
+harness = false
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["StateSet Engineering"]
+repository = "https://github.com/stateset/stateset-stark"
+
+[workspace.dependencies]
+# Winterfell STARK framework
+winterfell = "0.10"
+winter-air = "0.10"
+winter-prover = "0.10"
+winter-verifier = "0.10"
+winter-math = "0.10"
+winter-crypto = "0.10"
+winter-utils = "0.10"
+
+# Cryptography
+sha2 = "0.10"
+hex = "0.4"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+base64 = "0.22"
+rand = "0.8"
+rayon = "1.8"
+serde_bytes = "0.11"
+
+# Async/HTTP (for sequencer client)
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+
+# Testing
+proptest = "1"
+criterion = "0.5"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[profile.bench]
+lto = "thin"

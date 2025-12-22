@@ -1,0 +1,23 @@
+[package]
+name = "ves-stark-verifier"
+description = "STARK proof verification for VES compliance proofs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ves-stark-primitives = { path = "../ves-stark-primitives" }
+ves-stark-air = { path = "../ves-stark-air" }
+winter-verifier = { workspace = true }
+winter-air = { workspace = true }
+winter-math = { workspace = true }
+winter-crypto = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+ves-stark-prover = { path = "../ves-stark-prover" }
+rand = { workspace = true }
