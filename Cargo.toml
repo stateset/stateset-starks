@@ -27,6 +27,7 @@ ves-stark-client = { path = "crates/ves-stark-client" }
 uuid = { workspace = true }
 serde_json = { workspace = true }
 criterion = { workspace = true }
+ves-stark-batch = { path = "crates/ves-stark-batch" }
 
 [[bench]]
 name = "stark_bench"

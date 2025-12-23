@@ -1,0 +1,52 @@
+[package]
+name = "ves-stark-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+# Local dependencies
+ves-stark-primitives = { path = "../crates/ves-stark-primitives" }
+ves-stark-air = { path = "../crates/ves-stark-air" }
+ves-stark-prover = { path = "../crates/ves-stark-prover" }
+ves-stark-verifier = { path = "../crates/ves-stark-verifier" }
+
+uuid = { version = "1", features = ["v4"] }
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_rescue_hash"
+path = "fuzz_targets/fuzz_rescue_hash.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_witness_validation"
+path = "fuzz_targets/fuzz_witness_validation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_proof_deserialization"
+path = "fuzz_targets/fuzz_proof_deserialization.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_public_inputs"
+path = "fuzz_targets/fuzz_public_inputs.rs"
+test = false
+doc = false
+bench = false

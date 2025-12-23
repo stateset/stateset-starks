@@ -1879,6 +1879,7 @@ dependencies = [
  "serde_json",
  "uuid",
  "ves-stark-air",
+ "ves-stark-batch",
  "ves-stark-client",
  "ves-stark-primitives",
  "ves-stark-prover",

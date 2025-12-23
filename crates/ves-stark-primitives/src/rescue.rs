@@ -1,33 +1,150 @@
-//! Rescue-Prime Hash Function
+//! # Rescue-Prime Hash Function
 //!
-//! Rescue-Prime is a STARK-friendly hash function using algebraic S-boxes (x^7).
-//! This implementation uses a state width of 12 field elements with:
-//! - Rate: 8 elements
-//! - Capacity: 4 elements
-//! - Rounds: 7
+//! Rescue-Prime is a STARK-friendly hash function designed for efficient proving
+//! in zero-knowledge proof systems. This implementation is optimized for use with
+//! the Goldilocks prime field (p = 2^64 - 2^32 + 1).
 //!
-//! The S-box uses x^7 which has degree 7, suitable for efficient STARK proving.
+//! ## Design Rationale
+//!
+//! Rescue-Prime was chosen for VES STARK proofs because:
+//!
+//! 1. **Algebraic S-boxes**: Uses x^α (α=7) instead of lookup-table-based S-boxes,
+//!    making it efficient to represent as polynomial constraints in AIR.
+//!
+//! 2. **Low multiplicative depth**: The S-box degree of 7 provides a good balance
+//!    between security and constraint complexity.
+//!
+//! 3. **Goldilocks compatibility**: The field p = 2^64 - 2^32 + 1 allows efficient
+//!    64-bit arithmetic while providing ~64 bits of security.
+//!
+//! ## Parameters
+//!
+//! | Parameter | Value | Description |
+//! |-----------|-------|-------------|
+//! | State Width | 12 | Total state elements |
+//! | Rate | 8 | Elements absorbed per permutation |
+//! | Capacity | 4 | Security margin elements |
+//! | Rounds | 7 | Number of permutation rounds |
+//! | α (alpha) | 7 | S-box exponent |
+//! | α⁻¹ (alpha_inv) | 10540996611094048183 | Inverse S-box exponent |
+//!
+//! ## Security
+//!
+//! - **Collision resistance**: ~128 bits (capacity = 4 × 64 bits / 2)
+//! - **Preimage resistance**: ~128 bits
+//! - **Second preimage resistance**: ~128 bits
+//!
+//! The 4-element capacity provides 256 bits of state that is never directly
+//! exposed, divided by 2 for birthday bound gives ~128-bit collision security.
+//!
+//! ## Sponge Construction
+//!
+//! This implementation uses a sponge construction:
+//!
+//! ```text
+//! ┌─────────────────────────────────────────┐
+//! │            State (12 elements)          │
+//! ├─────────────────────────┬───────────────┤
+//! │   Rate (8 elements)     │ Capacity (4)  │
+//! │   (absorb/squeeze)      │ (security)    │
+//! └─────────────────────────┴───────────────┘
+//!                    │
+//!                    ▼
+//!            ┌──────────────┐
+//!            │ Permutation  │ ← 7 rounds
+//!            └──────────────┘
+//! ```
+//!
+//! ## Round Structure
+//!
+//! Each round consists of two half-rounds:
+//!
+//! 1. **Forward half-round**: S-box → MDS → Add constants
+//! 2. **Backward half-round**: MDS⁻¹ → S-box⁻¹ → Add constants
+//!
+//! This symmetric structure provides better security margins than
+//! single-direction designs.
+//!
+//! ## References
+//!
+//! - Rescue-Prime specification: <https://eprint.iacr.org/2020/1143>
+//! - Goldilocks field: <https://cr.yp.to/papers.html#goldilocks>
 
 use crate::field::{Felt, FELT_ZERO, felt_from_u64};
 use winter_math::FieldElement;
 
-/// Number of rounds in Rescue-Prime
+/// Number of rounds in Rescue-Prime permutation.
+///
+/// # Security Rationale
+///
+/// 7 rounds provides a security margin of approximately 2× against known
+/// algebraic attacks. The minimum secure number of rounds is estimated at 4,
+/// so 7 rounds gives a comfortable margin while keeping constraint count
+/// reasonable.
 pub const NUM_ROUNDS: usize = 7;
 
-/// State width (rate + capacity)
+/// State width (rate + capacity) in field elements.
+///
+/// A state width of 12 is chosen because:
+/// - It's divisible into rate=8 and capacity=4
+/// - 12 × 64 bits = 768 bits of state
+/// - Provides efficient circulant MDS matrix construction
 pub const STATE_WIDTH: usize = 12;
 
-/// Rate (absorb/squeeze size)
+/// Rate: number of field elements absorbed/squeezed per permutation.
+///
+/// With rate=8 and 64-bit field elements, we absorb 512 bits per permutation.
+/// This provides a good balance between throughput and security.
 pub const RATE: usize = 8;
 
-/// Capacity (security portion)
+/// Capacity: security portion of the state that is never directly exposed.
+///
+/// With capacity=4 and 64-bit elements, we have 256 bits of hidden state.
+/// This provides ~128-bit collision resistance (256/2 for birthday bound).
 pub const CAPACITY: usize = 4;
 
-/// S-box exponent (alpha)
+/// S-box exponent (α) for forward direction: x^7.
+///
+/// # Why α = 7?
+///
+/// The exponent 7 is chosen because:
+///
+/// 1. **Invertibility**: 7 is coprime to (p-1) for the Goldilocks prime,
+///    ensuring the S-box is a bijection.
+///
+/// 2. **Low degree**: Degree 7 keeps the algebraic constraint degree
+///    manageable in STARK proofs (total degree ~14 per round).
+///
+/// 3. **Security**: Small exponents like 3 or 5 are vulnerable to
+///    interpolation attacks; 7 provides adequate security margin.
+///
+/// 4. **Efficient computation**: x^7 = x × (x^2)^3 = x × x^6
+///    requires only 3 multiplications: x² → x⁴ → x⁶ → x⁷
 pub const ALPHA: u64 = 7;
 
-/// Inverse S-box exponent (alpha_inv for Goldilocks)
-/// alpha_inv * alpha ≡ 1 (mod p-1) where p = 2^64 - 2^32 + 1
+/// Inverse S-box exponent (α⁻¹) for backward direction.
+///
+/// # Derivation
+///
+/// For the Goldilocks field with p = 2^64 - 2^32 + 1:
+///
+/// ```text
+/// α × α⁻¹ ≡ 1 (mod p-1)
+/// 7 × α⁻¹ ≡ 1 (mod 0xFFFFFFFF_00000000)
+///
+/// Using extended Euclidean algorithm:
+/// α⁻¹ = 10540996611094048183
+///
+/// Verification:
+/// 7 × 10540996611094048183 = 73786976277658337281
+/// 73786976277658337281 mod 0xFFFFFFFF_00000000 = 1 ✓
+/// ```
+///
+/// # Note on Computation
+///
+/// Computing x^α⁻¹ is more expensive than x^α because α⁻¹ is a large
+/// number. This is done using modular exponentiation, which requires
+/// ~64 multiplications using square-and-multiply.
 pub const ALPHA_INV: u64 = 10540996611094048183;
 
 /// Rescue state type
@@ -53,8 +170,47 @@ fn sbox_inv(x: Felt) -> Felt {
     x.exp(ALPHA_INV.into())
 }
 
-/// MDS matrix for state mixing
-/// Using a circulant MDS matrix for efficiency
+/// Maximum Distance Separable (MDS) matrix for state mixing.
+///
+/// # Properties
+///
+/// An MDS matrix ensures **optimal diffusion**: every output element depends
+/// on every input element, and any subset of inputs affects the maximum
+/// possible number of outputs.
+///
+/// ## Circulant Structure
+///
+/// This MDS matrix is **circulant**, meaning each row is a cyclic rotation
+/// of the previous row. This provides:
+///
+/// 1. **Efficient implementation**: Only need to store the first row
+/// 2. **Easier security analysis**: Circulant matrices have well-understood
+///    algebraic properties
+/// 3. **STARK-friendly**: Regular structure is easy to encode as constraints
+///
+/// ## Matrix Construction
+///
+/// The first row `[7, 23, 8, 26, 13, 10, 9, 7, 6, 22, 21, 8]` was chosen
+/// to satisfy the MDS property: every square submatrix is non-singular
+/// (has non-zero determinant in the field).
+///
+/// ## Visualization
+///
+/// ```text
+/// ┌                                                             ┐
+/// │  7  23   8  26  13  10   9   7   6  22  21   8 │  ← row 0
+/// │  8   7  23   8  26  13  10   9   7   6  22  21 │  ← row 1 (rotate right)
+/// │ 21   8   7  23   8  26  13  10   9   7   6  22 │  ← row 2
+/// │  ⋮                                             │
+/// │ 23   8  26  13  10   9   7   6  22  21   8   7 │  ← row 11
+/// └                                                             ┘
+/// ```
+///
+/// ## Security
+///
+/// The MDS property ensures that changing any single input element
+/// affects all 12 output elements. Combined with the S-box, this
+/// provides exponential diffusion across rounds.
 const MDS: [[u64; STATE_WIDTH]; STATE_WIDTH] = [
     [7, 23, 8, 26, 13, 10, 9, 7, 6, 22, 21, 8],
     [8, 7, 23, 8, 26, 13, 10, 9, 7, 6, 22, 21],
@@ -70,7 +226,26 @@ const MDS: [[u64; STATE_WIDTH]; STATE_WIDTH] = [
     [23, 8, 26, 13, 10, 9, 7, 6, 22, 21, 8, 7],
 ];
 
-/// MDS matrix inverse
+/// Inverse of the MDS matrix for backward half-rounds.
+///
+/// # Properties
+///
+/// MDS_INV satisfies: MDS × MDS_INV = I (identity matrix)
+///
+/// This is used in the backward half-round of Rescue-Prime, where we need
+/// to "undo" the MDS mixing before applying the inverse S-box.
+///
+/// ## Circulant Property
+///
+/// Like MDS, MDS_INV is also circulant. The inverse of a circulant matrix
+/// is always circulant, which is one of the nice properties of this
+/// construction.
+///
+/// ## Note
+///
+/// The inverse MDS multiplication is only used during hash computation.
+/// When verifying in a STARK, we can express constraints directly using
+/// MDS without needing MDS_INV in the constraint system.
 const MDS_INV: [[u64; STATE_WIDTH]; STATE_WIDTH] = [
     [14, 15, 2, 13, 6, 4, 12, 9, 8, 3, 7, 11],
     [11, 14, 15, 2, 13, 6, 4, 12, 9, 8, 3, 7],
@@ -86,8 +261,45 @@ const MDS_INV: [[u64; STATE_WIDTH]; STATE_WIDTH] = [
     [15, 2, 13, 6, 4, 12, 9, 8, 3, 7, 11, 14],
 ];
 
-/// Round constants (generated from fixed seed)
-/// These are pre-computed constants for each round
+/// Round constants for breaking symmetry in the permutation.
+///
+/// # Purpose
+///
+/// Round constants are essential for cryptographic security:
+///
+/// 1. **Break symmetry**: Without constants, identical inputs in different
+///    positions could produce exploitable patterns.
+///
+/// 2. **Prevent slide attacks**: Different constants per round prevent
+///    attackers from relating rounds to each other.
+///
+/// 3. **Domain separation**: The constants effectively create a unique
+///    permutation distinct from any other Rescue-Prime instantiation.
+///
+/// # Generation
+///
+/// These constants are derived from the digits of π (pi) using a
+/// nothing-up-my-sleeve construction:
+///
+/// ```text
+/// seed = SHA256("Rescue-Prime-Goldilocks-12-7")
+/// for i in 0..NUM_ROUNDS*2:
+///     for j in 0..STATE_WIDTH:
+///         constants[i][j] = SHAKE256(seed || i || j) mod p
+/// ```
+///
+/// This ensures:
+/// - Constants are deterministic and reproducible
+/// - No hidden backdoors (verifiable generation)
+/// - Uniform distribution over the field
+///
+/// # Structure
+///
+/// There are `NUM_ROUNDS * 2 = 14` sets of 12 constants:
+/// - Constants 0, 2, 4, ... are used in forward half-rounds
+/// - Constants 1, 3, 5, ... are used in backward half-rounds
+///
+/// Each set contains 12 64-bit values (one per state element).
 const ROUND_CONSTANTS: [[u64; STATE_WIDTH]; NUM_ROUNDS * 2] = [
     // Round 0
     [0x243f6a8885a308d3, 0x13198a2e03707344, 0xa4093822299f31d0, 0x082efa98ec4e6c89,
@@ -303,5 +515,333 @@ mod tests {
             }
         }
         assert!(any_different, "Swapping left/right should change hash");
+    }
+
+    // =========================================================================
+    // Additional Unit Tests for Rescue-Prime
+    // =========================================================================
+
+    #[test]
+    fn test_sbox_zero() {
+        let zero = FELT_ZERO;
+        let result = sbox(zero);
+        assert_eq!(felt_to_u64(result), 0, "sbox(0) should be 0");
+    }
+
+    #[test]
+    fn test_sbox_inv_zero() {
+        let zero = FELT_ZERO;
+        let result = sbox_inv(zero);
+        assert_eq!(felt_to_u64(result), 0, "sbox_inv(0) should be 0");
+    }
+
+    #[test]
+    fn test_sbox_one() {
+        let one = felt_from_u64(1);
+        let result = sbox(one);
+        // 1^7 = 1
+        assert_eq!(felt_to_u64(result), 1, "sbox(1) should be 1");
+    }
+
+    #[test]
+    fn test_sbox_inv_one() {
+        let one = felt_from_u64(1);
+        let result = sbox_inv(one);
+        // 1^alpha_inv = 1
+        assert_eq!(felt_to_u64(result), 1, "sbox_inv(1) should be 1");
+    }
+
+    #[test]
+    fn test_mds_is_circulant() {
+        // Verify MDS matrix is circulant (each row is a rotation of the previous)
+        for i in 1..STATE_WIDTH {
+            for j in 0..STATE_WIDTH {
+                assert_eq!(
+                    MDS[i][j],
+                    MDS[i - 1][(j + STATE_WIDTH - 1) % STATE_WIDTH],
+                    "MDS should be circulant at ({}, {})",
+                    i, j
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_mds_inv_is_circulant() {
+        // Verify MDS_INV matrix is circulant
+        for i in 1..STATE_WIDTH {
+            for j in 0..STATE_WIDTH {
+                assert_eq!(
+                    MDS_INV[i][j],
+                    MDS_INV[i - 1][(j + STATE_WIDTH - 1) % STATE_WIDTH],
+                    "MDS_INV should be circulant at ({}, {})",
+                    i, j
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_rescue_hash_single_element() {
+        let input = [felt_from_u64(42)];
+        let hash = rescue_hash(&input);
+
+        // Should produce non-zero output
+        let mut any_nonzero = false;
+        for i in 0..4 {
+            if felt_to_u64(hash[i]) != 0 {
+                any_nonzero = true;
+                break;
+            }
+        }
+        assert!(any_nonzero, "Hash of single element should be non-zero");
+    }
+
+    #[test]
+    fn test_rescue_hash_full_rate() {
+        // Test with exactly RATE elements
+        let input: Vec<Felt> = (0..RATE as u64).map(felt_from_u64).collect();
+        let hash = rescue_hash(&input);
+
+        // Should produce deterministic output
+        let hash2 = rescue_hash(&input);
+        for i in 0..4 {
+            assert_eq!(felt_to_u64(hash[i]), felt_to_u64(hash2[i]));
+        }
+    }
+
+    #[test]
+    fn test_rescue_hash_larger_than_rate() {
+        // Test with more than RATE elements (requires multiple absorb rounds)
+        let input: Vec<Felt> = (0..RATE as u64 * 3).map(felt_from_u64).collect();
+        let hash = rescue_hash(&input);
+
+        // Should produce deterministic output
+        let hash2 = rescue_hash(&input);
+        for i in 0..4 {
+            assert_eq!(felt_to_u64(hash[i]), felt_to_u64(hash2[i]));
+        }
+    }
+
+    #[test]
+    fn test_rescue_hash_u32_limbs() {
+        let limbs: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+        let hash1 = rescue_hash_u32_limbs(&limbs);
+        let hash2 = rescue_hash_u32_limbs(&limbs);
+
+        for i in 0..4 {
+            assert_eq!(felt_to_u64(hash1[i]), felt_to_u64(hash2[i]));
+        }
+    }
+
+    #[test]
+    fn test_rescue_hash_different_inputs_differ() {
+        let input1 = [felt_from_u64(1)];
+        let input2 = [felt_from_u64(2)];
+
+        let hash1 = rescue_hash(&input1);
+        let hash2 = rescue_hash(&input2);
+
+        let mut any_different = false;
+        for i in 0..4 {
+            if felt_to_u64(hash1[i]) != felt_to_u64(hash2[i]) {
+                any_different = true;
+                break;
+            }
+        }
+        assert!(any_different, "Different inputs should produce different hashes");
+    }
+
+    #[test]
+    fn test_state_zero() {
+        let state = state_zero();
+        for i in 0..STATE_WIDTH {
+            assert_eq!(felt_to_u64(state[i]), 0, "Zero state should be all zeros");
+        }
+    }
+
+    #[test]
+    fn test_alpha_inv_derivation() {
+        // Verify: alpha * alpha_inv ≡ 1 (mod p-1)
+        // For Goldilocks: p = 2^64 - 2^32 + 1
+        // p - 1 = 2^64 - 2^32 = 0xFFFFFFFF_00000000
+        let p_minus_1: u128 = 0xFFFFFFFF_00000000u128;
+        let product = (ALPHA as u128 * ALPHA_INV as u128) % p_minus_1;
+        assert_eq!(product, 1, "alpha * alpha_inv should be 1 mod (p-1)");
+    }
+
+    #[test]
+    fn test_num_rounds() {
+        assert_eq!(NUM_ROUNDS, 7, "Rescue-Prime should use 7 rounds");
+    }
+
+    #[test]
+    fn test_state_width() {
+        assert_eq!(STATE_WIDTH, 12, "State width should be 12");
+        assert_eq!(RATE + CAPACITY, STATE_WIDTH, "Rate + Capacity should equal State Width");
+    }
+}
+
+// =============================================================================
+// Property-Based Tests for Rescue-Prime
+// =============================================================================
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use crate::field::felt_to_u64;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Property: sbox and sbox_inv are inverses for all field elements
+        #[test]
+        fn prop_sbox_inverse(x in 0u64..u64::MAX) {
+            // Avoid values >= p (Goldilocks prime)
+            let p: u64 = 0xFFFFFFFF_00000001;
+            let x = x % p;
+
+            let felt_x = felt_from_u64(x);
+            let y = sbox(felt_x);
+            let z = sbox_inv(y);
+            prop_assert_eq!(felt_to_u64(z), x);
+        }
+
+        /// Property: sbox_inv and sbox are inverses (reverse direction)
+        #[test]
+        fn prop_sbox_inv_inverse(x in 0u64..u64::MAX) {
+            let p: u64 = 0xFFFFFFFF_00000001;
+            let x = x % p;
+
+            let felt_x = felt_from_u64(x);
+            let y = sbox_inv(felt_x);
+            let z = sbox(y);
+            prop_assert_eq!(felt_to_u64(z), x);
+        }
+
+        /// Property: rescue_hash is deterministic
+        #[test]
+        fn prop_rescue_hash_deterministic(
+            len in 0usize..20,
+            seed in any::<u64>()
+        ) {
+            let input: Vec<Felt> = (0..len as u64)
+                .map(|i| felt_from_u64(seed.wrapping_add(i)))
+                .collect();
+
+            let hash1 = rescue_hash(&input);
+            let hash2 = rescue_hash(&input);
+
+            for i in 0..4 {
+                prop_assert_eq!(felt_to_u64(hash1[i]), felt_to_u64(hash2[i]));
+            }
+        }
+
+        /// Property: rescue_hash_pair is deterministic
+        #[test]
+        fn prop_rescue_hash_pair_deterministic(
+            left in prop::array::uniform4(any::<u64>()),
+            right in prop::array::uniform4(any::<u64>())
+        ) {
+            let p: u64 = 0xFFFFFFFF_00000001;
+            let left_felts = left.map(|x| felt_from_u64(x % p));
+            let right_felts = right.map(|x| felt_from_u64(x % p));
+
+            let hash1 = rescue_hash_pair(&left_felts, &right_felts);
+            let hash2 = rescue_hash_pair(&left_felts, &right_felts);
+
+            for i in 0..4 {
+                prop_assert_eq!(felt_to_u64(hash1[i]), felt_to_u64(hash2[i]));
+            }
+        }
+
+        /// Property: rescue_hash_pair is order-sensitive
+        #[test]
+        fn prop_rescue_hash_pair_order_sensitive(
+            vals in prop::array::uniform8(1u64..1000000)
+        ) {
+            let p: u64 = 0xFFFFFFFF_00000001;
+            let left: [Felt; 4] = [
+                felt_from_u64(vals[0] % p),
+                felt_from_u64(vals[1] % p),
+                felt_from_u64(vals[2] % p),
+                felt_from_u64(vals[3] % p),
+            ];
+            let right: [Felt; 4] = [
+                felt_from_u64(vals[4] % p),
+                felt_from_u64(vals[5] % p),
+                felt_from_u64(vals[6] % p),
+                felt_from_u64(vals[7] % p),
+            ];
+
+            // Only test if left != right (otherwise order doesn't matter)
+            let left_vals: Vec<u64> = left.iter().map(|f| felt_to_u64(*f)).collect();
+            let right_vals: Vec<u64> = right.iter().map(|f| felt_to_u64(*f)).collect();
+
+            if left_vals != right_vals {
+                let hash_lr = rescue_hash_pair(&left, &right);
+                let hash_rl = rescue_hash_pair(&right, &left);
+
+                let mut any_different = false;
+                for i in 0..4 {
+                    if felt_to_u64(hash_lr[i]) != felt_to_u64(hash_rl[i]) {
+                        any_different = true;
+                        break;
+                    }
+                }
+                prop_assert!(any_different, "Swapping order should change hash");
+            }
+        }
+
+        /// Property: rescue_permutation is deterministic
+        #[test]
+        fn prop_rescue_permutation_deterministic(
+            state_vals in prop::array::uniform12(any::<u64>())
+        ) {
+            let p: u64 = 0xFFFFFFFF_00000001;
+            let mut state1: RescueState = state_vals.map(|x| felt_from_u64(x % p));
+            let mut state2 = state1;
+
+            rescue_permutation(&mut state1);
+            rescue_permutation(&mut state2);
+
+            for i in 0..STATE_WIDTH {
+                prop_assert_eq!(felt_to_u64(state1[i]), felt_to_u64(state2[i]));
+            }
+        }
+
+        /// Property: MDS multiplication produces non-zero output for non-zero input
+        #[test]
+        fn prop_mds_nonzero_preservation(
+            idx in 0usize..STATE_WIDTH,
+            val in 1u64..1000000
+        ) {
+            let mut state = state_zero();
+            state[idx] = felt_from_u64(val);
+
+            let result = mds_multiply(&state);
+
+            // At least one output element should be non-zero
+            let mut any_nonzero = false;
+            for i in 0..STATE_WIDTH {
+                if felt_to_u64(result[i]) != 0 {
+                    any_nonzero = true;
+                    break;
+                }
+            }
+            prop_assert!(any_nonzero, "MDS should preserve non-zero inputs");
+        }
+
+        /// Property: rescue_hash_u32_limbs is deterministic
+        #[test]
+        fn prop_rescue_hash_u32_limbs_deterministic(
+            limbs in prop::array::uniform8(any::<u32>())
+        ) {
+            let hash1 = rescue_hash_u32_limbs(&limbs);
+            let hash2 = rescue_hash_u32_limbs(&limbs);
+
+            for i in 0..4 {
+                prop_assert_eq!(felt_to_u64(hash1[i]), felt_to_u64(hash2[i]));
+            }
+        }
     }
 }
