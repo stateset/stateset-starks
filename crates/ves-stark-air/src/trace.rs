@@ -31,7 +31,7 @@ use ves_stark_primitives::Felt;
 /// Note: Limbs 2-7 are boundary-asserted to zero (for u64 amounts), so no binary
 /// decomposition is needed. The value 0 is trivially a valid u32.
 /// Winterfell has a 255-column limit, so we stay within that bound.
-pub const TRACE_WIDTH: usize = 137;
+pub const TRACE_WIDTH: usize = 248;
 
 /// Legacy trace width for backward compatibility
 pub const TRACE_WIDTH_LEGACY: usize = 40;
@@ -98,6 +98,23 @@ pub mod cols {
     pub const IS_EQUAL_START: usize = 129;
     pub const IS_EQUAL_END: usize = 137;
 
+    // =========================================================================
+    // V3 Extended Columns: diff bit decomposition (u32 for limbs 0-1)
+    // =========================================================================
+
+    // diff limb 0 bits (137-168)
+    pub const DIFF_BITS_LIMB0_START: usize = 137;
+    pub const DIFF_BITS_LIMB0_END: usize = 169;
+
+    // diff limb 1 bits (169-200)
+    pub const DIFF_BITS_LIMB1_START: usize = 169;
+    pub const DIFF_BITS_LIMB1_END: usize = 201;
+
+    // Public inputs binding columns (201-247)
+    pub const PUBLIC_INPUTS_START: usize = 201;
+    pub const PUBLIC_INPUTS_END: usize = 248;
+    pub const PUBLIC_INPUTS_LEN: usize = PUBLIC_INPUTS_END - PUBLIC_INPUTS_START;
+
     /// Number of bits per limb
     pub const BITS_PER_LIMB: usize = 32;
 
@@ -139,6 +156,32 @@ pub mod cols {
         amount_limb_bits_start(limb_idx) + bit_idx
     }
 
+    /// Get diff bit column index for limb 0
+    #[inline]
+    pub fn diff_limb0_bit(bit_idx: usize) -> usize {
+        debug_assert!(bit_idx < BITS_PER_LIMB);
+        DIFF_BITS_LIMB0_START + bit_idx
+    }
+
+    /// Get diff bit column index for limb 1
+    #[inline]
+    pub fn diff_limb1_bit(bit_idx: usize) -> usize {
+        debug_assert!(bit_idx < BITS_PER_LIMB);
+        DIFF_BITS_LIMB1_START + bit_idx
+    }
+
+    /// Get diff bit column index for limbs 0-1 only
+    #[inline]
+    pub fn diff_limb_bit(limb_idx: usize, bit_idx: usize) -> usize {
+        debug_assert!(limb_idx < 2, "Only limbs 0-1 have diff bit decomposition");
+        debug_assert!(bit_idx < BITS_PER_LIMB);
+        match limb_idx {
+            0 => diff_limb0_bit(bit_idx),
+            1 => diff_limb1_bit(bit_idx),
+            _ => unreachable!("Only limbs 0-1 have diff bit decomposition"),
+        }
+    }
+
     /// Get diff column index
     #[inline]
     pub fn diff(limb_idx: usize) -> usize {
@@ -165,6 +208,13 @@ pub mod cols {
     pub fn is_equal(limb_idx: usize) -> usize {
         debug_assert!(limb_idx < NUM_LIMBS);
         IS_EQUAL_START + limb_idx
+    }
+
+    /// Get public input column index
+    #[inline]
+    pub fn public_input(idx: usize) -> usize {
+        debug_assert!(idx < PUBLIC_INPUTS_LEN);
+        PUBLIC_INPUTS_START + idx
     }
 }
 

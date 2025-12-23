@@ -16,6 +16,7 @@
 
 pub mod compliance;
 pub mod policies;
+pub mod policy;
 pub mod range_check;
 pub mod rescue_air;
 pub mod trace;
@@ -23,5 +24,6 @@ pub mod options;
 
 pub use compliance::ComplianceAir;
 pub use options::ProofOptions;
+pub use policy::{Policy, ComparisonType, PolicyError};
 pub use range_check::{validate_limbs, is_valid_u32};
 pub use trace::{TraceInfo, TRACE_WIDTH};

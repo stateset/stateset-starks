@@ -417,6 +417,26 @@ pub fn rescue_permutation(state: &mut RescueState) {
     }
 }
 
+/// Compute the full Rescue-Prime permutation trace (states after each half-round).
+///
+/// Returns a vector of length `NUM_ROUNDS * 2 + 1`:
+/// - index 0: initial state (after absorption, before permutation)
+/// - index i+1: state after half-round i
+pub fn rescue_permutation_trace(initial_state: &RescueState) -> Vec<RescueState> {
+    let mut states = Vec::with_capacity(NUM_ROUNDS * 2 + 1);
+    let mut state = *initial_state;
+    states.push(state);
+
+    for round in 0..NUM_ROUNDS {
+        half_round_forward(&mut state, &ROUND_CONSTANTS[round * 2]);
+        states.push(state);
+        half_round_backward(&mut state, &ROUND_CONSTANTS[round * 2 + 1]);
+        states.push(state);
+    }
+
+    states
+}
+
 /// Hash a sequence of field elements using Rescue-Prime sponge construction
 pub fn rescue_hash(input: &[Felt]) -> [Felt; 4] {
     let mut state = state_zero();

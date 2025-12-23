@@ -5,12 +5,11 @@
 //! step in the computation.
 
 use ves_stark_air::trace::{cols, phases, TRACE_WIDTH, MIN_TRACE_LENGTH};
-use ves_stark_air::policies::aml_threshold::{AmlThresholdPolicy, compute_comparison_values};
-use ves_stark_air::policies::order_total_cap::compute_comparison_values_lte;
+use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
 use ves_stark_primitives::{Felt, felt_from_u64, FELT_ZERO, FELT_ONE};
-use ves_stark_primitives::rescue::{rescue_hash, STATE_WIDTH as RESCUE_STATE_WIDTH};
+use ves_stark_primitives::rescue::{rescue_permutation_trace, STATE_WIDTH as RESCUE_STATE_WIDTH};
 use crate::witness::ComplianceWitness;
-use crate::policy::{Policy, ComparisonType};
+use crate::policy::Policy;
 use crate::error::ProverError;
 use winter_prover::TraceTable;
 
@@ -29,84 +28,53 @@ fn decompose_to_bits(limb: Felt) -> [Felt; 32] {
     bits
 }
 
-/// Compute comparison gadget values for the V2 trace
-/// Returns (diff, borrow, is_less, is_equal) for all 8 limbs
+/// Compute subtraction witness for 64-bit comparison.
 ///
-/// The comparison works from high limb to low limb:
-/// - is_less[i] = 1 if amount < threshold considering limbs [i..7]
-/// - is_equal[i] = 1 if amount == threshold considering limbs [i..7]
-/// - diff[i] = threshold[i] - amount[i] - 1 when amount[i] < threshold[i] (for range proof)
-/// - borrow[i] = 1 if amount[i] > threshold[i]
-fn compute_comparison_gadget(
+/// Returns (diff, borrow) where diff is a 2-limb u32 subtraction witness and
+/// borrow[0] is the borrow from limb 0 to limb 1, borrow[1] is the final borrow.
+fn compute_subtraction_witness(
     amount_limbs: &[Felt; 8],
-    threshold_limbs: &[Felt; 8],
-) -> ([Felt; 8], [Felt; 8], [Felt; 8], [Felt; 8]) {
-    let mut diff = [FELT_ZERO; 8];
-    let mut borrow = [FELT_ZERO; 8];
-    let mut is_less = [FELT_ZERO; 8];
-    let mut is_equal = [FELT_ZERO; 8];
+    limit_limbs: &[Felt; 8],
+) -> Result<([Felt; 8], [Felt; 8]), ProverError> {
+    let a0 = amount_limbs[0].as_int();
+    let a1 = amount_limbs[1].as_int();
+    let t0 = limit_limbs[0].as_int();
+    let t1 = limit_limbs[1].as_int();
 
-    // Start from highest limb (7) and work down
-    // Initially, we haven't determined less yet, and everything is equal
-    let mut determined_less = false;
-    let mut all_equal = true;
+    let (diff0, borrow0) = if a0 <= t0 {
+        (t0 - a0, 0u64)
+    } else {
+        (t0 + (1u64 << 32) - a0, 1u64)
+    };
 
-    for i in (0..8).rev() {
-        let a = amount_limbs[i].as_int();
-        let t = threshold_limbs[i].as_int();
+    let a1_with_borrow = a1 + borrow0;
+    let (diff1, borrow1) = if a1_with_borrow <= t1 {
+        (t1 - a1_with_borrow, 0u64)
+    } else {
+        (t1 + (1u64 << 32) - a1_with_borrow, 1u64)
+    };
 
-        if all_equal {
-            if a < t {
-                // Amount is less at this limb
-                determined_less = true;
-                all_equal = false;
-                diff[i] = felt_from_u64(t - a - 1); // Range proof witness
-                borrow[i] = FELT_ZERO;
-            } else if a > t {
-                // Amount is greater at this limb - this should fail policy
-                all_equal = false;
-                diff[i] = FELT_ZERO;
-                borrow[i] = FELT_ONE;
-            } else {
-                // Equal at this limb, continue checking
-                diff[i] = FELT_ZERO;
-                borrow[i] = FELT_ZERO;
-            }
-        } else {
-            // Already determined the relationship
-            diff[i] = FELT_ZERO;
-            borrow[i] = FELT_ZERO;
-        }
-
-        // Set is_less and is_equal for this position
-        // is_less[i] means "considering limbs [i..7], is amount < threshold?"
-        // is_equal[i] means "considering limbs [i..7], is amount == threshold?"
-        is_less[i] = if determined_less { FELT_ONE } else { FELT_ZERO };
-        is_equal[i] = if all_equal { FELT_ONE } else { FELT_ZERO };
+    if borrow1 != 0 {
+        return Err(ProverError::constraint_violation(
+            "Amount exceeds limit in subtraction witness",
+        ));
     }
 
-    (diff, borrow, is_less, is_equal)
+    let mut diff = [FELT_ZERO; 8];
+    diff[0] = felt_from_u64(diff0);
+    diff[1] = felt_from_u64(diff1);
+
+    let mut borrow = [FELT_ZERO; 8];
+    borrow[0] = felt_from_u64(borrow0);
+    borrow[1] = felt_from_u64(borrow1);
+
+    Ok((diff, borrow))
 }
 
 /// Compute a Rescue hash commitment to the witness amount
 /// This binds the private amount value to the proof
-fn compute_witness_commitment(amount_limbs: &[Felt; 8]) -> [Felt; RESCUE_STATE_WIDTH] {
-    // Hash the amount limbs using Rescue-Prime
-    // Only the first 2 limbs are non-zero for u64 amounts
-    let hash_input: Vec<Felt> = amount_limbs.iter().cloned().collect();
-    let hash_output = rescue_hash(&hash_input);
-
-    // Build full Rescue state for trace:
-    // - First 4 elements: hash output (commitment)
-    // - Remaining 8 elements: capacity/padding (zero)
-    let mut state = [FELT_ZERO; RESCUE_STATE_WIDTH];
-    state[0] = hash_output[0];
-    state[1] = hash_output[1];
-    state[2] = hash_output[2];
-    state[3] = hash_output[3];
-    // Elements 4-11 remain zero (capacity portion)
-
-    state
+fn compute_witness_commitment_from_state(state: &[Felt; RESCUE_STATE_WIDTH]) -> [Felt; 4] {
+    [state[0], state[1], state[2], state[3]]
 }
 
 /// Build the execution trace for a compliance proof
@@ -168,59 +136,46 @@ impl TraceBuilder {
         let amount_limbs = self.witness.amount_limbs();
         let limit_limbs = self.policy.limit_limbs();
 
-        // Compute comparison values based on policy type
-        let comparison_values = match self.policy.comparison_type() {
-            ComparisonType::LessThan => compute_comparison_values(&amount_limbs, &limit_limbs),
-            ComparisonType::LessThanOrEqual => compute_comparison_values_lte(&amount_limbs, &limit_limbs),
-        };
-
-        // Compute bit decomposition for limbs 0-1 only
+        // Compute bit decomposition for amount limbs 0-1 only
         // Limbs 2-7 are boundary-asserted to zero, no decomposition needed
         let limb0_bits = decompose_to_bits(amount_limbs[0]);
         let limb1_bits = decompose_to_bits(amount_limbs[1]);
 
-        // Compute witness commitment using Rescue hash
-        // This binds the private amount to the proof
-        let witness_commitment = compute_witness_commitment(&amount_limbs);
+        // Compute subtraction witness for amount <= limit
+        let (diff, borrow) = compute_subtraction_witness(&amount_limbs, &limit_limbs)?;
+        let diff0_bits = decompose_to_bits(diff[0]);
+        let diff1_bits = decompose_to_bits(diff[1]);
 
-        // Compute V2 comparison gadget values
-        // For LTE policy (order_total.cap), we use limit+1 as the effective threshold
-        // This makes "amount <= cap" equivalent to "amount < cap + 1"
-        let (diff, borrow, is_less, is_equal_vals) = match self.policy.comparison_type() {
-            ComparisonType::LessThan => {
-                compute_comparison_gadget(&amount_limbs, &limit_limbs)
-            }
-            ComparisonType::LessThanOrEqual => {
-                let limit = self.policy.limit();
-                if limit == u64::MAX {
-                    // Special case: cap == u64::MAX
-                    // Any valid u64 amount satisfies amount <= u64::MAX
-                    // We've already validated the amount, so we can directly set is_less[0] = 1
-                    // This avoids overflow issues with limit + 1
-                    let diff = [FELT_ZERO; 8];
-                    let borrow = [FELT_ZERO; 8];
-                    let is_less = [FELT_ONE; 8]; // All limbs "less"
-                    let is_equal = [FELT_ZERO; 8];
-                    (diff, borrow, is_less, is_equal)
-                } else {
-                    // For LTE: use limit + 1 for comparison
-                    // This handles the case where amount == cap (which should be valid)
-                    let effective_limit = limit + 1;
-                    let effective_threshold_limbs = [
-                        felt_from_u64((effective_limit & 0xFFFFFFFF) as u64),
-                        felt_from_u64((effective_limit >> 32) as u64),
-                        FELT_ZERO, FELT_ZERO, FELT_ZERO, FELT_ZERO, FELT_ZERO, FELT_ZERO,
-                    ];
-                    compute_comparison_gadget(&amount_limbs, &effective_threshold_limbs)
-                }
-            }
-        };
+        // Build initial Rescue state (after absorption, before permutation)
+        let mut rescue_init_state = [FELT_ZERO; RESCUE_STATE_WIDTH];
+        rescue_init_state[..8].copy_from_slice(&amount_limbs);
+        rescue_init_state[8] = felt_from_u64(8);
+        let rescue_states = rescue_permutation_trace(&rescue_init_state);
+        let rescue_final = rescue_states
+            .last()
+            .ok_or_else(|| ProverError::TraceGenerationError("Rescue trace missing".to_string()))?;
+
+        // Convert public inputs to field elements and bind into trace columns
+        let pub_inputs_felts = self.witness.public_inputs.to_field_elements();
+        let pub_inputs_vec = pub_inputs_felts.to_vec();
+        if pub_inputs_vec.len() != cols::PUBLIC_INPUTS_LEN {
+            return Err(ProverError::InvalidPublicInputs(format!(
+                "Expected {} public input elements, got {}",
+                cols::PUBLIC_INPUTS_LEN,
+                pub_inputs_vec.len()
+            )));
+        }
 
         // Fill the trace
         for row in 0..self.trace_length {
-            // Set Rescue state columns with witness commitment (constant throughout trace)
+            // Set Rescue state columns (permutation trace for first 15 rows, then constant)
+            let rescue_state = if row < rescue_states.len() {
+                rescue_states[row]
+            } else {
+                *rescue_final
+            };
             for i in 0..RESCUE_STATE_WIDTH {
-                trace[cols::RESCUE_STATE_START + i][row] = witness_commitment[i];
+                trace[cols::RESCUE_STATE_START + i][row] = rescue_state[i];
             }
             // Set amount limbs (constant throughout trace for this simple AIR)
             for i in 0..8 {
@@ -232,9 +187,9 @@ impl TraceBuilder {
                 trace[cols::THRESHOLD_START + i][row] = limit_limbs[i];
             }
 
-            // Set comparison values (legacy)
+            // Set legacy comparison columns to zero (unused in V3)
             for i in 0..8 {
-                trace[cols::COMPARISON_START + i][row] = comparison_values[i];
+                trace[cols::COMPARISON_START + i][row] = FELT_ZERO;
             }
 
             // Set bit decomposition for limb 0 (constant throughout trace)
@@ -249,28 +204,38 @@ impl TraceBuilder {
 
             // Note: Limbs 2-7 are boundary-asserted to zero, no bit decomposition needed
 
-            // V2: Set comparison gadget columns
+            // Set subtraction witness columns
             for i in 0..8 {
                 trace[cols::diff(i)][row] = diff[i];
                 trace[cols::borrow(i)][row] = borrow[i];
-                trace[cols::is_less(i)][row] = is_less[i];
-                trace[cols::is_equal(i)][row] = is_equal_vals[i];
+                trace[cols::is_less(i)][row] = FELT_ZERO;
+                trace[cols::is_equal(i)][row] = FELT_ZERO;
+            }
+
+            // Set diff bit decomposition for limb 0
+            for i in 0..32 {
+                trace[cols::DIFF_BITS_LIMB0_START + i][row] = diff0_bits[i];
+            }
+
+            // Set diff bit decomposition for limb 1
+            for i in 0..32 {
+                trace[cols::DIFF_BITS_LIMB1_START + i][row] = diff1_bits[i];
+            }
+
+            // Bind public inputs into trace columns
+            for (idx, val) in pub_inputs_vec.iter().enumerate() {
+                trace[cols::public_input(idx)][row] = *val;
             }
 
             // Set control flags
             trace[cols::FLAG_IS_FIRST][row] = if row == 0 { FELT_ONE } else { FELT_ZERO };
             trace[cols::FLAG_IS_LAST][row] = if row == self.trace_length - 1 { FELT_ONE } else { FELT_ZERO };
             trace[cols::ROUND_COUNTER][row] = felt_from_u64(row as u64);
-            trace[cols::PHASE][row] = felt_from_u64(phases::COMPARISON);
-        }
-
-        // The final comparison result should be 1 (amount satisfies policy)
-        let final_comparison = comparison_values[7]; // Last comparison value
-        if final_comparison != FELT_ONE {
-            return Err(ProverError::constraint_violation(format!(
-                "Amount does not satisfy {} policy",
-                self.policy.policy_id()
-            )));
+            trace[cols::PHASE][row] = if row < rescue_states.len() {
+                felt_from_u64(phases::RESCUE_HASH)
+            } else {
+                felt_from_u64(phases::COMPARISON)
+            };
         }
 
         Ok(TraceTable::init(trace))
@@ -532,7 +497,6 @@ mod tests {
 
     #[test]
     fn test_witness_commitment() {
-        use super::compute_witness_commitment;
         use winter_prover::Trace;
 
         // Build a trace and verify witness commitment is populated
@@ -543,42 +507,62 @@ mod tests {
         let policy = Policy::aml_threshold(threshold);
 
         let amount_limbs = witness.amount_limbs();
-        let expected_commitment = compute_witness_commitment(&amount_limbs);
+        let mut rescue_init_state = [FELT_ZERO; RESCUE_STATE_WIDTH];
+        rescue_init_state[..8].copy_from_slice(&amount_limbs);
+        rescue_init_state[8] = felt_from_u64(8);
+        let rescue_trace = rescue_permutation_trace(&rescue_init_state);
+        let rescue_output_row = rescue_trace.len() - 1;
+        let expected_commitment = compute_witness_commitment_from_state(
+            rescue_trace.last().expect("missing Rescue state"),
+        );
 
         let builder = TraceBuilder::new(witness, policy);
         let trace = builder.build().unwrap();
 
-        // Verify Rescue state columns contain the witness commitment
-        for i in 0..RESCUE_STATE_WIDTH {
-            let trace_value = trace.get(cols::RESCUE_STATE_START + i, 0);
+        // Verify Rescue output state columns contain the witness commitment
+        for i in 0..4 {
+            let trace_value = trace.get(cols::RESCUE_STATE_START + i, rescue_output_row);
             assert_eq!(trace_value, expected_commitment[i],
-                "Rescue state column {} mismatch at row 0", i);
+                "Rescue commitment column {} mismatch at output row", i);
         }
 
-        // Verify commitment is constant across all rows
-        for row in 1..trace.length() {
-            for i in 0..RESCUE_STATE_WIDTH {
+        // Verify commitment is constant across rows after the output row
+        for row in rescue_output_row..trace.length() {
+            for i in 0..4 {
                 let trace_value = trace.get(cols::RESCUE_STATE_START + i, row);
                 assert_eq!(trace_value, expected_commitment[i],
-                    "Rescue state column {} changed at row {}", i, row);
+                    "Rescue commitment column {} changed at row {}", i, row);
             }
         }
     }
 
     #[test]
     fn test_witness_commitment_deterministic() {
-        use super::compute_witness_commitment;
-
         // Same amount should produce same commitment
         let limbs1 = [felt_from_u64(5000), FELT_ZERO, FELT_ZERO, FELT_ZERO,
                       FELT_ZERO, FELT_ZERO, FELT_ZERO, FELT_ZERO];
         let limbs2 = [felt_from_u64(5000), FELT_ZERO, FELT_ZERO, FELT_ZERO,
                       FELT_ZERO, FELT_ZERO, FELT_ZERO, FELT_ZERO];
 
-        let commitment1 = compute_witness_commitment(&limbs1);
-        let commitment2 = compute_witness_commitment(&limbs2);
+        let mut rescue_init_state1 = [FELT_ZERO; RESCUE_STATE_WIDTH];
+        rescue_init_state1[..8].copy_from_slice(&limbs1);
+        rescue_init_state1[8] = felt_from_u64(8);
+        let commitment1 = compute_witness_commitment_from_state(
+            rescue_permutation_trace(&rescue_init_state1)
+                .last()
+                .expect("missing Rescue state"),
+        );
 
-        for i in 0..RESCUE_STATE_WIDTH {
+        let mut rescue_init_state2 = [FELT_ZERO; RESCUE_STATE_WIDTH];
+        rescue_init_state2[..8].copy_from_slice(&limbs2);
+        rescue_init_state2[8] = felt_from_u64(8);
+        let commitment2 = compute_witness_commitment_from_state(
+            rescue_permutation_trace(&rescue_init_state2)
+                .last()
+                .expect("missing Rescue state"),
+        );
+
+        for i in 0..4 {
             assert_eq!(commitment1[i], commitment2[i],
                 "Commitment not deterministic at position {}", i);
         }
@@ -586,7 +570,14 @@ mod tests {
         // Different amount should produce different commitment
         let limbs3 = [felt_from_u64(6000), FELT_ZERO, FELT_ZERO, FELT_ZERO,
                       FELT_ZERO, FELT_ZERO, FELT_ZERO, FELT_ZERO];
-        let commitment3 = compute_witness_commitment(&limbs3);
+        let mut rescue_init_state3 = [FELT_ZERO; RESCUE_STATE_WIDTH];
+        rescue_init_state3[..8].copy_from_slice(&limbs3);
+        rescue_init_state3[8] = felt_from_u64(8);
+        let commitment3 = compute_witness_commitment_from_state(
+            rescue_permutation_trace(&rescue_init_state3)
+                .last()
+                .expect("missing Rescue state"),
+        );
 
         let mut any_different = false;
         for i in 0..4 { // Only check first 4 elements (hash output)

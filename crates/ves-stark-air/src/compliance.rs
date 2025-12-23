@@ -144,9 +144,11 @@
 //!
 //! The overall proof provides ~128-bit security against forging.
 
+use crate::rescue_air::{MDS, MDS_INV, ROUND_CONSTANTS};
 use crate::trace::{cols, TRACE_WIDTH, MIN_TRACE_LENGTH};
 use crate::policies::aml_threshold::AmlThresholdPolicy;
 use ves_stark_primitives::{Felt, felt_from_u64, FELT_ONE, FELT_ZERO};
+use ves_stark_primitives::rescue::STATE_WIDTH as RESCUE_STATE_WIDTH;
 use ves_stark_primitives::public_inputs::CompliancePublicInputsFelts;
 use winter_air::{
     Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,
@@ -154,31 +156,35 @@ use winter_air::{
 };
 use winter_math::{FieldElement, ToElements};
 
-/// Number of transition constraints in the AIR (V2 - Full Security)
+/// Number of transition constraints in the AIR (V3 - Full Security)
 ///
-/// Phase 1 (original):
 /// - 1: round counter
 /// - 8: amount consistency
 /// - 8: threshold consistency
-/// - 8: comparison consistency (legacy)
-/// - 64: binary constraints limbs 0-1 (b * (1-b) = 0 for 64 bits)
-/// - 64: bit consistency limbs 0-1
-/// - 2: recomposition constraints limbs 0-1
-/// - 12: Rescue state consistency
+/// - 47: public input binding (constant across rows)
+/// - 64: amount bit binary constraints
+/// - 64: amount bit consistency
+/// - 2: amount recomposition
+/// - 64: diff bit binary constraints (limbs 0-1)
+/// - 64: diff bit consistency
+/// - 2: diff recomposition
+/// - 2: borrow consistency (limbs 0-1)
+/// - 2: borrow binary (limbs 0-1)
+/// - 2: subtraction constraints (limbs 0-1)
+/// - 12: Rescue permutation transition constraints
+/// - 8: Rescue init binding (state[0..7] == amount limbs at row 0)
 ///
-/// Phase 2 additions (V2):
-/// Note: Limbs 2-7 are boundary-asserted to zero, so no binary decomposition needed.
-/// The value 0 is trivially a valid u32. Winterfell has a 255-column limit.
-/// - 8: is_less consistency constraints
-/// - 8: is_equal consistency constraints
-/// - 8: diff consistency constraints
-/// - 8: borrow consistency constraints
-/// - 8: is_less binary constraints
-/// - 8: is_equal binary constraints
-/// - 8: borrow binary constraints
-///
-/// Total: 167 + 56 = 223
-const NUM_CONSTRAINTS: usize = 223;
+/// Total: 350
+const NUM_CONSTRAINTS: usize = 350;
+
+const RESCUE_HALF_ROUNDS: usize = ROUND_CONSTANTS.len();
+const RESCUE_OUTPUT_ROW: usize = RESCUE_HALF_ROUNDS;
+
+const PERIODIC_RESCUE_ACTIVE_IDX: usize = 0;
+const PERIODIC_RESCUE_INIT_IDX: usize = 1;
+const PERIODIC_RESCUE_IS_FORWARD_IDX: usize = 2;
+const PERIODIC_RESCUE_CONST_START_IDX: usize = 3;
+const PERIODIC_COLUMN_COUNT: usize = PERIODIC_RESCUE_CONST_START_IDX + RESCUE_STATE_WIDTH;
 
 /// Public inputs for the compliance AIR
 #[derive(Debug, Clone)]
@@ -195,6 +201,11 @@ pub struct PublicInputs {
 impl PublicInputs {
     /// Create new public inputs (legacy, without witness commitment)
     pub fn new(threshold: u64, elements: Vec<Felt>) -> Self {
+        assert_eq!(
+            elements.len(),
+            cols::PUBLIC_INPUTS_LEN,
+            "public input element length mismatch"
+        );
         Self {
             threshold,
             elements,
@@ -204,6 +215,11 @@ impl PublicInputs {
 
     /// Create new public inputs with witness commitment
     pub fn with_commitment(threshold: u64, elements: Vec<Felt>, commitment: [Felt; 4]) -> Self {
+        assert_eq!(
+            elements.len(),
+            cols::PUBLIC_INPUTS_LEN,
+            "public input element length mismatch"
+        );
         Self {
             threshold,
             elements,
@@ -233,6 +249,9 @@ pub struct ComplianceAir {
     /// Witness commitment (first 4 elements of Rescue hash)
     /// The verifier checks that the trace contains this commitment
     witness_commitment: [Felt; 4],
+
+    /// Public input elements bound into trace columns
+    public_inputs: Vec<Felt>,
 }
 
 impl ComplianceAir {
@@ -265,95 +284,82 @@ impl Air for ComplianceAir {
         // Constraint 0: Round counter (degree 1)
         degrees.push(TransitionConstraintDegree::new(1));
 
-        // Constraints 1-8: Amount consistency (degree 1)
+        // Amount consistency (8 constraints, degree 1)
         for _ in 0..8 {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // Constraints 9-16: Threshold consistency (degree 1)
+        // Threshold consistency (8 constraints, degree 1)
         for _ in 0..8 {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // Constraints 17-24: Comparison consistency (legacy) (degree 1)
-        for _ in 0..8 {
+        // Public input binding (constant across rows)
+        for _ in 0..cols::PUBLIC_INPUTS_LEN {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // Constraints 25-88: Binary constraints for 64 bits limbs 0-1 (degree 1)
-        // Note: b * (1 - b) is algebraically degree 2, but since bit values
-        // are constant across the trace, the actual polynomial degree is 1.
+        // Amount bit binary constraints (64 bits, degree 2)
+        for _ in 0..64 {
+            degrees.push(TransitionConstraintDegree::new(2));
+        }
+
+        // Amount bit consistency (64 bits, degree 1)
         for _ in 0..64 {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // Constraints 89-152: Bit consistency limbs 0-1 (degree 1)
+        // Amount recomposition (2 constraints, degree 1)
+        degrees.push(TransitionConstraintDegree::new(1));
+        degrees.push(TransitionConstraintDegree::new(1));
+
+        // Diff bit binary constraints (64 bits, degree 2)
+        for _ in 0..64 {
+            degrees.push(TransitionConstraintDegree::new(2));
+        }
+
+        // Diff bit consistency (64 bits, degree 1)
         for _ in 0..64 {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // Constraints 153-154: Recomposition constraints limbs 0-1 (degree 1)
+        // Diff recomposition (2 constraints, degree 1)
         degrees.push(TransitionConstraintDegree::new(1));
         degrees.push(TransitionConstraintDegree::new(1));
 
-        // Constraints 155-166: Rescue state consistency (degree 1)
-        for _ in 0..12 {
+        // Borrow consistency (2 constraints, degree 1)
+        for _ in 0..2 {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // =========================================================================
-        // V2 Extended Constraints: Comparison Gadget
-        // Note: Limbs 2-7 are boundary-asserted to zero, no decomposition needed
-        // =========================================================================
+        // Borrow binary (2 constraints, degree 2)
+        for _ in 0..2 {
+            degrees.push(TransitionConstraintDegree::new(2));
+        }
 
-        // Constraints 167-174: is_less consistency (8 constraints, degree 1)
+        // Subtraction constraints (2 constraints, degree 1)
+        for _ in 0..2 {
+            degrees.push(TransitionConstraintDegree::new(1));
+        }
+
+        // Rescue permutation transitions (12 constraints, degree 7)
+        for _ in 0..RESCUE_STATE_WIDTH {
+            degrees.push(TransitionConstraintDegree::new(7));
+        }
+
+        // Rescue init binding (8 constraints, degree 1)
         for _ in 0..8 {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // Constraints 175-182: is_equal consistency (8 constraints, degree 1)
-        for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-
-        // Constraints 183-190: diff consistency (8 constraints, degree 1)
-        for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-
-        // Constraints 191-198: borrow consistency (8 constraints, degree 1)
-        for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-
-        // Constraints 199-206: is_less binary (8 constraints, degree 1)
-        // Note: b * (1 - b) is algebraically degree 2, but since is_less values
-        // are constant across the trace, the actual polynomial degree is 1.
-        for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-
-        // Constraints 207-214: is_equal binary (8 constraints, degree 1)
-        // Note: b * (1 - b) is algebraically degree 2, but since is_equal values
-        // are constant across the trace, the actual polynomial degree is 1.
-        for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-
-        // Constraints 215-222: borrow binary (8 constraints, degree 1)
-        // Note: b * (1 - b) is algebraically degree 2, but since borrow values
-        // are constant across the trace, the actual polynomial degree is 1.
-        for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-
-        // Number of boundary assertions: 15 original + 1 (is_less[7] = 1 at last row) = 16
-        let context = AirContext::new(trace_info, degrees, 16, options);
+        // Number of boundary assertions: 78 (see get_assertions)
+        let context = AirContext::new(trace_info, degrees, 78, options);
 
         Self {
             context,
             threshold: pub_inputs.threshold,
             witness_commitment: pub_inputs.witness_commitment,
+            public_inputs: pub_inputs.elements.clone(),
         }
     }
 
@@ -377,30 +383,60 @@ impl Air for ComplianceAir {
         assertions.push(Assertion::single(cols::THRESHOLD_START, 0, threshold_low));
         assertions.push(Assertion::single(cols::THRESHOLD_START + 1, 0, threshold_high));
 
-        // Boundary constraint: final comparison result must be 1 (amount < threshold)
-        // Legacy: using COMPARISON_END - 1
-        assertions.push(Assertion::single(cols::COMPARISON_END - 1, last_row, FELT_ONE));
-
         // Boundary constraint: upper limbs (2-7) must be zero for u64 amounts
-        // This ensures the amount fits in 64 bits
         for i in 2..8 {
             assertions.push(Assertion::single(cols::AMOUNT_START + i, 0, FELT_ZERO));
         }
 
-        // Boundary constraint: witness commitment must match public input
-        // This binds the private witness to the proof via Rescue hash
-        for i in 0..4 {
+        // Boundary constraint: upper threshold limbs (2-7) must be zero for u64 limits
+        for i in 2..8 {
+            assertions.push(Assertion::single(cols::THRESHOLD_START + i, 0, FELT_ZERO));
+        }
+
+        // Boundary constraint: diff limbs (2-7) are zero (u64 subtraction only)
+        for i in 2..8 {
+            assertions.push(Assertion::single(cols::diff(i), 0, FELT_ZERO));
+        }
+
+        // Boundary constraint: final borrow (limb 1) must be zero for amount <= limit
+        assertions.push(Assertion::single(cols::borrow(1), last_row, FELT_ZERO));
+
+        // Boundary constraint: Rescue sponge domain separator and capacity padding
+        assertions.push(Assertion::single(
+            cols::RESCUE_STATE_START + 8,
+            0,
+            felt_from_u64(8),
+        ));
+        for i in 9..RESCUE_STATE_WIDTH {
             assertions.push(Assertion::single(
                 cols::RESCUE_STATE_START + i,
                 0,
+                FELT_ZERO,
+            ));
+        }
+
+        // Boundary constraint: witness commitment must match Rescue output (row 14)
+        for i in 0..4 {
+            assertions.push(Assertion::single(
+                cols::RESCUE_STATE_START + i,
+                RESCUE_OUTPUT_ROW,
                 self.witness_commitment[i],
             ));
         }
 
-        // V2: Boundary constraint for comparison gadget
-        // is_less[0] must be 1 at the last row, meaning amount < threshold
-        // considering all limbs (0 through 7)
-        assertions.push(Assertion::single(cols::is_less(0), last_row, FELT_ONE));
+        // Boundary constraint: bind public input elements into trace columns
+        assert_eq!(
+            self.public_inputs.len(),
+            cols::PUBLIC_INPUTS_LEN,
+            "public input element length mismatch"
+        );
+        for (idx, value) in self.public_inputs.iter().enumerate() {
+            assertions.push(Assertion::single(
+                cols::public_input(idx),
+                0,
+                *value,
+            ));
+        }
 
         assertions
     }
@@ -408,7 +444,7 @@ impl Air for ComplianceAir {
     fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
         &self,
         frame: &EvaluationFrame<E>,
-        _periodic_values: &[E],
+        periodic_values: &[E],
         result: &mut [E],
     ) {
         let current = frame.current();
@@ -416,15 +452,18 @@ impl Air for ComplianceAir {
 
         let mut idx = 0;
 
+        debug_assert_eq!(periodic_values.len(), PERIODIC_COLUMN_COUNT);
+        let rescue_active = periodic_values[PERIODIC_RESCUE_ACTIVE_IDX];
+        let rescue_init = periodic_values[PERIODIC_RESCUE_INIT_IDX];
+        let rescue_is_forward = periodic_values[PERIODIC_RESCUE_IS_FORWARD_IDX];
+
         // Constraint 0: Round counter increments by 1 (degree 1)
-        // next_counter = current_counter + 1
         let counter_current = current[cols::ROUND_COUNTER];
         let counter_next = next[cols::ROUND_COUNTER];
         result[idx] = counter_next - counter_current - E::ONE;
         idx += 1;
 
-        // Constraints 1-8: Amount limbs remain constant
-        // For each limb i: amount[i][next] = amount[i][curr]
+        // Amount limbs remain constant
         for i in 0..8 {
             let amount_curr = current[cols::AMOUNT_START + i];
             let amount_next = next[cols::AMOUNT_START + i];
@@ -432,8 +471,7 @@ impl Air for ComplianceAir {
             idx += 1;
         }
 
-        // Constraints 9-16: Threshold limbs remain constant
-        // For each limb i: threshold[i][next] = threshold[i][curr]
+        // Threshold limbs remain constant
         for i in 0..8 {
             let threshold_curr = current[cols::THRESHOLD_START + i];
             let threshold_next = next[cols::THRESHOLD_START + i];
@@ -441,31 +479,29 @@ impl Air for ComplianceAir {
             idx += 1;
         }
 
-        // Constraints 17-24: Comparison values remain constant
-        // For each value i: comparison[i][next] = comparison[i][curr]
-        for i in 0..8 {
-            let comparison_curr = current[cols::COMPARISON_START + i];
-            let comparison_next = next[cols::COMPARISON_START + i];
-            result[idx] = comparison_next - comparison_curr;
+        // Public inputs remain constant
+        for i in 0..cols::PUBLIC_INPUTS_LEN {
+            let value_curr = current[cols::public_input(i)];
+            let value_next = next[cols::public_input(i)];
+            result[idx] = value_next - value_curr;
             idx += 1;
         }
 
-        // Constraints 25-56: Binary constraints for limb 0 bits (32 bits)
-        // For each bit b: b * (1 - b) = 0 (ensures b is 0 or 1)
+        // Amount bit binary constraints (limb 0)
         for i in 0..32 {
             let bit = current[cols::AMOUNT_BITS_LIMB0_START + i];
             result[idx] = bit * (E::ONE - bit);
             idx += 1;
         }
 
-        // Constraints 57-88: Binary constraints for limb 1 bits (32 bits)
+        // Amount bit binary constraints (limb 1)
         for i in 0..32 {
             let bit = current[cols::AMOUNT_BITS_LIMB1_START + i];
             result[idx] = bit * (E::ONE - bit);
             idx += 1;
         }
 
-        // Constraints 89-120: Bit consistency for limb 0 (bits remain constant)
+        // Amount bit consistency (limb 0)
         for i in 0..32 {
             let bit_curr = current[cols::AMOUNT_BITS_LIMB0_START + i];
             let bit_next = next[cols::AMOUNT_BITS_LIMB0_START + i];
@@ -473,7 +509,7 @@ impl Air for ComplianceAir {
             idx += 1;
         }
 
-        // Constraints 121-152: Bit consistency for limb 1 (bits remain constant)
+        // Amount bit consistency (limb 1)
         for i in 0..32 {
             let bit_curr = current[cols::AMOUNT_BITS_LIMB1_START + i];
             let bit_next = next[cols::AMOUNT_BITS_LIMB1_START + i];
@@ -481,8 +517,7 @@ impl Air for ComplianceAir {
             idx += 1;
         }
 
-        // Constraint 153: Recomposition for limb 0
-        // Verifies: limb0 = sum(bit[i] * 2^i for i in 0..32)
+        // Amount recomposition (limb 0)
         let limb0 = current[cols::AMOUNT_START];
         let mut recomp0 = E::ZERO;
         let two = E::from(felt_from_u64(2));
@@ -494,8 +529,7 @@ impl Air for ComplianceAir {
         result[idx] = limb0 - recomp0;
         idx += 1;
 
-        // Constraint 154: Recomposition for limb 1
-        // Verifies: limb1 = sum(bit[i] * 2^i for i in 0..32)
+        // Amount recomposition (limb 1)
         let limb1 = current[cols::AMOUNT_START + 1];
         let mut recomp1 = E::ZERO;
         let mut power = E::ONE;
@@ -506,81 +540,180 @@ impl Air for ComplianceAir {
         result[idx] = limb1 - recomp1;
         idx += 1;
 
-        // Constraints 155-166: Rescue state consistency
-        // Witness commitment (Rescue hash output) remains constant across rows
-        for i in 0..12 {
-            let state_curr = current[cols::RESCUE_STATE_START + i];
-            let state_next = next[cols::RESCUE_STATE_START + i];
-            result[idx] = state_next - state_curr;
-            idx += 1;
-        }
-        // idx is now 167
-
-        // =========================================================================
-        // V2 Extended Constraints: Comparison Gadget
-        // Note: Limbs 2-7 are boundary-asserted to zero, no binary decomposition needed
-        // =========================================================================
-
-        // Constraints 167-174: is_less consistency (8 constraints)
-        for limb_idx in 0..8 {
-            let is_less_curr = current[cols::is_less(limb_idx)];
-            let is_less_next = next[cols::is_less(limb_idx)];
-            result[idx] = is_less_next - is_less_curr;
+        // Diff bit binary constraints (limb 0)
+        for i in 0..32 {
+            let bit = current[cols::DIFF_BITS_LIMB0_START + i];
+            result[idx] = bit * (E::ONE - bit);
             idx += 1;
         }
 
-        // Constraints 175-182: is_equal consistency (8 constraints)
-        for limb_idx in 0..8 {
-            let is_equal_curr = current[cols::is_equal(limb_idx)];
-            let is_equal_next = next[cols::is_equal(limb_idx)];
-            result[idx] = is_equal_next - is_equal_curr;
+        // Diff bit binary constraints (limb 1)
+        for i in 0..32 {
+            let bit = current[cols::DIFF_BITS_LIMB1_START + i];
+            result[idx] = bit * (E::ONE - bit);
             idx += 1;
         }
 
-        // Constraints 183-190: diff consistency (8 constraints)
-        for limb_idx in 0..8 {
-            let diff_curr = current[cols::diff(limb_idx)];
-            let diff_next = next[cols::diff(limb_idx)];
-            result[idx] = diff_next - diff_curr;
+        // Diff bit consistency (limb 0)
+        for i in 0..32 {
+            let bit_curr = current[cols::DIFF_BITS_LIMB0_START + i];
+            let bit_next = next[cols::DIFF_BITS_LIMB0_START + i];
+            result[idx] = bit_next - bit_curr;
             idx += 1;
         }
 
-        // Constraints 191-198: borrow consistency (8 constraints)
-        for limb_idx in 0..8 {
-            let borrow_curr = current[cols::borrow(limb_idx)];
-            let borrow_next = next[cols::borrow(limb_idx)];
+        // Diff bit consistency (limb 1)
+        for i in 0..32 {
+            let bit_curr = current[cols::DIFF_BITS_LIMB1_START + i];
+            let bit_next = next[cols::DIFF_BITS_LIMB1_START + i];
+            result[idx] = bit_next - bit_curr;
+            idx += 1;
+        }
+
+        // Diff recomposition (limb 0)
+        let diff0 = current[cols::diff(0)];
+        let mut diff_recomp0 = E::ZERO;
+        let mut power = E::ONE;
+        for i in 0..32 {
+            diff_recomp0 = diff_recomp0 + current[cols::DIFF_BITS_LIMB0_START + i] * power;
+            power = power * two;
+        }
+        result[idx] = diff0 - diff_recomp0;
+        idx += 1;
+
+        // Diff recomposition (limb 1)
+        let diff1 = current[cols::diff(1)];
+        let mut diff_recomp1 = E::ZERO;
+        let mut power = E::ONE;
+        for i in 0..32 {
+            diff_recomp1 = diff_recomp1 + current[cols::DIFF_BITS_LIMB1_START + i] * power;
+            power = power * two;
+        }
+        result[idx] = diff1 - diff_recomp1;
+        idx += 1;
+
+        // Borrow consistency (limbs 0-1)
+        for i in 0..2 {
+            let borrow_curr = current[cols::borrow(i)];
+            let borrow_next = next[cols::borrow(i)];
             result[idx] = borrow_next - borrow_curr;
             idx += 1;
         }
 
-        // Constraints 199-206: is_less binary (8 constraints)
-        for limb_idx in 0..8 {
-            let is_less_val = current[cols::is_less(limb_idx)];
-            result[idx] = is_less_val * (E::ONE - is_less_val);
-            idx += 1;
-        }
-
-        // Constraints 207-214: is_equal binary (8 constraints)
-        for limb_idx in 0..8 {
-            let is_equal_val = current[cols::is_equal(limb_idx)];
-            result[idx] = is_equal_val * (E::ONE - is_equal_val);
-            idx += 1;
-        }
-
-        // Constraints 215-222: borrow binary (8 constraints)
-        for limb_idx in 0..8 {
-            let borrow_val = current[cols::borrow(limb_idx)];
+        // Borrow binary (limbs 0-1)
+        for i in 0..2 {
+            let borrow_val = current[cols::borrow(i)];
             result[idx] = borrow_val * (E::ONE - borrow_val);
             idx += 1;
         }
 
-        // idx is now 167 + 56 = 223, matching NUM_CONSTRAINTS
+        // Subtraction constraints for limbs 0-1
+        let two_pow_32 = E::from(felt_from_u64(1u64 << 32));
+        let threshold_low = current[cols::THRESHOLD_START];
+        let threshold_high = current[cols::THRESHOLD_START + 1];
+        let borrow0 = current[cols::borrow(0)];
+        let borrow1 = current[cols::borrow(1)];
+        result[idx] = limb0 + diff0 - threshold_low - borrow0 * two_pow_32;
+        idx += 1;
+        result[idx] = limb1 + diff1 + borrow0 - threshold_high - borrow1 * two_pow_32;
+        idx += 1;
+
+        // Rescue permutation transitions
+        let mut curr_state = [E::ZERO; RESCUE_STATE_WIDTH];
+        let mut next_state = [E::ZERO; RESCUE_STATE_WIDTH];
+        for i in 0..RESCUE_STATE_WIDTH {
+            curr_state[i] = current[cols::RESCUE_STATE_START + i];
+            next_state[i] = next[cols::RESCUE_STATE_START + i];
+        }
+
+        let mut sbox_state = [E::ZERO; RESCUE_STATE_WIDTH];
+        for i in 0..RESCUE_STATE_WIDTH {
+            sbox_state[i] = pow7(curr_state[i]);
+        }
+
+        let mds_forward = apply_mds(&sbox_state, &MDS);
+        let mds_inv = apply_mds(&curr_state, &MDS_INV);
+
+        for i in 0..RESCUE_STATE_WIDTH {
+            let round_const = periodic_values[PERIODIC_RESCUE_CONST_START_IDX + i];
+            let forward_constraint = next_state[i] - (mds_forward[i] + round_const);
+            let backward_constraint = pow7(next_state[i] - round_const) - mds_inv[i];
+            let step_constraint =
+                rescue_is_forward * forward_constraint + (E::ONE - rescue_is_forward) * backward_constraint;
+
+            result[idx] = rescue_active * step_constraint
+                + (E::ONE - rescue_active) * (next_state[i] - curr_state[i]);
+            idx += 1;
+        }
+
+        // Rescue init binding at row 0 (state[0..7] == amount limbs)
+        for i in 0..8 {
+            let state_val = current[cols::RESCUE_STATE_START + i];
+            let amount_val = current[cols::AMOUNT_START + i];
+            result[idx] = rescue_init * (state_val - amount_val);
+            idx += 1;
+        }
+
         debug_assert_eq!(idx, NUM_CONSTRAINTS);
     }
 
     fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
-        vec![]
+        let trace_len = self.trace_length();
+        let mut columns = Vec::with_capacity(PERIODIC_COLUMN_COUNT);
+
+        let active_len = RESCUE_HALF_ROUNDS.min(trace_len.saturating_sub(1));
+
+        let mut rescue_active = vec![FELT_ZERO; trace_len];
+        for i in 0..active_len {
+            rescue_active[i] = FELT_ONE;
+        }
+        columns.push(rescue_active);
+
+        let mut rescue_init = vec![FELT_ZERO; trace_len];
+        if trace_len > 0 {
+            rescue_init[0] = FELT_ONE;
+        }
+        columns.push(rescue_init);
+
+        let mut rescue_is_forward = vec![FELT_ZERO; trace_len];
+        for i in 0..active_len {
+            rescue_is_forward[i] = if i % 2 == 0 { FELT_ONE } else { FELT_ZERO };
+        }
+        columns.push(rescue_is_forward);
+
+        for const_idx in 0..RESCUE_STATE_WIDTH {
+            let mut col = vec![FELT_ZERO; trace_len];
+            for step in 0..active_len {
+                col[step] = felt_from_u64(ROUND_CONSTANTS[step][const_idx]);
+            }
+            columns.push(col);
+        }
+
+        debug_assert_eq!(columns.len(), PERIODIC_COLUMN_COUNT);
+        columns
     }
+}
+
+fn pow7<E: FieldElement<BaseField = Felt>>(x: E) -> E {
+    let x2 = x * x;
+    let x4 = x2 * x2;
+    let x6 = x4 * x2;
+    x6 * x
+}
+
+fn apply_mds<E: FieldElement<BaseField = Felt>>(
+    state: &[E; RESCUE_STATE_WIDTH],
+    matrix: &[[u64; RESCUE_STATE_WIDTH]; RESCUE_STATE_WIDTH],
+) -> [E; RESCUE_STATE_WIDTH] {
+    let mut result = [E::ZERO; RESCUE_STATE_WIDTH];
+    for i in 0..RESCUE_STATE_WIDTH {
+        let mut sum = E::ZERO;
+        for j in 0..RESCUE_STATE_WIDTH {
+            sum = sum + E::from(felt_from_u64(matrix[i][j])) * state[j];
+        }
+        result[i] = sum;
+    }
+    result
 }
 
 /// Builder for creating ComplianceAir instances
@@ -703,29 +836,32 @@ mod tests {
 
     #[test]
     fn test_public_inputs_to_elements() {
-        let pub_inputs = PublicInputs::new(10000, vec![felt_from_u64(1), felt_from_u64(2)]);
+        let elements_vec = vec![felt_from_u64(1); cols::PUBLIC_INPUTS_LEN];
+        let pub_inputs = PublicInputs::new(10000, elements_vec);
         let elements = pub_inputs.to_elements();
-        // threshold + 2 elements + 4 witness commitment elements = 7
-        assert_eq!(elements.len(), 7);
+        // threshold + public inputs + witness commitment elements
+        assert_eq!(elements.len(), 1 + cols::PUBLIC_INPUTS_LEN + 4);
         assert_eq!(elements[0].as_int(), 10000);
     }
 
     #[test]
     fn test_public_inputs_with_commitment() {
         let commitment = [felt_from_u64(100), felt_from_u64(200), felt_from_u64(300), felt_from_u64(400)];
+        let elements_vec = vec![felt_from_u64(1); cols::PUBLIC_INPUTS_LEN];
         let pub_inputs = PublicInputs::with_commitment(
             10000,
-            vec![felt_from_u64(1), felt_from_u64(2)],
+            elements_vec,
             commitment,
         );
         let elements = pub_inputs.to_elements();
-        // threshold + 2 elements + 4 witness commitment elements = 7
-        assert_eq!(elements.len(), 7);
+        // threshold + public inputs + witness commitment elements
+        assert_eq!(elements.len(), 1 + cols::PUBLIC_INPUTS_LEN + 4);
         assert_eq!(elements[0].as_int(), 10000);
         // Check commitment elements are at the end
-        assert_eq!(elements[3].as_int(), 100);
-        assert_eq!(elements[4].as_int(), 200);
-        assert_eq!(elements[5].as_int(), 300);
-        assert_eq!(elements[6].as_int(), 400);
+        let commitment_start = 1 + cols::PUBLIC_INPUTS_LEN;
+        assert_eq!(elements[commitment_start].as_int(), 100);
+        assert_eq!(elements[commitment_start + 1].as_int(), 200);
+        assert_eq!(elements[commitment_start + 2].as_int(), 300);
+        assert_eq!(elements[commitment_start + 3].as_int(), 400);
     }
 }
