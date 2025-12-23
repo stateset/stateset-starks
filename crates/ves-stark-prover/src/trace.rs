@@ -71,11 +71,6 @@ fn compute_subtraction_witness(
     Ok((diff, borrow))
 }
 
-/// Compute a Rescue hash commitment to the witness amount
-/// This binds the private amount value to the proof
-fn compute_witness_commitment_from_state(state: &[Felt; RESCUE_STATE_WIDTH]) -> [Felt; 4] {
-    [state[0], state[1], state[2], state[3]]
-}
 
 /// Build the execution trace for a compliance proof
 pub struct TraceBuilder {

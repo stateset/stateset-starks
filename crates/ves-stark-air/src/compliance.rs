@@ -299,9 +299,11 @@ impl Air for ComplianceAir {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // Amount bit binary constraints (64 bits, degree 2)
+        // Amount bit binary constraints (64 bits)
+        // Since bits are constant across all rows, the polynomial is degree 0
+        // but we declare 1 to account for trace polynomial structure
         for _ in 0..64 {
-            degrees.push(TransitionConstraintDegree::new(2));
+            degrees.push(TransitionConstraintDegree::new(1));
         }
 
         // Amount bit consistency (64 bits, degree 1)
@@ -313,9 +315,10 @@ impl Air for ComplianceAir {
         degrees.push(TransitionConstraintDegree::new(1));
         degrees.push(TransitionConstraintDegree::new(1));
 
-        // Diff bit binary constraints (64 bits, degree 2)
+        // Diff bit binary constraints (64 bits)
+        // Since diff bits are constant across all rows, polynomial is degree 0
         for _ in 0..64 {
-            degrees.push(TransitionConstraintDegree::new(2));
+            degrees.push(TransitionConstraintDegree::new(1));
         }
 
         // Diff bit consistency (64 bits, degree 1)
@@ -332,9 +335,10 @@ impl Air for ComplianceAir {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // Borrow binary (2 constraints, degree 2)
+        // Borrow binary (2 constraints)
+        // Borrows are constant across rows
         for _ in 0..2 {
-            degrees.push(TransitionConstraintDegree::new(2));
+            degrees.push(TransitionConstraintDegree::new(1));
         }
 
         // Subtraction constraints (2 constraints, degree 1)
@@ -342,14 +346,17 @@ impl Air for ComplianceAir {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // Rescue permutation transitions (12 constraints, degree 7)
+        // Rescue permutation transitions (12 constraints)
+        // Base degree 7 (pow7), but multiplied by periodic columns rescue_active and rescue_is_forward
+        // which adds +2 to effective degree when periodic columns have full trace length period
         for _ in 0..RESCUE_STATE_WIDTH {
-            degrees.push(TransitionConstraintDegree::new(7));
+            degrees.push(TransitionConstraintDegree::new(9));
         }
 
-        // Rescue init binding (8 constraints, degree 1)
+        // Rescue init binding (8 constraints)
+        // Base degree 1, but multiplied by rescue_init periodic column (adds +1)
         for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::new(1));
+            degrees.push(TransitionConstraintDegree::new(2));
         }
 
         // Number of boundary assertions: 78 (see get_assertions)

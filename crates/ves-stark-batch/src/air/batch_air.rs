@@ -13,7 +13,7 @@ use winter_air::{
 };
 use winter_math::FieldElement;
 
-use crate::air::trace_layout::{batch_cols, BATCH_TRACE_WIDTH, BatchPhase};
+use crate::air::trace_layout::batch_cols;
 use crate::public_inputs::BatchPublicInputs;
 
 /// Number of transition constraints in simplified batch AIR
