@@ -4,6 +4,14 @@
 //! It enables proving that N compliance events were all verified correctly
 //! with a single STARK proof, along with state transition integrity.
 //!
+//! # Experimental
+//!
+//! Batch proofs are Phase 2+ per the PRD and are **not** yet sound:
+//! - Event compliance proofs are not embedded or verified in this AIR
+//! - Merkle/state transition constraints are still incomplete
+//!
+//! Do not use this crate for production verification.
+//!
 //! # Architecture
 //!
 //! The batch proof system consists of:

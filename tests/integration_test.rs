@@ -10,7 +10,6 @@
 use ves_stark_primitives::public_inputs::{
     CompliancePublicInputs, PolicyParams, compute_policy_hash,
 };
-use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
 use ves_stark_prover::{ComplianceProver, ComplianceWitness, Policy};
 use ves_stark_verifier::verify_compliance_proof;
 use uuid::Uuid;
@@ -19,7 +18,7 @@ use uuid::Uuid;
 fn sample_aml_public_inputs(threshold: u64) -> CompliancePublicInputs {
     let policy_id = "aml.threshold";
     let params = PolicyParams::threshold(threshold);
-    let hash = compute_policy_hash(policy_id, &params);
+    let hash = compute_policy_hash(policy_id, &params).unwrap();
 
     CompliancePublicInputs {
         event_id: Uuid::new_v4(),
@@ -40,7 +39,7 @@ fn sample_aml_public_inputs(threshold: u64) -> CompliancePublicInputs {
 fn sample_cap_public_inputs(cap: u64) -> CompliancePublicInputs {
     let policy_id = "order_total.cap";
     let params = PolicyParams::cap(cap);
-    let hash = compute_policy_hash(policy_id, &params);
+    let hash = compute_policy_hash(policy_id, &params).unwrap();
 
     CompliancePublicInputs {
         event_id: Uuid::new_v4(),
@@ -69,10 +68,10 @@ fn test_valid_witness_creates_valid_proof() {
 
     let inputs = sample_public_inputs(threshold);
     let witness = ComplianceWitness::new(amount, inputs.clone());
-    let policy = AmlThresholdPolicy::new(threshold);
+    let policy = Policy::aml_threshold(threshold);
 
     // Create prover and generate proof
-    let prover = ComplianceProver::new(policy.clone());
+    let prover = ComplianceProver::with_policy(policy.clone());
     let proof = prover.prove(&witness);
 
     // Should succeed since amount < threshold
@@ -97,9 +96,9 @@ fn test_invalid_witness_fails_proof_generation() {
 
     let inputs = sample_public_inputs(threshold);
     let witness = ComplianceWitness::new(amount, inputs);
-    let policy = AmlThresholdPolicy::new(threshold);
+    let policy = Policy::aml_threshold(threshold);
 
-    let prover = ComplianceProver::new(policy);
+    let prover = ComplianceProver::with_policy(policy);
     let proof = prover.prove(&witness);
 
     // Should fail since amount >= threshold
@@ -113,9 +112,9 @@ fn test_boundary_amount_fails() {
 
     let inputs = sample_public_inputs(threshold);
     let witness = ComplianceWitness::new(amount, inputs);
-    let policy = AmlThresholdPolicy::new(threshold);
+    let policy = Policy::aml_threshold(threshold);
 
-    let prover = ComplianceProver::new(policy);
+    let prover = ComplianceProver::with_policy(policy);
     let proof = prover.prove(&witness);
 
     // Should fail since amount == threshold
@@ -129,9 +128,9 @@ fn test_zero_amount_succeeds() {
 
     let inputs = sample_public_inputs(threshold);
     let witness = ComplianceWitness::new(amount, inputs.clone());
-    let policy = AmlThresholdPolicy::new(threshold);
+    let policy = Policy::aml_threshold(threshold);
 
-    let prover = ComplianceProver::new(policy.clone());
+    let prover = ComplianceProver::with_policy(policy.clone());
     let proof = prover.prove(&witness);
 
     assert!(proof.is_ok());
@@ -149,9 +148,9 @@ fn test_max_valid_amount_succeeds() {
 
     let inputs = sample_public_inputs(threshold);
     let witness = ComplianceWitness::new(amount, inputs.clone());
-    let policy = AmlThresholdPolicy::new(threshold);
+    let policy = Policy::aml_threshold(threshold);
 
-    let prover = ComplianceProver::new(policy.clone());
+    let prover = ComplianceProver::with_policy(policy.clone());
     let proof = prover.prove(&witness);
 
     assert!(proof.is_ok());
@@ -169,9 +168,9 @@ fn test_proof_hash_is_deterministic() {
 
     let inputs = sample_public_inputs(threshold);
     let witness = ComplianceWitness::new(amount, inputs);
-    let policy = AmlThresholdPolicy::new(threshold);
+    let policy = Policy::aml_threshold(threshold);
 
-    let prover = ComplianceProver::new(policy);
+    let prover = ComplianceProver::with_policy(policy);
     let proof1 = prover.prove(&witness).unwrap();
     let proof2 = prover.prove(&witness).unwrap();
 
@@ -188,9 +187,9 @@ fn test_verifier_rejects_tampered_proof() {
 
     let inputs = sample_public_inputs(threshold);
     let witness = ComplianceWitness::new(amount, inputs.clone());
-    let policy = AmlThresholdPolicy::new(threshold);
+    let policy = Policy::aml_threshold(threshold);
 
-    let prover = ComplianceProver::new(policy.clone());
+    let prover = ComplianceProver::with_policy(policy.clone());
     let proof = prover.prove(&witness).unwrap();
 
     // Tamper with the proof
@@ -231,9 +230,9 @@ fn test_large_threshold_values() {
 
     let inputs = sample_public_inputs(threshold);
     let witness = ComplianceWitness::new(amount, inputs.clone());
-    let policy = AmlThresholdPolicy::new(threshold);
+    let policy = Policy::aml_threshold(threshold);
 
-    let prover = ComplianceProver::new(policy.clone());
+    let prover = ComplianceProver::with_policy(policy.clone());
     let proof = prover.prove(&witness);
 
     assert!(proof.is_ok());
@@ -261,8 +260,8 @@ fn test_order_total_cap_valid_amount() {
     println!("[order_total.cap] Proof size: {} bytes", proof.metadata.proof_size);
     println!("[order_total.cap] Proving time: {} ms", proof.metadata.proving_time_ms);
 
-    // Verify the proof using AmlThresholdPolicy (verifier uses same structure)
-    let verify_policy = AmlThresholdPolicy::new(cap);
+    // Verify the proof using the same policy parameters as the public inputs
+    let verify_policy = Policy::order_total_cap(cap);
     let result = verify_compliance_proof(&proof.proof_bytes, &inputs, &verify_policy, &proof.witness_commitment);
     assert!(result.is_ok(), "Verification should succeed: {:?}", result.err());
 
@@ -288,7 +287,7 @@ fn test_order_total_cap_boundary_succeeds() {
     let proof = proof.unwrap();
 
     // Verify the proof
-    let verify_policy = AmlThresholdPolicy::new(cap);
+    let verify_policy = Policy::order_total_cap(cap);
     let result = verify_compliance_proof(&proof.proof_bytes, &inputs, &verify_policy, &proof.witness_commitment);
     assert!(result.is_ok());
     assert!(result.unwrap().valid, "Boundary proof (amount == cap) should be valid");
@@ -325,7 +324,7 @@ fn test_order_total_cap_zero_amount() {
     assert!(proof.is_ok());
 
     let proof = proof.unwrap();
-    let verify_policy = AmlThresholdPolicy::new(cap);
+    let verify_policy = Policy::order_total_cap(cap);
     let result = verify_compliance_proof(&proof.proof_bytes, &inputs, &verify_policy, &proof.witness_commitment);
     assert!(result.is_ok());
     assert!(result.unwrap().valid);

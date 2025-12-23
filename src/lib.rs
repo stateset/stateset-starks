@@ -20,9 +20,8 @@
 //!
 //! ```no_run
 //! use ves_stark_primitives::public_inputs::{CompliancePublicInputs, PolicyParams, compute_policy_hash};
-//! use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
-//! use ves_stark_prover::{ComplianceProver, ComplianceWitness};
-//! use ves_stark_verifier::verify_compliance_proof;
+//! use ves_stark_prover::{ComplianceProver, ComplianceWitness, Policy};
+//! use ves_stark_verifier::verify_compliance_proof_auto;
 //! ```
 
 // Re-export sub-crates

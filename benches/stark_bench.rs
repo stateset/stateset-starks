@@ -44,7 +44,6 @@ use criterion::{
 };
 use uuid::Uuid;
 
-use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
 use ves_stark_primitives::public_inputs::{
     CompliancePublicInputs, PolicyParams, compute_policy_hash,
 };
@@ -57,7 +56,7 @@ use ves_stark_verifier::verify_compliance_proof;
 fn sample_aml_inputs(threshold: u64) -> CompliancePublicInputs {
     let policy_id = "aml.threshold";
     let params = PolicyParams::threshold(threshold);
-    let hash = compute_policy_hash(policy_id, &params);
+    let hash = compute_policy_hash(policy_id, &params).unwrap();
 
     CompliancePublicInputs {
         event_id: Uuid::new_v4(),
@@ -78,7 +77,7 @@ fn sample_aml_inputs(threshold: u64) -> CompliancePublicInputs {
 fn sample_cap_inputs(cap: u64) -> CompliancePublicInputs {
     let policy_id = "order_total.cap";
     let params = PolicyParams::cap(cap);
-    let hash = compute_policy_hash(policy_id, &params);
+    let hash = compute_policy_hash(policy_id, &params).unwrap();
 
     CompliancePublicInputs {
         event_id: Uuid::new_v4(),
@@ -110,8 +109,8 @@ fn bench_proof_generation(c: &mut Criterion) {
 
     // Test with different threshold values
     for threshold in [1_000u64, 10_000, 100_000, 1_000_000].iter() {
-        let policy = AmlThresholdPolicy::new(*threshold);
-        let prover = ComplianceProver::new(policy);
+        let policy = Policy::aml_threshold(*threshold);
+        let prover = ComplianceProver::with_policy(policy);
         let amount = threshold / 2; // Amount is half the threshold
         let inputs = sample_inputs(*threshold);
         let witness = ComplianceWitness::new(amount, inputs);
@@ -144,8 +143,8 @@ fn bench_proof_generation_by_amount(c: &mut Criterion) {
         ("medium", threshold / 2),
         ("large", threshold - 1),
     ] {
-        let policy = AmlThresholdPolicy::new(threshold);
-        let prover = ComplianceProver::new(policy);
+        let policy = Policy::aml_threshold(threshold);
+        let prover = ComplianceProver::with_policy(policy);
         let inputs = sample_inputs(threshold);
         let witness = ComplianceWitness::new(amount, inputs);
 
@@ -172,8 +171,8 @@ fn bench_verification(c: &mut Criterion) {
 
     // Pre-generate proofs for verification benchmarks
     for threshold in [1_000u64, 10_000, 100_000].iter() {
-        let policy = AmlThresholdPolicy::new(*threshold);
-        let prover = ComplianceProver::new(policy.clone());
+        let policy = Policy::aml_threshold(*threshold);
+        let prover = ComplianceProver::with_policy(policy.clone());
         let amount = threshold / 2;
         let inputs = sample_inputs(*threshold);
         let witness = ComplianceWitness::new(amount, inputs.clone());
@@ -209,8 +208,8 @@ fn bench_end_to_end(c: &mut Criterion) {
     group.sample_size(10);
 
     let threshold = 10_000u64;
-    let policy = AmlThresholdPolicy::new(threshold);
-    let prover = ComplianceProver::new(policy.clone());
+    let policy = Policy::aml_threshold(threshold);
+    let prover = ComplianceProver::with_policy(policy.clone());
 
     group.bench_function("prove_and_verify", |b| {
         b.iter(|| {
@@ -303,8 +302,8 @@ fn bench_serialization(c: &mut Criterion) {
 
     // Generate a proof to serialize
     let threshold = 10_000u64;
-    let policy = AmlThresholdPolicy::new(threshold);
-    let prover = ComplianceProver::new(policy);
+    let policy = Policy::aml_threshold(threshold);
+    let prover = ComplianceProver::with_policy(policy);
     let inputs = sample_inputs(threshold);
     let witness = ComplianceWitness::new(5000, inputs.clone());
     let proof = prover.prove(&witness).expect("proof generation failed");

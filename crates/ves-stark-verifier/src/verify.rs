@@ -4,7 +4,7 @@
 
 use crate::error::{VerifierError, validate_hex_string};
 use ves_stark_air::compliance::{ComplianceAir, PublicInputs};
-use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
+use ves_stark_air::policy::Policy;
 use ves_stark_primitives::public_inputs::CompliancePublicInputs;
 use ves_stark_primitives::{Felt, Hash256, felt_from_u64};
 use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
@@ -36,8 +36,8 @@ pub struct VerificationResult {
     /// The policy that was verified
     pub policy_id: String,
 
-    /// The threshold that was verified against
-    pub threshold: u64,
+    /// The policy limit that was verified against
+    pub policy_limit: u64,
 }
 
 /// Verify a compliance proof
@@ -50,7 +50,7 @@ pub struct VerificationResult {
 pub fn verify_compliance_proof(
     proof_bytes: &[u8],
     public_inputs: &CompliancePublicInputs,
-    policy: &AmlThresholdPolicy,
+    policy: &Policy,
     witness_commitment: &[u64; 4],
 ) -> Result<VerificationResult, VerifierError> {
     let start = Instant::now();
@@ -62,14 +62,35 @@ pub fn verify_compliance_proof(
     validate_hex_string("policy_hash", &public_inputs.policy_hash, 64)?;
 
     // Validate policy hash
-    if !public_inputs.validate_policy_hash() {
+    let policy_hash_valid = public_inputs
+        .validate_policy_hash()
+        .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?;
+    if !policy_hash_valid {
+        let expected = CompliancePublicInputs::compute_policy_hash(
+            &public_inputs.policy_id,
+            &public_inputs.policy_params,
+        )
+        .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?;
         return Err(VerifierError::InvalidPolicyHash {
-            expected: CompliancePublicInputs::compute_policy_hash(
-                &public_inputs.policy_id,
-                &public_inputs.policy_params,
-            ).to_hex(),
+            expected: expected.to_hex(),
             actual: public_inputs.policy_hash.clone(),
         });
+    }
+
+    // Policy must match public inputs
+    let derived_policy = Policy::from_public_inputs(
+        &public_inputs.policy_id,
+        &public_inputs.policy_params,
+    )
+    .map_err(|e| VerifierError::PublicInputMismatch(format!("Invalid policy params: {e}")))?;
+    if policy.policy_id() != derived_policy.policy_id() {
+        return Err(VerifierError::policy_mismatch(
+            policy.policy_id(),
+            derived_policy.policy_id(),
+        ));
+    }
+    if policy.limit() != derived_policy.limit() {
+        return Err(VerifierError::limit_mismatch(policy.limit(), derived_policy.limit()));
     }
 
     // Deserialize proof
@@ -85,9 +106,14 @@ pub fn verify_compliance_proof(
     ];
 
     // Convert public inputs to field elements and include witness commitment
-    let pub_inputs_felts = public_inputs.to_field_elements();
+    let pub_inputs_felts = public_inputs
+        .to_field_elements()
+        .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?;
+    let policy_limit = policy
+        .effective_limit()
+        .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?;
     let pub_inputs = PublicInputs::with_commitment(
-        policy.threshold,
+        policy_limit,
         pub_inputs_felts.to_vec(),
         commitment_felts,
     );
@@ -114,16 +140,30 @@ pub fn verify_compliance_proof(
             verification_time_ms: verification_time.as_millis() as u64,
             error: None,
             policy_id: public_inputs.policy_id.clone(),
-            threshold: policy.threshold,
+            policy_limit: policy.limit(),
         }),
         Err(e) => Ok(VerificationResult {
             valid: false,
             verification_time_ms: verification_time.as_millis() as u64,
             error: Some(format!("{:?}", e)),
             policy_id: public_inputs.policy_id.clone(),
-            threshold: policy.threshold,
+            policy_limit: policy.limit(),
         }),
     }
+}
+
+/// Verify a compliance proof using policy parameters from the public inputs.
+pub fn verify_compliance_proof_auto(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    witness_commitment: &[u64; 4],
+) -> Result<VerificationResult, VerifierError> {
+    let policy = Policy::from_public_inputs(
+        &public_inputs.policy_id,
+        &public_inputs.policy_params,
+    )
+    .map_err(|e| VerifierError::PublicInputMismatch(format!("Invalid policy params: {e}")))?;
+    verify_compliance_proof(proof_bytes, public_inputs, &policy, witness_commitment)
 }
 
 /// Stateless compliance proof verifier
@@ -157,10 +197,20 @@ impl ComplianceVerifier {
         &self,
         proof_bytes: &[u8],
         public_inputs: &CompliancePublicInputs,
-        policy: &AmlThresholdPolicy,
+        policy: &Policy,
         witness_commitment: &[u64; 4],
     ) -> Result<VerificationResult, VerifierError> {
         verify_compliance_proof(proof_bytes, public_inputs, policy, witness_commitment)
+    }
+
+    /// Verify a proof using policy parameters from the public inputs.
+    pub fn verify_auto(
+        &self,
+        proof_bytes: &[u8],
+        public_inputs: &CompliancePublicInputs,
+        witness_commitment: &[u64; 4],
+    ) -> Result<VerificationResult, VerifierError> {
+        verify_compliance_proof_auto(proof_bytes, public_inputs, witness_commitment)
     }
 
     /// Verify proof hash matches
@@ -188,7 +238,7 @@ mod tests {
     fn sample_inputs(threshold: u64) -> CompliancePublicInputs {
         let policy_id = "aml.threshold";
         let params = PolicyParams::threshold(threshold);
-        let hash = CompliancePublicInputs::compute_policy_hash(policy_id, &params);
+        let hash = CompliancePublicInputs::compute_policy_hash(policy_id, &params).unwrap();
 
         CompliancePublicInputs {
             event_id: Uuid::new_v4(),
@@ -240,7 +290,7 @@ mod tests {
         let mut inputs = sample_inputs(threshold);
         inputs.policy_hash = "invalid".repeat(8);
 
-        let policy = AmlThresholdPolicy::new(threshold);
+        let policy = Policy::aml_threshold(threshold);
         let witness_commitment = [0u64; 4];
         let result = verify_compliance_proof(&[], &inputs, &policy, &witness_commitment);
 
@@ -253,7 +303,7 @@ mod tests {
         let mut inputs = sample_inputs(threshold);
         inputs.policy_hash = String::new();
 
-        let policy = AmlThresholdPolicy::new(threshold);
+        let policy = Policy::aml_threshold(threshold);
         let witness_commitment = [0u64; 4];
         let result = verify_compliance_proof(&[], &inputs, &policy, &witness_commitment);
 
@@ -267,7 +317,7 @@ mod tests {
         // Make hash uppercase (should fail since we use lowercase hex)
         inputs.policy_hash = inputs.policy_hash.to_uppercase();
 
-        let policy = AmlThresholdPolicy::new(threshold);
+        let policy = Policy::aml_threshold(threshold);
         let witness_commitment = [0u64; 4];
         let result = verify_compliance_proof(&[], &inputs, &policy, &witness_commitment);
 
@@ -280,7 +330,7 @@ mod tests {
         let inputs = sample_inputs(threshold);
 
         // Just check that policy hash validation passes
-        assert!(inputs.validate_policy_hash());
+        assert!(inputs.validate_policy_hash().unwrap());
     }
 
     // =========================================================================
@@ -361,7 +411,7 @@ mod tests {
     fn test_empty_proof_bytes_fails() {
         let threshold = 10000u64;
         let inputs = sample_inputs(threshold);
-        let policy = AmlThresholdPolicy::new(threshold);
+        let policy = Policy::aml_threshold(threshold);
         let witness_commitment = [0u64; 4];
 
         let result = verify_compliance_proof(&[], &inputs, &policy, &witness_commitment);
@@ -374,7 +424,7 @@ mod tests {
     fn test_garbage_proof_bytes_fails() {
         let threshold = 10000u64;
         let inputs = sample_inputs(threshold);
-        let policy = AmlThresholdPolicy::new(threshold);
+        let policy = Policy::aml_threshold(threshold);
         let witness_commitment = [0u64; 4];
         let garbage_bytes = vec![0xFF; 100];
 
@@ -387,7 +437,7 @@ mod tests {
     fn test_truncated_proof_bytes_fails() {
         let threshold = 10000u64;
         let inputs = sample_inputs(threshold);
-        let policy = AmlThresholdPolicy::new(threshold);
+        let policy = Policy::aml_threshold(threshold);
         let witness_commitment = [0u64; 4];
         // Some bytes that look like they could be a proof header but are truncated
         let truncated_bytes = vec![0x01, 0x02, 0x03, 0x04, 0x05];
@@ -408,7 +458,7 @@ mod tests {
             verification_time_ms: 150,
             error: None,
             policy_id: "aml.threshold".to_string(),
-            threshold: 10000,
+            policy_limit: 10000,
         };
 
         let json = serde_json::to_string(&result).unwrap();
@@ -418,7 +468,7 @@ mod tests {
         assert_eq!(recovered.verification_time_ms, 150);
         assert!(recovered.error.is_none());
         assert_eq!(recovered.policy_id, "aml.threshold");
-        assert_eq!(recovered.threshold, 10000);
+        assert_eq!(recovered.policy_limit, 10000);
     }
 
     #[test]
@@ -428,7 +478,7 @@ mod tests {
             verification_time_ms: 50,
             error: Some("Constraint check failed".to_string()),
             policy_id: "aml.threshold".to_string(),
-            threshold: 5000,
+            policy_limit: 5000,
         };
 
         let json = serde_json::to_string(&result).unwrap();
@@ -447,20 +497,19 @@ mod tests {
     fn test_zero_threshold() {
         let threshold = 0u64;
         let inputs = sample_inputs(threshold);
-        let policy = AmlThresholdPolicy::new(threshold);
+        let policy = Policy::aml_threshold(threshold);
         let witness_commitment = [0u64; 4];
 
         // With threshold 0, no amount can satisfy amount < 0 for unsigned
         let result = verify_compliance_proof(&[], &inputs, &policy, &witness_commitment);
-        // Should fail at deserialization, not policy validation
-        assert!(matches!(result, Err(VerifierError::DeserializationError(_))));
+        assert!(matches!(result, Err(VerifierError::PublicInputMismatch(_))));
     }
 
     #[test]
     fn test_max_threshold() {
         let threshold = u64::MAX;
         let inputs = sample_inputs(threshold);
-        let policy = AmlThresholdPolicy::new(threshold);
+        let policy = Policy::aml_threshold(threshold);
         let witness_commitment = [0u64; 4];
 
         let result = verify_compliance_proof(&[], &inputs, &policy, &witness_commitment);
@@ -472,7 +521,7 @@ mod tests {
     fn test_witness_commitment_zeros() {
         let threshold = 10000u64;
         let inputs = sample_inputs(threshold);
-        let policy = AmlThresholdPolicy::new(threshold);
+        let policy = Policy::aml_threshold(threshold);
         let witness_commitment = [0u64; 4];
 
         // Zero commitment with empty proof should fail at deserialization
@@ -484,7 +533,7 @@ mod tests {
     fn test_witness_commitment_max_values() {
         let threshold = 10000u64;
         let inputs = sample_inputs(threshold);
-        let policy = AmlThresholdPolicy::new(threshold);
+        let policy = Policy::aml_threshold(threshold);
         let witness_commitment = [u64::MAX; 4];
 
         // Max commitment with empty proof should fail at deserialization
@@ -503,7 +552,7 @@ mod tests {
         // Create multiple inputs with different UUIDs
         for _ in 0..5 {
             let inputs = sample_inputs(threshold);
-            assert!(inputs.validate_policy_hash());
+            assert!(inputs.validate_policy_hash().unwrap());
         }
     }
 
@@ -512,7 +561,7 @@ mod tests {
         let threshold = 10000u64;
         let policy_id = "aml.threshold";
         let params = PolicyParams::threshold(threshold);
-        let hash = CompliancePublicInputs::compute_policy_hash(policy_id, &params);
+        let hash = CompliancePublicInputs::compute_policy_hash(policy_id, &params).unwrap();
 
         for seq in [0u64, 1, 100, u64::MAX] {
             let inputs = CompliancePublicInputs {
@@ -528,7 +577,7 @@ mod tests {
                 policy_params: params.clone(),
                 policy_hash: hash.to_hex(),
             };
-            assert!(inputs.validate_policy_hash());
+            assert!(inputs.validate_policy_hash().unwrap());
         }
     }
 

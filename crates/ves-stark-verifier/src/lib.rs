@@ -7,9 +7,9 @@
 //! # Usage
 //!
 //! ```ignore
-//! use ves_stark_verifier::{verify_compliance_proof, VerificationResult};
+//! use ves_stark_verifier::verify_compliance_proof_auto;
 //!
-//! let result = verify_compliance_proof(&proof_bytes, &public_inputs)?;
+//! let result = verify_compliance_proof_auto(&proof_bytes, &public_inputs, &witness_commitment)?;
 //! assert!(result.valid);
 //! ```
 
@@ -19,6 +19,7 @@ mod verify;
 pub use error::{VerifierError, PROOF_VERSION, validate_hex_string};
 pub use verify::{
     verify_compliance_proof,
+    verify_compliance_proof_auto,
     VerificationResult,
     ComplianceVerifier,
 };

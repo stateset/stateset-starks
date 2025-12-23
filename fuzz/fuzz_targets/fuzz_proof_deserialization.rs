@@ -10,7 +10,7 @@
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use uuid::Uuid;
-use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
+use ves_stark_air::policy::Policy;
 use ves_stark_primitives::public_inputs::{CompliancePublicInputs, PolicyParams, compute_policy_hash};
 use ves_stark_verifier::verify_compliance_proof;
 
@@ -28,7 +28,7 @@ struct ProofInput {
 fn create_public_inputs(threshold: u64) -> CompliancePublicInputs {
     let policy_id = "aml.threshold";
     let params = PolicyParams::threshold(threshold);
-    let hash = compute_policy_hash(policy_id, &params);
+    let hash = compute_policy_hash(policy_id, &params).unwrap();
 
     CompliancePublicInputs {
         event_id: Uuid::new_v4(),
@@ -50,7 +50,7 @@ fuzz_target!(|input: ProofInput| {
     let proof_bytes: Vec<u8> = input.proof_bytes.into_iter().take(10_000).collect();
 
     let public_inputs = create_public_inputs(input.threshold);
-    let policy = AmlThresholdPolicy::new(input.threshold);
+    let policy = Policy::aml_threshold(input.threshold);
 
     // Verification should NEVER panic, even with garbage input
     let result = verify_compliance_proof(

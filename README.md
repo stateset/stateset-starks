@@ -48,9 +48,9 @@ let proof = prover.prove(&witness)?;
 ### Verify a Proof
 
 ```rust
-use ves_stark_verifier::verify_compliance_proof;
+use ves_stark_verifier::verify_compliance_proof_auto;
 
-let result = verify_compliance_proof(&proof.proof_bytes, &public_inputs, &policy)?;
+let result = verify_compliance_proof_auto(&proof.proof_bytes, &public_inputs, &proof.witness_commitment)?;
 assert!(result.valid);
 ```
 

@@ -8,6 +8,7 @@ use ves_stark_primitives::public_inputs::CompliancePublicInputs;
 use ves_stark_primitives::{Felt, felt_from_u64, FELT_ZERO};
 use ves_stark_air::range_check::validate_limbs;
 use crate::error::ProverError;
+use crate::policy::Policy;
 
 /// Witness for compliance proofs
 #[derive(Debug, Clone)]
@@ -29,19 +30,37 @@ impl ComplianceWitness {
     }
 
     /// Validate the witness against the policy
-    pub fn validate(&self, threshold: u64) -> Result<(), ProverError> {
-        if self.amount >= threshold {
+    pub fn validate(&self, policy: &Policy) -> Result<(), ProverError> {
+        if !policy.validate_amount(self.amount) {
             return Err(ProverError::policy_validation_failed(format!(
-                "Amount {} is not less than threshold {}",
-                self.amount, threshold
+                "Amount {} does not satisfy policy {} with limit {}",
+                self.amount,
+                policy.policy_id(),
+                policy.limit(),
             )));
         }
 
         // Validate public inputs
-        if !self.public_inputs.validate_policy_hash() {
+        let policy_hash_valid = self
+            .public_inputs
+            .validate_policy_hash()
+            .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?;
+        if !policy_hash_valid {
             return Err(ProverError::InvalidPublicInputs(
                 "Policy hash mismatch".to_string()
             ));
+        }
+        let inputs_policy = Policy::from_public_inputs(
+            &self.public_inputs.policy_id,
+            &self.public_inputs.policy_params,
+        )
+        .map_err(|e| ProverError::InvalidPublicInputs(format!("Invalid policy params: {e}")))?;
+        if &inputs_policy != policy {
+            return Err(ProverError::InvalidPublicInputs(format!(
+                "Policy mismatch: public inputs are for {}, witness validated against {}",
+                inputs_policy.policy_id(),
+                policy.policy_id()
+            )));
         }
 
         // Validate amount limbs are valid u32 values (range check)
@@ -116,13 +135,14 @@ impl Default for WitnessBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policy::Policy;
     use ves_stark_primitives::public_inputs::{PolicyParams, compute_policy_hash};
     use uuid::Uuid;
 
     fn sample_public_inputs(threshold: u64) -> CompliancePublicInputs {
         let policy_id = "aml.threshold";
         let params = PolicyParams::threshold(threshold);
-        let hash = compute_policy_hash(policy_id, &params);
+        let hash = compute_policy_hash(policy_id, &params).unwrap();
 
         CompliancePublicInputs {
             event_id: Uuid::new_v4(),
@@ -144,8 +164,9 @@ mod tests {
         let threshold = 10000u64;
         let inputs = sample_public_inputs(threshold);
         let witness = ComplianceWitness::new(5000, inputs);
+        let policy = Policy::aml_threshold(threshold);
 
-        assert!(witness.validate(threshold).is_ok());
+        assert!(witness.validate(&policy).is_ok());
     }
 
     #[test]
@@ -153,8 +174,9 @@ mod tests {
         let threshold = 10000u64;
         let inputs = sample_public_inputs(threshold);
         let witness = ComplianceWitness::new(15000, inputs);
+        let policy = Policy::aml_threshold(threshold);
 
-        assert!(witness.validate(threshold).is_err());
+        assert!(witness.validate(&policy).is_err());
     }
 
     #[test]
@@ -211,8 +233,9 @@ mod tests {
         let threshold = 10000u64;
         let inputs = sample_public_inputs(threshold);
         let witness = ComplianceWitness::new(0, inputs);
+        let policy = Policy::aml_threshold(threshold);
 
-        assert!(witness.validate(threshold).is_ok());
+        assert!(witness.validate(&policy).is_ok());
         let limbs = witness.amount_limbs();
         assert_eq!(limbs[0].as_int(), 0);
         assert_eq!(limbs[1].as_int(), 0);
@@ -223,8 +246,9 @@ mod tests {
         let threshold = 10000u64;
         let inputs = sample_public_inputs(threshold);
         let witness = ComplianceWitness::new(9999, inputs);
+        let policy = Policy::aml_threshold(threshold);
 
-        assert!(witness.validate(threshold).is_ok());
+        assert!(witness.validate(&policy).is_ok());
     }
 
     #[test]
@@ -232,9 +256,10 @@ mod tests {
         let threshold = 10000u64;
         let inputs = sample_public_inputs(threshold);
         let witness = ComplianceWitness::new(10000, inputs);
+        let policy = Policy::aml_threshold(threshold);
 
         // Equal to threshold should fail (must be strictly less than)
-        assert!(witness.validate(threshold).is_err());
+        assert!(witness.validate(&policy).is_err());
     }
 
     #[test]
@@ -274,6 +299,7 @@ mod tests {
 #[cfg(test)]
 mod proptests {
     use super::*;
+    use crate::policy::Policy;
     use ves_stark_primitives::public_inputs::{PolicyParams, compute_policy_hash};
     use proptest::prelude::*;
     use uuid::Uuid;
@@ -281,7 +307,7 @@ mod proptests {
     fn sample_public_inputs(threshold: u64) -> CompliancePublicInputs {
         let policy_id = "aml.threshold";
         let params = PolicyParams::threshold(threshold);
-        let hash = compute_policy_hash(policy_id, &params);
+        let hash = compute_policy_hash(policy_id, &params).unwrap();
 
         CompliancePublicInputs {
             event_id: Uuid::new_v4(),
@@ -314,8 +340,9 @@ mod proptests {
 
             let inputs = sample_public_inputs(threshold);
             let witness = ComplianceWitness::new(amount, inputs);
+            let policy = Policy::aml_threshold(threshold);
 
-            prop_assert!(witness.validate(threshold).is_ok());
+            prop_assert!(witness.validate(&policy).is_ok());
         }
 
         /// Property: Any amount >= threshold should fail validation
@@ -327,8 +354,9 @@ mod proptests {
             let amount = threshold.saturating_add(extra);
             let inputs = sample_public_inputs(threshold);
             let witness = ComplianceWitness::new(amount, inputs);
+            let policy = Policy::aml_threshold(threshold);
 
-            prop_assert!(witness.validate(threshold).is_err());
+            prop_assert!(witness.validate(&policy).is_err());
         }
 
         /// Property: Amount limb decomposition is correct (low limb)

@@ -22,7 +22,6 @@ use std::path::PathBuf;
 use std::time::Instant;
 use uuid::Uuid;
 
-use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
 use ves_stark_primitives::public_inputs::{CompliancePublicInputs, PolicyParams, compute_policy_hash};
 use ves_stark_primitives::{Felt, hash_to_felts};
 use ves_stark_prover::{ComplianceProver, ComplianceWitness, ComplianceProof, Policy};
@@ -301,7 +300,7 @@ fn prove(
         serde_json::from_str(&contents)
             .with_context(|| "Failed to parse public inputs JSON")?
     } else {
-        generate_random_public_inputs(limit, policy_type)
+        generate_random_public_inputs(limit, policy_type)?
     };
 
     eprintln!("Generating proof...");
@@ -412,8 +411,8 @@ fn verify(proof_path: PathBuf, inputs_path: PathBuf, limit: u64, policy_type: Po
 
     let start = Instant::now();
 
-    // Verify (using AmlThresholdPolicy for now as verifier uses same structure)
-    let policy = AmlThresholdPolicy::new(limit);
+    // Verify with explicit policy parameters (verifier will check they match public inputs)
+    let policy = policy_type.to_policy(limit);
     let result = verify_compliance_proof(&proof_bytes, &public_inputs, &policy, &witness_commitment)
         .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
 
@@ -506,7 +505,7 @@ fn inspect(proof_path: PathBuf) -> Result<()> {
 }
 
 fn generate_inputs(limit: u64, policy_type: PolicyType, output_path: Option<PathBuf>) -> Result<()> {
-    let inputs = generate_random_public_inputs(limit, policy_type);
+    let inputs = generate_random_public_inputs(limit, policy_type)?;
     let json = serde_json::to_string_pretty(&inputs)?;
 
     if let Some(path) = output_path {
@@ -520,12 +519,12 @@ fn generate_inputs(limit: u64, policy_type: PolicyType, output_path: Option<Path
     Ok(())
 }
 
-fn generate_random_public_inputs(limit: u64, policy_type: PolicyType) -> CompliancePublicInputs {
+fn generate_random_public_inputs(limit: u64, policy_type: PolicyType) -> Result<CompliancePublicInputs> {
     let policy_id = policy_type.policy_id();
     let params = policy_type.create_policy_params(limit);
-    let hash = compute_policy_hash(policy_id, &params);
+    let hash = compute_policy_hash(policy_id, &params)?;
 
-    CompliancePublicInputs {
+    Ok(CompliancePublicInputs {
         event_id: Uuid::new_v4(),
         tenant_id: Uuid::new_v4(),
         store_id: Uuid::new_v4(),
@@ -537,7 +536,7 @@ fn generate_random_public_inputs(limit: u64, policy_type: PolicyType) -> Complia
         policy_id: policy_id.to_string(),
         policy_params: params,
         policy_hash: hash.to_hex(),
-    }
+    })
 }
 
 fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType) -> Result<()> {
@@ -564,7 +563,7 @@ fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType)
         };
 
         // Generate inputs
-        let inputs = generate_random_public_inputs(limit, policy_type);
+        let inputs = generate_random_public_inputs(limit, policy_type)?;
 
         // Create witness and prover
         let witness = ComplianceWitness::new(amount, inputs.clone());
@@ -578,8 +577,8 @@ fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType)
         prove_times.push(prove_time);
         proof_sizes.push(proof.proof_bytes.len());
 
-        // Time verification (using AmlThresholdPolicy for verifier)
-        let verify_policy = AmlThresholdPolicy::new(limit);
+        // Time verification (use the same policy parameters as the inputs)
+        let verify_policy = policy.clone();
         let start = Instant::now();
         let result = verify_compliance_proof(&proof.proof_bytes, &inputs, &verify_policy, &proof.witness_commitment)
             .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
@@ -647,7 +646,18 @@ fn rand_u64() -> u64 {
 // Batch Proving Functions
 // ============================================================================
 
+fn ensure_experimental_batch_enabled() -> Result<()> {
+    match std::env::var("VES_STARK_EXPERIMENTAL_BATCH") {
+        Ok(value) if value == "1" => Ok(()),
+        _ => anyhow::bail!(
+            "Batch proof commands are experimental; set VES_STARK_EXPERIMENTAL_BATCH=1 to enable."
+        ),
+    }
+}
+
 fn batch_prove(num_events: usize, limit: u64, output_path: Option<PathBuf>) -> Result<()> {
+    ensure_experimental_batch_enabled()?;
+
     println!("Batch Proof Generation");
     println!("======================");
     println!("  Events: {}", num_events);
@@ -658,7 +668,7 @@ fn batch_prove(num_events: usize, limit: u64, output_path: Option<PathBuf>) -> R
     // Generate policy hash
     let policy_id = "aml.threshold";
     let params = PolicyParams::threshold(limit);
-    let policy_hash_obj = compute_policy_hash(policy_id, &params);
+    let policy_hash_obj = compute_policy_hash(policy_id, &params)?;
     let policy_hash = hash_to_felts(&policy_hash_obj);
 
     // Create metadata
@@ -685,7 +695,7 @@ fn batch_prove(num_events: usize, limit: u64, output_path: Option<PathBuf>) -> R
     println!("Generating {} events...", num_events);
     for i in 0..num_events {
         let amount = (rand_u64() % (limit - 1)).max(1);
-        let inputs = generate_batch_public_inputs(limit, i, tenant_id, store_id);
+        let inputs = generate_batch_public_inputs(limit, i, tenant_id, store_id)?;
         builder = builder.add_event(amount, inputs);
         print!(".");
         io::stdout().flush()?;
@@ -748,6 +758,8 @@ fn batch_prove(num_events: usize, limit: u64, output_path: Option<PathBuf>) -> R
 }
 
 fn batch_verify(proof_path: PathBuf) -> Result<()> {
+    ensure_experimental_batch_enabled()?;
+
     println!("Batch Proof Verification");
     println!("========================");
     println!();
@@ -833,12 +845,17 @@ fn array_to_felts(arr: &[u64; 4]) -> [Felt; 4] {
     ]
 }
 
-fn generate_batch_public_inputs(limit: u64, seq: usize, tenant_id: Uuid, store_id: Uuid) -> CompliancePublicInputs {
+fn generate_batch_public_inputs(
+    limit: u64,
+    seq: usize,
+    tenant_id: Uuid,
+    store_id: Uuid,
+) -> Result<CompliancePublicInputs> {
     let policy_id = "aml.threshold";
     let params = PolicyParams::threshold(limit);
-    let hash = compute_policy_hash(policy_id, &params);
+    let hash = compute_policy_hash(policy_id, &params)?;
 
-    CompliancePublicInputs {
+    Ok(CompliancePublicInputs {
         event_id: Uuid::new_v4(),
         tenant_id,
         store_id,
@@ -850,7 +867,7 @@ fn generate_batch_public_inputs(limit: u64, seq: usize, tenant_id: Uuid, store_i
         policy_id: policy_id.to_string(),
         policy_params: params,
         policy_hash: hash.to_hex(),
-    }
+    })
 }
 
 // ============================================================================
@@ -864,6 +881,8 @@ fn run_sequencer(
     include_violations: bool,
     output_dir: Option<PathBuf>,
 ) -> Result<()> {
+    ensure_experimental_batch_enabled()?;
+
     println!();
     println!("========================================");
     println!("  VES STARK Sequencer Simulation");
@@ -884,7 +903,7 @@ fn run_sequencer(
     // Generate policy hash
     let policy_id = "aml.threshold";
     let params = PolicyParams::threshold(limit);
-    let policy_hash_obj = compute_policy_hash(policy_id, &params);
+    let policy_hash_obj = compute_policy_hash(policy_id, &params)?;
     let policy_hash = hash_to_felts(&policy_hash_obj);
 
     // Shared IDs for the simulation
@@ -943,7 +962,7 @@ fn run_sequencer(
                 (rand_u64() % (limit - 1)).max(1) // Under limit
             };
 
-            let inputs = generate_batch_public_inputs(limit, seq, tenant_id, store_id);
+            let inputs = generate_batch_public_inputs(limit, seq, tenant_id, store_id)?;
             builder = builder.add_event(amount, inputs);
 
             if amount < limit {

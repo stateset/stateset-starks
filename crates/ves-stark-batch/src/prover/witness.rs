@@ -319,7 +319,7 @@ mod tests {
     fn sample_public_inputs(threshold: u64, event_index: usize) -> CompliancePublicInputs {
         let policy_id = "aml.threshold";
         let params = PolicyParams::threshold(threshold);
-        let hash = compute_policy_hash(policy_id, &params);
+        let hash = compute_policy_hash(policy_id, &params).unwrap();
 
         CompliancePublicInputs {
             event_id: Uuid::new_v4(),
@@ -339,7 +339,7 @@ mod tests {
     fn sample_policy_hash(threshold: u64) -> [Felt; 8] {
         let policy_id = "aml.threshold";
         let params = PolicyParams::threshold(threshold);
-        let hash = compute_policy_hash(policy_id, &params);
+        let hash = compute_policy_hash(policy_id, &params).unwrap();
         ves_stark_primitives::hash_to_felts(&hash)
     }
 

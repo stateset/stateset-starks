@@ -12,7 +12,6 @@
 
 use ves_stark_prover::{ComplianceProver, ComplianceWitness, Policy, ComplianceProof};
 use ves_stark_verifier::{verify_compliance_proof, VerifierError, validate_hex_string};
-use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
 use ves_stark_primitives::public_inputs::{CompliancePublicInputs, PolicyParams, compute_policy_hash};
 use uuid::Uuid;
 
@@ -23,7 +22,7 @@ use uuid::Uuid;
 fn sample_aml_public_inputs(threshold: u64) -> CompliancePublicInputs {
     let policy_id = "aml.threshold";
     let params = PolicyParams::threshold(threshold);
-    let hash = compute_policy_hash(policy_id, &params);
+    let hash = compute_policy_hash(policy_id, &params).unwrap();
 
     CompliancePublicInputs {
         event_id: Uuid::new_v4(),
@@ -43,7 +42,7 @@ fn sample_aml_public_inputs(threshold: u64) -> CompliancePublicInputs {
 fn sample_cap_public_inputs(cap: u64) -> CompliancePublicInputs {
     let policy_id = "order_total.cap";
     let params = PolicyParams::cap(cap);
-    let hash = compute_policy_hash(policy_id, &params);
+    let hash = compute_policy_hash(policy_id, &params).unwrap();
 
     CompliancePublicInputs {
         event_id: Uuid::new_v4(),
@@ -82,7 +81,7 @@ fn test_policy_id_mismatch_rejected() {
 
     // Try to verify with order_total.cap public inputs (different policy)
     let cap_inputs = sample_cap_public_inputs(threshold);
-    let verify_policy = AmlThresholdPolicy::new(threshold);
+    let verify_policy = Policy::aml_threshold(threshold);
 
     let result = verify_compliance_proof(
         &proof.proof_bytes,
@@ -108,7 +107,7 @@ fn test_threshold_mismatch_rejected() {
     // Try to verify with different threshold in public inputs
     let different_threshold = 1000u64; // Lower threshold - attacker's goal
     let tampered_inputs = sample_aml_public_inputs(different_threshold);
-    let verify_policy = AmlThresholdPolicy::new(different_threshold);
+    let verify_policy = Policy::aml_threshold(different_threshold);
 
     let result = verify_compliance_proof(
         &proof.proof_bytes,
@@ -135,7 +134,7 @@ fn test_higher_threshold_proof_fails_lower_verification() {
     // Attacker tries to claim this proves amount < 1000 (which is false)
     let claimed_threshold = 1000u64;
     let tampered_inputs = sample_aml_public_inputs(claimed_threshold);
-    let verify_policy = AmlThresholdPolicy::new(claimed_threshold);
+    let verify_policy = Policy::aml_threshold(claimed_threshold);
 
     let result = verify_compliance_proof(
         &proof.proof_bytes,
@@ -165,7 +164,7 @@ fn test_tampered_witness_commitment_rejected() {
     let mut tampered_commitment = proof.witness_commitment;
     tampered_commitment[0] = tampered_commitment[0].wrapping_add(1);
 
-    let verify_policy = AmlThresholdPolicy::new(threshold);
+    let verify_policy = Policy::aml_threshold(threshold);
     let result = verify_compliance_proof(
         &proof.proof_bytes,
         &inputs,
@@ -189,7 +188,7 @@ fn test_zero_witness_commitment_rejected() {
     // Use zero commitment instead of real one
     let zero_commitment = [0u64; 4];
 
-    let verify_policy = AmlThresholdPolicy::new(threshold);
+    let verify_policy = Policy::aml_threshold(threshold);
     let result = verify_compliance_proof(
         &proof.proof_bytes,
         &inputs,
@@ -215,7 +214,7 @@ fn test_commitment_from_different_amount_rejected() {
     let (proof2, _inputs2) = generate_valid_proof(amount2, threshold);
 
     // Try to use proof1's bytes with proof2's commitment
-    let verify_policy = AmlThresholdPolicy::new(threshold);
+    let verify_policy = Policy::aml_threshold(threshold);
     let result = verify_compliance_proof(
         &proof1.proof_bytes,
         &inputs1,
@@ -283,7 +282,7 @@ fn test_invalid_policy_hash_hex_rejected() {
     // Inject uppercase characters into policy hash
     inputs.policy_hash = "A".repeat(64);
 
-    let verify_policy = AmlThresholdPolicy::new(threshold);
+    let verify_policy = Policy::aml_threshold(threshold);
     let result = verify_compliance_proof(
         &proof.proof_bytes,
         &inputs,
@@ -307,7 +306,7 @@ fn test_invalid_payload_hash_hex_rejected() {
     // Inject invalid characters into payload hash
     inputs.payload_plain_hash = "x".repeat(64);
 
-    let verify_policy = AmlThresholdPolicy::new(threshold);
+    let verify_policy = Policy::aml_threshold(threshold);
     let result = verify_compliance_proof(
         &proof.proof_bytes,
         &inputs,
@@ -404,7 +403,7 @@ fn test_proof_with_different_event_id_still_validates() {
     let mut different_event_inputs = original_inputs.clone();
     different_event_inputs.event_id = Uuid::new_v4();
 
-    let verify_policy = AmlThresholdPolicy::new(threshold);
+    let verify_policy = Policy::aml_threshold(threshold);
     let result = verify_compliance_proof(
         &proof.proof_bytes,
         &different_event_inputs,
@@ -429,7 +428,7 @@ fn test_proof_with_different_event_id_still_validates() {
 fn test_empty_proof_bytes_rejected() {
     let threshold = 10000u64;
     let inputs = sample_aml_public_inputs(threshold);
-    let verify_policy = AmlThresholdPolicy::new(threshold);
+    let verify_policy = Policy::aml_threshold(threshold);
     let witness_commitment = [0u64; 4];
 
     let result = verify_compliance_proof(
@@ -449,7 +448,7 @@ fn test_empty_proof_bytes_rejected() {
 fn test_garbage_proof_bytes_rejected() {
     let threshold = 10000u64;
     let inputs = sample_aml_public_inputs(threshold);
-    let verify_policy = AmlThresholdPolicy::new(threshold);
+    let verify_policy = Policy::aml_threshold(threshold);
     let witness_commitment = [0u64; 4];
     let garbage = vec![0xFF; 1000];
 
@@ -475,7 +474,7 @@ fn test_truncated_proof_rejected() {
     // Truncate the proof
     let truncated = &proof.proof_bytes[..proof.proof_bytes.len() / 2];
 
-    let verify_policy = AmlThresholdPolicy::new(threshold);
+    let verify_policy = Policy::aml_threshold(threshold);
     let result = verify_compliance_proof(
         truncated,
         &inputs,
@@ -501,7 +500,7 @@ fn test_bit_flipped_proof_rejected() {
         corrupted[0] ^= 0x01;
     }
 
-    let verify_policy = AmlThresholdPolicy::new(threshold);
+    let verify_policy = Policy::aml_threshold(threshold);
     let result = verify_compliance_proof(
         &corrupted,
         &inputs,

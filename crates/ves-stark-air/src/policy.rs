@@ -7,6 +7,7 @@ use crate::policies::aml_threshold::AmlThresholdPolicy;
 use crate::policies::order_total_cap::OrderTotalCapPolicy;
 use crate::policies::policy_ids;
 use ves_stark_primitives::{Felt, FELT_ZERO, felt_from_u64};
+use ves_stark_primitives::public_inputs::PolicyParams;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -25,10 +26,16 @@ pub enum PolicyError {
     /// AML thresholds must be greater than zero for strict comparison
     #[error("AML threshold must be greater than zero")]
     InvalidThreshold,
+    /// Unsupported policy identifier
+    #[error("Unsupported policy id: {0}")]
+    UnsupportedPolicyId(String),
+    /// Missing required policy parameter
+    #[error("Missing policy parameter: {0}")]
+    MissingPolicyParam(&'static str),
 }
 
 /// Unified policy enum for runtime selection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub enum Policy {
     /// AML threshold policy (amount < threshold)
@@ -96,6 +103,25 @@ impl Policy {
         match self {
             Policy::AmlThreshold { threshold } => amount < *threshold,
             Policy::OrderTotalCap { cap } => amount <= *cap,
+        }
+    }
+
+    /// Parse a policy from public input policy id + params.
+    pub fn from_public_inputs(policy_id: &str, policy_params: &PolicyParams) -> Result<Self, PolicyError> {
+        match policy_id {
+            policy_ids::AML_THRESHOLD => {
+                let threshold = policy_params
+                    .get_threshold()
+                    .ok_or(PolicyError::MissingPolicyParam("threshold"))?;
+                Ok(Policy::AmlThreshold { threshold })
+            }
+            policy_ids::ORDER_TOTAL_CAP => {
+                let cap = policy_params
+                    .get_cap()
+                    .ok_or(PolicyError::MissingPolicyParam("cap"))?;
+                Ok(Policy::OrderTotalCap { cap })
+            }
+            _ => Err(PolicyError::UnsupportedPolicyId(policy_id.to_string())),
         }
     }
 

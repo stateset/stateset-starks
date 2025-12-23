@@ -11,7 +11,7 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use uuid::Uuid;
 use ves_stark_primitives::public_inputs::{CompliancePublicInputs, PolicyParams, compute_policy_hash};
-use ves_stark_prover::ComplianceWitness;
+use ves_stark_prover::{ComplianceWitness, Policy};
 
 /// Arbitrary witness input
 #[derive(Debug, Arbitrary)]
@@ -29,14 +29,14 @@ struct WitnessInput {
 fn create_public_inputs(threshold: u64, sequence_number: u64, payload_kind: u8) -> CompliancePublicInputs {
     let policy_id = "aml.threshold";
     let params = PolicyParams::threshold(threshold);
-    let hash = compute_policy_hash(policy_id, &params);
+    let hash = compute_policy_hash(policy_id, &params).unwrap();
 
     CompliancePublicInputs {
         event_id: Uuid::new_v4(),
         tenant_id: Uuid::new_v4(),
         store_id: Uuid::new_v4(),
         sequence_number,
-        payload_kind: payload_kind as u64,
+        payload_kind: payload_kind as u32,
         payload_plain_hash: "0".repeat(64),
         payload_cipher_hash: "0".repeat(64),
         event_signing_hash: "0".repeat(64),
@@ -56,7 +56,8 @@ fuzz_target!(|input: WitnessInput| {
     let witness = ComplianceWitness::new(input.amount, public_inputs);
 
     // Validation should never panic
-    let result = witness.validate(input.threshold);
+    let policy = Policy::aml_threshold(input.threshold);
+    let result = witness.validate(&policy);
 
     // Verify correctness: amount >= threshold should fail
     if input.amount >= input.threshold {

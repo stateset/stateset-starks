@@ -9,7 +9,6 @@
 use proptest::prelude::*;
 use ves_stark_prover::{ComplianceProver, ComplianceWitness, Policy};
 use ves_stark_verifier::verify_compliance_proof;
-use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
 use ves_stark_primitives::public_inputs::{CompliancePublicInputs, PolicyParams, compute_policy_hash};
 use ves_stark_primitives::rescue::rescue_hash;
 use ves_stark_primitives::{Felt, felt_from_u64};
@@ -22,7 +21,7 @@ use uuid::Uuid;
 fn sample_aml_public_inputs(threshold: u64) -> CompliancePublicInputs {
     let policy_id = "aml.threshold";
     let params = PolicyParams::threshold(threshold);
-    let hash = compute_policy_hash(policy_id, &params);
+    let hash = compute_policy_hash(policy_id, &params).unwrap();
 
     CompliancePublicInputs {
         event_id: Uuid::new_v4(),
@@ -42,7 +41,7 @@ fn sample_aml_public_inputs(threshold: u64) -> CompliancePublicInputs {
 fn sample_cap_public_inputs(cap: u64) -> CompliancePublicInputs {
     let policy_id = "order_total.cap";
     let params = PolicyParams::cap(cap);
-    let hash = compute_policy_hash(policy_id, &params);
+    let hash = compute_policy_hash(policy_id, &params).unwrap();
 
     CompliancePublicInputs {
         event_id: Uuid::new_v4(),
@@ -105,11 +104,10 @@ proptest! {
 
         // Verify the proof
         let proof = proof_result.unwrap();
-        let verify_policy = AmlThresholdPolicy::new(threshold);
         let verify_result = verify_compliance_proof(
             &proof.proof_bytes,
             &inputs,
-            &verify_policy,
+            &Policy::aml_threshold(threshold),
             &proof.witness_commitment,
         );
 
@@ -346,8 +344,8 @@ proptest! {
         let policy_id = "aml.threshold";
         let params = PolicyParams::threshold(threshold);
 
-        let hash1 = compute_policy_hash(policy_id, &params);
-        let hash2 = compute_policy_hash(policy_id, &params);
+        let hash1 = compute_policy_hash(policy_id, &params).unwrap();
+        let hash2 = compute_policy_hash(policy_id, &params).unwrap();
 
         prop_assert_eq!(hash1.to_hex(), hash2.to_hex());
     }
@@ -364,8 +362,8 @@ proptest! {
         let params1 = PolicyParams::threshold(threshold1);
         let params2 = PolicyParams::threshold(threshold2);
 
-        let hash1 = compute_policy_hash(policy_id, &params1);
-        let hash2 = compute_policy_hash(policy_id, &params2);
+        let hash1 = compute_policy_hash(policy_id, &params1).unwrap();
+        let hash2 = compute_policy_hash(policy_id, &params2).unwrap();
 
         prop_assert_ne!(hash1.to_hex(), hash2.to_hex());
     }
@@ -376,8 +374,8 @@ proptest! {
         let params_threshold = PolicyParams::threshold(limit);
         let params_cap = PolicyParams::cap(limit);
 
-        let hash_aml = compute_policy_hash("aml.threshold", &params_threshold);
-        let hash_cap = compute_policy_hash("order_total.cap", &params_cap);
+        let hash_aml = compute_policy_hash("aml.threshold", &params_threshold).unwrap();
+        let hash_cap = compute_policy_hash("order_total.cap", &params_cap).unwrap();
 
         prop_assert_ne!(hash_aml.to_hex(), hash_cap.to_hex());
     }

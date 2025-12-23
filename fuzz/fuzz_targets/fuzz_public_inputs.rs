@@ -34,8 +34,8 @@ fuzz_target!(|input: PublicInputsData| {
     let params = PolicyParams::threshold(input.threshold);
 
     // Hash computation should never panic and be deterministic
-    let hash1 = compute_policy_hash(policy_id, &params);
-    let hash2 = compute_policy_hash(policy_id, &params);
+    let hash1 = compute_policy_hash(policy_id, &params).unwrap();
+    let hash2 = compute_policy_hash(policy_id, &params).unwrap();
     assert_eq!(hash1.to_hex(), hash2.to_hex(), "Policy hash should be deterministic");
 
     // Create public inputs
@@ -44,7 +44,7 @@ fuzz_target!(|input: PublicInputsData| {
         tenant_id: Uuid::new_v4(),
         store_id: Uuid::new_v4(),
         sequence_number: input.sequence_number,
-        payload_kind: input.payload_kind,
+        payload_kind: input.payload_kind as u32,
         payload_plain_hash: create_hash_string(input.hash_byte),
         payload_cipher_hash: create_hash_string(input.hash_byte.wrapping_add(1)),
         event_signing_hash: create_hash_string(input.hash_byte.wrapping_add(2)),
@@ -54,11 +54,11 @@ fuzz_target!(|input: PublicInputsData| {
     };
 
     // Validation should succeed for matching policy hash
-    assert!(public_inputs.validate_policy_hash(), "Policy hash validation should pass");
+    assert!(public_inputs.validate_policy_hash().unwrap(), "Policy hash validation should pass");
 
     // Field element conversion should never panic
-    let felts = public_inputs.to_field_elements();
-    assert!(!felts.is_empty(), "Field elements should not be empty");
+    let felts = public_inputs.to_field_elements().unwrap();
+    assert!(!felts.to_vec().is_empty(), "Field elements should not be empty");
 
     // JSON serialization should never panic
     let json = serde_json::to_string(&public_inputs);
@@ -79,7 +79,7 @@ fuzz_target!(|input: PublicInputsData| {
     // Test with different policy type
     let cap_id = "order_total.cap";
     let cap_params = PolicyParams::cap(input.threshold);
-    let cap_hash = compute_policy_hash(cap_id, &cap_params);
+    let cap_hash = compute_policy_hash(cap_id, &cap_params).unwrap();
 
     // Different policy should produce different hash
     if input.threshold > 0 {

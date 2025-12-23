@@ -126,14 +126,19 @@
 //! | Round counter | 1 | Increment check |
 //! | Amount consistency | 8 | 8 limbs constant |
 //! | Threshold consistency | 8 | 8 limbs constant |
-//! | Comparison consistency | 8 | 8 values constant |
-//! | Binary (limb 0) | 32 | b(1-b)=0 checks |
-//! | Binary (limb 1) | 32 | b(1-b)=0 checks |
-//! | Bit consistency (limb 0) | 32 | Bits constant |
-//! | Bit consistency (limb 1) | 32 | Bits constant |
-//! | Recomposition | 2 | limb = Σ bits |
-//! | Rescue consistency | 12 | Hash state constant |
-//! | **Total** | **167** | |
+//! | Public input binding | 47 | Public inputs constant |
+//! | Amount bit binary | 64 | b(1-b)=0 checks |
+//! | Amount bit consistency | 64 | Bits constant |
+//! | Amount recomposition | 2 | limb = Σ bits |
+//! | Diff bit binary | 64 | b(1-b)=0 checks |
+//! | Diff bit consistency | 64 | Bits constant |
+//! | Diff recomposition | 2 | limb = Σ bits |
+//! | Borrow consistency | 2 | Borrows constant |
+//! | Borrow binary | 2 | b(1-b)=0 checks |
+//! | Subtraction constraints | 2 | limb subtraction |
+//! | Rescue transitions | 12 | Rescue permutation steps |
+//! | Rescue init binding | 8 | state[0..7] == amount limbs |
+//! | **Total** | **350** | |
 //!
 //! ## Security Level
 //!
@@ -175,7 +180,7 @@ use winter_math::{FieldElement, ToElements};
 /// - 8: Rescue init binding (state[0..7] == amount limbs at row 0)
 ///
 /// Total: 350
-const NUM_CONSTRAINTS: usize = 350;
+pub const NUM_CONSTRAINTS: usize = 350;
 
 const RESCUE_HALF_ROUNDS: usize = ROUND_CONSTANTS.len();
 const RESCUE_OUTPUT_ROW: usize = RESCUE_HALF_ROUNDS;
@@ -189,8 +194,8 @@ const PERIODIC_COLUMN_COUNT: usize = PERIODIC_RESCUE_CONST_START_IDX + RESCUE_ST
 /// Public inputs for the compliance AIR
 #[derive(Debug, Clone)]
 pub struct PublicInputs {
-    /// The threshold value
-    pub threshold: u64,
+    /// The policy limit used by the AIR (effective limit for strict policies)
+    pub policy_limit: u64,
     /// Public input field elements
     pub elements: Vec<Felt>,
     /// Witness commitment (first 4 elements of Rescue hash)
@@ -200,28 +205,28 @@ pub struct PublicInputs {
 
 impl PublicInputs {
     /// Create new public inputs (legacy, without witness commitment)
-    pub fn new(threshold: u64, elements: Vec<Felt>) -> Self {
+    pub fn new(policy_limit: u64, elements: Vec<Felt>) -> Self {
         assert_eq!(
             elements.len(),
             cols::PUBLIC_INPUTS_LEN,
             "public input element length mismatch"
         );
         Self {
-            threshold,
+            policy_limit,
             elements,
             witness_commitment: [FELT_ZERO; 4],
         }
     }
 
     /// Create new public inputs with witness commitment
-    pub fn with_commitment(threshold: u64, elements: Vec<Felt>, commitment: [Felt; 4]) -> Self {
+    pub fn with_commitment(policy_limit: u64, elements: Vec<Felt>, commitment: [Felt; 4]) -> Self {
         assert_eq!(
             elements.len(),
             cols::PUBLIC_INPUTS_LEN,
             "public input element length mismatch"
         );
         Self {
-            threshold,
+            policy_limit,
             elements,
             witness_commitment: commitment,
         }
@@ -230,7 +235,7 @@ impl PublicInputs {
 
 impl ToElements<Felt> for PublicInputs {
     fn to_elements(&self) -> Vec<Felt> {
-        let mut result = vec![felt_from_u64(self.threshold)];
+        let mut result = vec![felt_from_u64(self.policy_limit)];
         result.extend(self.elements.iter().cloned());
         // Include witness commitment in public inputs
         result.extend(self.witness_commitment.iter().cloned());
@@ -243,8 +248,8 @@ pub struct ComplianceAir {
     /// AIR context (trace info, options, etc.)
     context: AirContext<Felt>,
 
-    /// Policy threshold (for aml.threshold)
-    threshold: u64,
+    /// Policy limit used by the AIR (effective limit for strict policies)
+    policy_limit: u64,
 
     /// Witness commitment (first 4 elements of Rescue hash)
     /// The verifier checks that the trace contains this commitment
@@ -266,8 +271,8 @@ impl ComplianceAir {
     }
 
     /// Get the policy threshold
-    pub fn threshold(&self) -> u64 {
-        self.threshold
+    pub fn policy_limit(&self) -> u64 {
+        self.policy_limit
     }
 }
 
@@ -364,7 +369,7 @@ impl Air for ComplianceAir {
 
         Self {
             context,
-            threshold: pub_inputs.threshold,
+            policy_limit: pub_inputs.policy_limit,
             witness_commitment: pub_inputs.witness_commitment,
             public_inputs: pub_inputs.elements.clone(),
         }
@@ -384,9 +389,9 @@ impl Air for ComplianceAir {
         let last_row = self.trace_length() - 1;
         assertions.push(Assertion::single(cols::FLAG_IS_LAST, last_row, FELT_ONE));
 
-        // Boundary constraint: threshold values match public input
-        let threshold_low = felt_from_u64(self.threshold & 0xFFFFFFFF);
-        let threshold_high = felt_from_u64(self.threshold >> 32);
+        // Boundary constraint: policy limit values match public input
+        let threshold_low = felt_from_u64(self.policy_limit & 0xFFFFFFFF);
+        let threshold_high = felt_from_u64(self.policy_limit >> 32);
         assertions.push(Assertion::single(cols::THRESHOLD_START, 0, threshold_low));
         assertions.push(Assertion::single(cols::THRESHOLD_START + 1, 0, threshold_high));
 
@@ -775,7 +780,10 @@ impl ComplianceAirBuilder {
         });
 
         let trace_info = TraceInfo::new(TRACE_WIDTH, self.trace_length);
-        let pub_inputs = PublicInputs::new(policy.threshold, pub_inputs_felts.to_vec());
+        let policy_limit = crate::policy::Policy::from(policy)
+            .effective_limit()
+            .map_err(|_| "Invalid AML threshold (must be > 0)")?;
+        let pub_inputs = PublicInputs::new(policy_limit, pub_inputs_felts.to_vec());
         let air = ComplianceAir::with_policy(trace_info, &pub_inputs, options);
 
         Ok((air, pub_inputs))
@@ -813,7 +821,7 @@ mod tests {
     #[test]
     fn test_air_builder() {
         let inputs = sample_public_inputs();
-        let felts = inputs.to_field_elements();
+        let felts = inputs.to_field_elements().unwrap();
         let policy = AmlThresholdPolicy::new(10000);
 
         let (air, _pub_inputs) = ComplianceAirBuilder::new()
@@ -822,13 +830,13 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(air.threshold(), 10000);
+        assert_eq!(air.policy_limit(), 9999);
     }
 
     #[test]
     fn test_air_assertions() {
         let inputs = sample_public_inputs();
-        let felts = inputs.to_field_elements();
+        let felts = inputs.to_field_elements().unwrap();
         let policy = AmlThresholdPolicy::new(10000);
 
         let (air, _pub_inputs) = ComplianceAirBuilder::new()

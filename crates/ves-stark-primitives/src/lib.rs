@@ -16,5 +16,5 @@ pub use rescue::{rescue_hash, rescue_hash_pair, RescueState};
 pub use hash::{hash_to_felts, felts_to_hash, Hash256};
 pub use public_inputs::{
     CompliancePublicInputs, PolicyParams, compute_policy_hash,
-    compute_public_inputs_hash, canonical_json,
+    compute_public_inputs_hash, canonical_json, PublicInputsError,
 };

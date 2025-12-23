@@ -141,6 +141,20 @@ impl ComplianceProver {
             )));
         }
 
+        // Ensure public inputs policy matches the prover policy
+        let inputs_policy = Policy::from_public_inputs(
+            &witness.public_inputs.policy_id,
+            &witness.public_inputs.policy_params,
+        )
+        .map_err(|e| ProverError::InvalidPublicInputs(format!("Invalid policy params: {e}")))?;
+        if inputs_policy != self.policy {
+            return Err(ProverError::InvalidPublicInputs(format!(
+                "Policy mismatch: public inputs are for {}, prover configured for {}",
+                inputs_policy.policy_id(),
+                self.policy.policy_id()
+            )));
+        }
+
         // Build execution trace with unified policy
         let trace = TraceBuilder::new(witness.clone(), self.policy.clone())
             .build()?;
@@ -160,9 +174,15 @@ impl ComplianceProver {
         ];
 
         // Build public inputs (use limit as threshold for AIR compatibility)
-        let pub_inputs_felts = witness.public_inputs.to_field_elements();
+        let pub_inputs_felts = witness.public_inputs
+            .to_field_elements()
+            .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?;
+        let policy_limit = self
+            .policy
+            .effective_limit()
+            .map_err(|e| ProverError::PolicyValidationFailed(format!("{e}")))?;
         let pub_inputs = PublicInputs::with_commitment(
-            self.policy.limit(),
+            policy_limit,
             pub_inputs_felts.to_vec(),
             witness_commitment,
         );
@@ -197,7 +217,7 @@ impl ComplianceProver {
             proof_hash: proof_hash.to_hex(),
             metadata: ProofMetadata {
                 proving_time_ms: proving_time.as_millis() as u64,
-                num_constraints: 167, // 1 counter + 8 amount + 8 threshold + 8 comparison + 64 binary + 64 consistency + 2 recomposition + 12 rescue
+                num_constraints: ves_stark_air::compliance::NUM_CONSTRAINTS,
                 trace_length,
                 proof_size: proof_bytes.len(),
                 prover_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -284,7 +304,7 @@ mod tests {
     fn sample_inputs(threshold: u64) -> CompliancePublicInputs {
         let policy_id = "aml.threshold";
         let params = PolicyParams::threshold(threshold);
-        let hash = compute_policy_hash(policy_id, &params);
+        let hash = compute_policy_hash(policy_id, &params).unwrap();
 
         CompliancePublicInputs {
             event_id: Uuid::new_v4(),

@@ -1,10 +1,12 @@
 //! Batch Compliance AIR
 //!
-//! This module implements the AIR for batch state transition proofs.
-//! It provides a simplified constraint system that validates:
-//! - State root transitions (prev_root -> new_root)
-//! - Compliance accumulator (AND of all event compliance flags)
-//! - Metadata consistency across the trace
+//! This module implements a **prototype** AIR for batch state transition proofs.
+//! It currently enforces **consistency only**:
+//! - State roots remain constant across the trace
+//! - Compliance accumulator is an AND over per-event flags
+//! - Metadata fields remain constant
+//!
+//! It does **not** yet verify Merkle transitions or per-event proof correctness.
 
 use ves_stark_primitives::{Felt, felt_from_u64, FELT_ZERO, FELT_ONE};
 use winter_air::{
@@ -213,14 +215,13 @@ impl Air for BatchComplianceAir {
         // Compliance accumulator constraints (2)
         // =========================================================================
 
-        // Accumulator update: next = current * compliance_flag OR stays same
-        // (next - current) * (next - current * flag) = 0
+        // Accumulator update: next = current * compliance_flag
         let acc_curr = current[batch_cols::COMPLIANCE_ACCUMULATOR];
         let acc_next = next[batch_cols::COMPLIANCE_ACCUMULATOR];
         let flag = current[batch_cols::EVENT_COMPLIANCE_FLAG];
 
-        // Either accumulator stays the same, or it gets multiplied by the flag
-        result[idx] = (acc_next - acc_curr) * (acc_next - acc_curr * flag);
+        // Enforce AND accumulation
+        result[idx] = acc_next - acc_curr * flag;
         idx += 1;
 
         // Compliance flag is binary

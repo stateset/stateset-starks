@@ -28,7 +28,7 @@ fn timestamp() -> u64 {
 fn create_policy_hash(threshold: u64) -> [Felt; 8] {
     let policy_id = "aml.threshold";
     let params = PolicyParams::threshold(threshold);
-    let hash = compute_policy_hash(policy_id, &params);
+    let hash = compute_policy_hash(policy_id, &params).unwrap();
     let hex = hash.to_hex();
 
     // Convert 64-char hex to 8 field elements (8 chars each = 32 bits)
@@ -44,7 +44,7 @@ fn create_policy_hash(threshold: u64) -> [Felt; 8] {
 fn create_public_inputs(threshold: u64, seq: u64) -> CompliancePublicInputs {
     let policy_id = "aml.threshold";
     let params = PolicyParams::threshold(threshold);
-    let hash = compute_policy_hash(policy_id, &params);
+    let hash = compute_policy_hash(policy_id, &params).unwrap();
 
     CompliancePublicInputs {
         event_id: Uuid::new_v4(),

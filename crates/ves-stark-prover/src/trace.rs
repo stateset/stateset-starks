@@ -117,11 +117,27 @@ impl TraceBuilder {
             )));
         }
 
-        // Validate public inputs
-        if !self.witness.public_inputs.validate_policy_hash() {
+        // Validate public inputs policy hash + match policy parameters
+        let policy_hash_valid = self.witness
+            .public_inputs
+            .validate_policy_hash()
+            .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?;
+        if !policy_hash_valid {
             return Err(ProverError::InvalidPublicInputs(
-                "Policy hash mismatch".to_string()
+                "Policy hash mismatch".to_string(),
             ));
+        }
+        let inputs_policy = Policy::from_public_inputs(
+            &self.witness.public_inputs.policy_id,
+            &self.witness.public_inputs.policy_params,
+        )
+        .map_err(|e| ProverError::InvalidPublicInputs(format!("Invalid policy params: {e}")))?;
+        if inputs_policy != self.policy {
+            return Err(ProverError::InvalidPublicInputs(format!(
+                "Policy mismatch: public inputs are for {}, trace built for {}",
+                inputs_policy.policy_id(),
+                self.policy.policy_id()
+            )));
         }
 
         // Initialize trace columns
@@ -129,7 +145,10 @@ impl TraceBuilder {
 
         // Get limb representations
         let amount_limbs = self.witness.amount_limbs();
-        let limit_limbs = self.policy.limit_limbs();
+        let limit_limbs = self
+            .policy
+            .effective_limit_limbs()
+            .map_err(|e| ProverError::policy_validation_failed(format!("{e}")))?;
 
         // Compute bit decomposition for amount limbs 0-1 only
         // Limbs 2-7 are boundary-asserted to zero, no decomposition needed
@@ -151,7 +170,10 @@ impl TraceBuilder {
             .ok_or_else(|| ProverError::TraceGenerationError("Rescue trace missing".to_string()))?;
 
         // Convert public inputs to field elements and bind into trace columns
-        let pub_inputs_felts = self.witness.public_inputs.to_field_elements();
+        let pub_inputs_felts = self.witness
+            .public_inputs
+            .to_field_elements()
+            .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?;
         let pub_inputs_vec = pub_inputs_felts.to_vec();
         if pub_inputs_vec.len() != cols::PUBLIC_INPUTS_LEN {
             return Err(ProverError::InvalidPublicInputs(format!(
@@ -266,7 +288,7 @@ mod tests {
     fn sample_inputs_aml(threshold: u64) -> CompliancePublicInputs {
         let policy_id = "aml.threshold";
         let params = PolicyParams::threshold(threshold);
-        let hash = compute_policy_hash(policy_id, &params);
+        let hash = compute_policy_hash(policy_id, &params).unwrap();
 
         CompliancePublicInputs {
             event_id: Uuid::new_v4(),
@@ -286,7 +308,7 @@ mod tests {
     fn sample_inputs_cap(cap: u64) -> CompliancePublicInputs {
         let policy_id = "order_total.cap";
         let params = PolicyParams::cap(cap);
-        let hash = compute_policy_hash(policy_id, &params);
+        let hash = compute_policy_hash(policy_id, &params).unwrap();
 
         CompliancePublicInputs {
             event_id: Uuid::new_v4(),
