@@ -29,6 +29,65 @@ fn decompose_to_bits(limb: Felt) -> [Felt; 32] {
     bits
 }
 
+/// Compute comparison gadget values for the V2 trace
+/// Returns (diff, borrow, is_less, is_equal) for all 8 limbs
+///
+/// The comparison works from high limb to low limb:
+/// - is_less[i] = 1 if amount < threshold considering limbs [i..7]
+/// - is_equal[i] = 1 if amount == threshold considering limbs [i..7]
+/// - diff[i] = threshold[i] - amount[i] - 1 when amount[i] < threshold[i] (for range proof)
+/// - borrow[i] = 1 if amount[i] > threshold[i]
+fn compute_comparison_gadget(
+    amount_limbs: &[Felt; 8],
+    threshold_limbs: &[Felt; 8],
+) -> ([Felt; 8], [Felt; 8], [Felt; 8], [Felt; 8]) {
+    let mut diff = [FELT_ZERO; 8];
+    let mut borrow = [FELT_ZERO; 8];
+    let mut is_less = [FELT_ZERO; 8];
+    let mut is_equal = [FELT_ZERO; 8];
+
+    // Start from highest limb (7) and work down
+    // Initially, we haven't determined less yet, and everything is equal
+    let mut determined_less = false;
+    let mut all_equal = true;
+
+    for i in (0..8).rev() {
+        let a = amount_limbs[i].as_int();
+        let t = threshold_limbs[i].as_int();
+
+        if all_equal {
+            if a < t {
+                // Amount is less at this limb
+                determined_less = true;
+                all_equal = false;
+                diff[i] = felt_from_u64(t - a - 1); // Range proof witness
+                borrow[i] = FELT_ZERO;
+            } else if a > t {
+                // Amount is greater at this limb - this should fail policy
+                all_equal = false;
+                diff[i] = FELT_ZERO;
+                borrow[i] = FELT_ONE;
+            } else {
+                // Equal at this limb, continue checking
+                diff[i] = FELT_ZERO;
+                borrow[i] = FELT_ZERO;
+            }
+        } else {
+            // Already determined the relationship
+            diff[i] = FELT_ZERO;
+            borrow[i] = FELT_ZERO;
+        }
+
+        // Set is_less and is_equal for this position
+        // is_less[i] means "considering limbs [i..7], is amount < threshold?"
+        // is_equal[i] means "considering limbs [i..7], is amount == threshold?"
+        is_less[i] = if determined_less { FELT_ONE } else { FELT_ZERO };
+        is_equal[i] = if all_equal { FELT_ONE } else { FELT_ZERO };
+    }
+
+    (diff, borrow, is_less, is_equal)
+}
+
 /// Compute a Rescue hash commitment to the witness amount
 /// This binds the private amount value to the proof
 fn compute_witness_commitment(amount_limbs: &[Felt; 8]) -> [Felt; RESCUE_STATE_WIDTH] {
@@ -115,13 +174,47 @@ impl TraceBuilder {
             ComparisonType::LessThanOrEqual => compute_comparison_values_lte(&amount_limbs, &limit_limbs),
         };
 
-        // Compute bit decomposition for limbs 0 and 1 (low and high u32 of u64 amount)
+        // Compute bit decomposition for limbs 0-1 only
+        // Limbs 2-7 are boundary-asserted to zero, no decomposition needed
         let limb0_bits = decompose_to_bits(amount_limbs[0]);
         let limb1_bits = decompose_to_bits(amount_limbs[1]);
 
         // Compute witness commitment using Rescue hash
         // This binds the private amount to the proof
         let witness_commitment = compute_witness_commitment(&amount_limbs);
+
+        // Compute V2 comparison gadget values
+        // For LTE policy (order_total.cap), we use limit+1 as the effective threshold
+        // This makes "amount <= cap" equivalent to "amount < cap + 1"
+        let (diff, borrow, is_less, is_equal_vals) = match self.policy.comparison_type() {
+            ComparisonType::LessThan => {
+                compute_comparison_gadget(&amount_limbs, &limit_limbs)
+            }
+            ComparisonType::LessThanOrEqual => {
+                let limit = self.policy.limit();
+                if limit == u64::MAX {
+                    // Special case: cap == u64::MAX
+                    // Any valid u64 amount satisfies amount <= u64::MAX
+                    // We've already validated the amount, so we can directly set is_less[0] = 1
+                    // This avoids overflow issues with limit + 1
+                    let diff = [FELT_ZERO; 8];
+                    let borrow = [FELT_ZERO; 8];
+                    let is_less = [FELT_ONE; 8]; // All limbs "less"
+                    let is_equal = [FELT_ZERO; 8];
+                    (diff, borrow, is_less, is_equal)
+                } else {
+                    // For LTE: use limit + 1 for comparison
+                    // This handles the case where amount == cap (which should be valid)
+                    let effective_limit = limit + 1;
+                    let effective_threshold_limbs = [
+                        felt_from_u64((effective_limit & 0xFFFFFFFF) as u64),
+                        felt_from_u64((effective_limit >> 32) as u64),
+                        FELT_ZERO, FELT_ZERO, FELT_ZERO, FELT_ZERO, FELT_ZERO, FELT_ZERO,
+                    ];
+                    compute_comparison_gadget(&amount_limbs, &effective_threshold_limbs)
+                }
+            }
+        };
 
         // Fill the trace
         for row in 0..self.trace_length {
@@ -139,7 +232,7 @@ impl TraceBuilder {
                 trace[cols::THRESHOLD_START + i][row] = limit_limbs[i];
             }
 
-            // Set comparison values
+            // Set comparison values (legacy)
             for i in 0..8 {
                 trace[cols::COMPARISON_START + i][row] = comparison_values[i];
             }
@@ -152,6 +245,16 @@ impl TraceBuilder {
             // Set bit decomposition for limb 1 (constant throughout trace)
             for i in 0..32 {
                 trace[cols::AMOUNT_BITS_LIMB1_START + i][row] = limb1_bits[i];
+            }
+
+            // Note: Limbs 2-7 are boundary-asserted to zero, no bit decomposition needed
+
+            // V2: Set comparison gadget columns
+            for i in 0..8 {
+                trace[cols::diff(i)][row] = diff[i];
+                trace[cols::borrow(i)][row] = borrow[i];
+                trace[cols::is_less(i)][row] = is_less[i];
+                trace[cols::is_equal(i)][row] = is_equal_vals[i];
             }
 
             // Set control flags

@@ -154,16 +154,31 @@ use winter_air::{
 };
 use winter_math::{FieldElement, ToElements};
 
-/// Number of transition constraints in the AIR
+/// Number of transition constraints in the AIR (V2 - Full Security)
+///
+/// Phase 1 (original):
 /// - 1: round counter
 /// - 8: amount consistency
 /// - 8: threshold consistency
-/// - 8: comparison consistency
-/// - 64: binary constraints (b * (1-b) = 0 for 64 bits)
-/// - 64: bit consistency (bits remain constant)
-/// - 2: recomposition constraints (limb = sum of bits)
-/// - 12: Rescue state consistency (witness commitment remains constant)
-const NUM_CONSTRAINTS: usize = 167;
+/// - 8: comparison consistency (legacy)
+/// - 64: binary constraints limbs 0-1 (b * (1-b) = 0 for 64 bits)
+/// - 64: bit consistency limbs 0-1
+/// - 2: recomposition constraints limbs 0-1
+/// - 12: Rescue state consistency
+///
+/// Phase 2 additions (V2):
+/// Note: Limbs 2-7 are boundary-asserted to zero, so no binary decomposition needed.
+/// The value 0 is trivially a valid u32. Winterfell has a 255-column limit.
+/// - 8: is_less consistency constraints
+/// - 8: is_equal consistency constraints
+/// - 8: diff consistency constraints
+/// - 8: borrow consistency constraints
+/// - 8: is_less binary constraints
+/// - 8: is_equal binary constraints
+/// - 8: borrow binary constraints
+///
+/// Total: 167 + 56 = 223
+const NUM_CONSTRAINTS: usize = 223;
 
 /// Public inputs for the compliance AIR
 #[derive(Debug, Clone)]
@@ -227,57 +242,8 @@ impl ComplianceAir {
         pub_inputs: &PublicInputs,
         options: ProofOptions,
     ) -> Self {
-        // Build transition constraint degrees matching Air::new
-        let mut degrees = Vec::with_capacity(NUM_CONSTRAINTS);
-
-        // Constraint 0: Round counter (degree 1)
-        degrees.push(TransitionConstraintDegree::new(1));
-
-        // Constraints 1-8: Amount consistency (degree 1)
-        for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-
-        // Constraints 9-16: Threshold consistency (degree 1)
-        for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-
-        // Constraints 17-24: Comparison consistency (degree 1)
-        for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-
-        // Constraints 25-88: Binary constraints for 64 bits (degree 1)
-        // Note: b * (1 - b) is algebraically degree 2, but since bit values
-        // are constant across the trace, the actual polynomial degree is 1.
-        for _ in 0..64 {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-
-        // Constraints 89-152: Bit consistency (degree 1)
-        for _ in 0..64 {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-
-        // Constraints 153-154: Recomposition constraints (degree 1)
-        degrees.push(TransitionConstraintDegree::new(1));
-        degrees.push(TransitionConstraintDegree::new(1));
-
-        // Constraints 155-166: Rescue state consistency (degree 1)
-        // Witness commitment (Rescue hash output) remains constant across rows
-        for _ in 0..12 {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-
-        // 15 boundary assertions: 5 original + 6 upper limbs + 4 witness commitment
-        let context = AirContext::new(trace_info, degrees, 15, options);
-
-        Self {
-            context,
-            threshold: pub_inputs.threshold,
-            witness_commitment: pub_inputs.witness_commitment,
-        }
+        // Delegate to Air::new which has the full constraint setup
+        Self::new(trace_info, pub_inputs.clone(), options)
     }
 
     /// Get the policy threshold
@@ -309,37 +275,80 @@ impl Air for ComplianceAir {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // Constraints 17-24: Comparison consistency (degree 1)
+        // Constraints 17-24: Comparison consistency (legacy) (degree 1)
         for _ in 0..8 {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // Constraints 25-88: Binary constraints for 64 bits (degree 1)
+        // Constraints 25-88: Binary constraints for 64 bits limbs 0-1 (degree 1)
         // Note: b * (1 - b) is algebraically degree 2, but since bit values
         // are constant across the trace, the actual polynomial degree is 1.
-        // Winterfell verifies actual degree, so we declare degree 1.
         for _ in 0..64 {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // Constraints 89-152: Bit consistency (degree 1)
+        // Constraints 89-152: Bit consistency limbs 0-1 (degree 1)
         for _ in 0..64 {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // Constraints 153-154: Recomposition constraints (degree 1)
-        // These verify: limb = sum(bit[i] * 2^i)
+        // Constraints 153-154: Recomposition constraints limbs 0-1 (degree 1)
         degrees.push(TransitionConstraintDegree::new(1));
         degrees.push(TransitionConstraintDegree::new(1));
 
         // Constraints 155-166: Rescue state consistency (degree 1)
-        // Witness commitment (Rescue hash output) remains constant across rows
         for _ in 0..12 {
             degrees.push(TransitionConstraintDegree::new(1));
         }
 
-        // Number of boundary assertions: 5 original + 6 upper limbs + 4 witness commitment = 15
-        let context = AirContext::new(trace_info, degrees, 15, options);
+        // =========================================================================
+        // V2 Extended Constraints: Comparison Gadget
+        // Note: Limbs 2-7 are boundary-asserted to zero, no decomposition needed
+        // =========================================================================
+
+        // Constraints 167-174: is_less consistency (8 constraints, degree 1)
+        for _ in 0..8 {
+            degrees.push(TransitionConstraintDegree::new(1));
+        }
+
+        // Constraints 175-182: is_equal consistency (8 constraints, degree 1)
+        for _ in 0..8 {
+            degrees.push(TransitionConstraintDegree::new(1));
+        }
+
+        // Constraints 183-190: diff consistency (8 constraints, degree 1)
+        for _ in 0..8 {
+            degrees.push(TransitionConstraintDegree::new(1));
+        }
+
+        // Constraints 191-198: borrow consistency (8 constraints, degree 1)
+        for _ in 0..8 {
+            degrees.push(TransitionConstraintDegree::new(1));
+        }
+
+        // Constraints 199-206: is_less binary (8 constraints, degree 1)
+        // Note: b * (1 - b) is algebraically degree 2, but since is_less values
+        // are constant across the trace, the actual polynomial degree is 1.
+        for _ in 0..8 {
+            degrees.push(TransitionConstraintDegree::new(1));
+        }
+
+        // Constraints 207-214: is_equal binary (8 constraints, degree 1)
+        // Note: b * (1 - b) is algebraically degree 2, but since is_equal values
+        // are constant across the trace, the actual polynomial degree is 1.
+        for _ in 0..8 {
+            degrees.push(TransitionConstraintDegree::new(1));
+        }
+
+        // Constraints 215-222: borrow binary (8 constraints, degree 1)
+        // Note: b * (1 - b) is algebraically degree 2, but since borrow values
+        // are constant across the trace, the actual polynomial degree is 1.
+        for _ in 0..8 {
+            degrees.push(TransitionConstraintDegree::new(1));
+        }
+
+        // Number of boundary assertions: 15 original + 1 (is_less[7] = 1 at last row) = 16
+        let context = AirContext::new(trace_info, degrees, 16, options);
 
         Self {
             context,
@@ -369,6 +378,7 @@ impl Air for ComplianceAir {
         assertions.push(Assertion::single(cols::THRESHOLD_START + 1, 0, threshold_high));
 
         // Boundary constraint: final comparison result must be 1 (amount < threshold)
+        // Legacy: using COMPARISON_END - 1
         assertions.push(Assertion::single(cols::COMPARISON_END - 1, last_row, FELT_ONE));
 
         // Boundary constraint: upper limbs (2-7) must be zero for u64 amounts
@@ -386,6 +396,11 @@ impl Air for ComplianceAir {
                 self.witness_commitment[i],
             ));
         }
+
+        // V2: Boundary constraint for comparison gadget
+        // is_less[0] must be 1 at the last row, meaning amount < threshold
+        // considering all limbs (0 through 7)
+        assertions.push(Assertion::single(cols::is_less(0), last_row, FELT_ONE));
 
         assertions
     }
@@ -499,8 +514,68 @@ impl Air for ComplianceAir {
             result[idx] = state_next - state_curr;
             idx += 1;
         }
-        // idx is now 167, matching NUM_CONSTRAINTS
-        let _ = idx; // Silence unused variable warning
+        // idx is now 167
+
+        // =========================================================================
+        // V2 Extended Constraints: Comparison Gadget
+        // Note: Limbs 2-7 are boundary-asserted to zero, no binary decomposition needed
+        // =========================================================================
+
+        // Constraints 167-174: is_less consistency (8 constraints)
+        for limb_idx in 0..8 {
+            let is_less_curr = current[cols::is_less(limb_idx)];
+            let is_less_next = next[cols::is_less(limb_idx)];
+            result[idx] = is_less_next - is_less_curr;
+            idx += 1;
+        }
+
+        // Constraints 175-182: is_equal consistency (8 constraints)
+        for limb_idx in 0..8 {
+            let is_equal_curr = current[cols::is_equal(limb_idx)];
+            let is_equal_next = next[cols::is_equal(limb_idx)];
+            result[idx] = is_equal_next - is_equal_curr;
+            idx += 1;
+        }
+
+        // Constraints 183-190: diff consistency (8 constraints)
+        for limb_idx in 0..8 {
+            let diff_curr = current[cols::diff(limb_idx)];
+            let diff_next = next[cols::diff(limb_idx)];
+            result[idx] = diff_next - diff_curr;
+            idx += 1;
+        }
+
+        // Constraints 191-198: borrow consistency (8 constraints)
+        for limb_idx in 0..8 {
+            let borrow_curr = current[cols::borrow(limb_idx)];
+            let borrow_next = next[cols::borrow(limb_idx)];
+            result[idx] = borrow_next - borrow_curr;
+            idx += 1;
+        }
+
+        // Constraints 199-206: is_less binary (8 constraints)
+        for limb_idx in 0..8 {
+            let is_less_val = current[cols::is_less(limb_idx)];
+            result[idx] = is_less_val * (E::ONE - is_less_val);
+            idx += 1;
+        }
+
+        // Constraints 207-214: is_equal binary (8 constraints)
+        for limb_idx in 0..8 {
+            let is_equal_val = current[cols::is_equal(limb_idx)];
+            result[idx] = is_equal_val * (E::ONE - is_equal_val);
+            idx += 1;
+        }
+
+        // Constraints 215-222: borrow binary (8 constraints)
+        for limb_idx in 0..8 {
+            let borrow_val = current[cols::borrow(limb_idx)];
+            result[idx] = borrow_val * (E::ONE - borrow_val);
+            idx += 1;
+        }
+
+        // idx is now 167 + 56 = 223, matching NUM_CONSTRAINTS
+        debug_assert_eq!(idx, NUM_CONSTRAINTS);
     }
 
     fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {

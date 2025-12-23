@@ -16,7 +16,7 @@
 mod error;
 mod verify;
 
-pub use error::VerifierError;
+pub use error::{VerifierError, PROOF_VERSION, validate_hex_string};
 pub use verify::{
     verify_compliance_proof,
     VerificationResult,

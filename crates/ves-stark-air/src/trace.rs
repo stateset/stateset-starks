@@ -14,16 +14,24 @@ use ves_stark_primitives::Felt;
 
 /// Total width of the execution trace (number of columns)
 ///
-/// Layout:
+/// Layout (V2 - Full Security):
 /// - Columns 0-11: Rescue state (12 elements for permutation)
 /// - Columns 12-19: Witness data (amount as 8 u32 limbs for range proof)
 /// - Columns 20-27: Threshold data (8 u32 limbs)
-/// - Columns 28-35: Comparison flags and intermediate values
+/// - Columns 28-35: Comparison flags and intermediate values (legacy)
 /// - Columns 36-39: Control flags (is_first, is_last, round_counter, phase)
 /// - Columns 40-71: Amount limb 0 bit decomposition (32 bits)
 /// - Columns 72-103: Amount limb 1 bit decomposition (32 bits)
 /// - Column 104: Rescue hash output commitment flag
-pub const TRACE_WIDTH: usize = 105;
+/// - Columns 105-112: diff[i] (threshold[i] - amount[i] - 1 when amount < threshold)
+/// - Columns 113-120: borrow[i] (1 if we need to borrow at limb i)
+/// - Columns 121-128: is_less[i] (1 if determined amount < threshold at limb i)
+/// - Columns 129-136: is_equal[i] (1 if still equal through limb i)
+///
+/// Note: Limbs 2-7 are boundary-asserted to zero (for u64 amounts), so no binary
+/// decomposition is needed. The value 0 is trivially a valid u32.
+/// Winterfell has a 255-column limit, so we stay within that bound.
+pub const TRACE_WIDTH: usize = 137;
 
 /// Legacy trace width for backward compatibility
 pub const TRACE_WIDTH_LEGACY: usize = 40;
@@ -70,8 +78,44 @@ pub mod cols {
     // Rescue hash commitment flag (104)
     pub const RESCUE_COMMIT_FLAG: usize = 104;
 
+    // =========================================================================
+    // V2 Extended Columns: Comparison Gadget
+    // =========================================================================
+
+    // diff[i] = threshold[i] - amount[i] - 1 when amount[i] < threshold[i] (105-112)
+    pub const DIFF_START: usize = 105;
+    pub const DIFF_END: usize = 113;
+
+    // borrow[i] = 1 if amount[i] > threshold[i] at position i (113-120)
+    pub const BORROW_START: usize = 113;
+    pub const BORROW_END: usize = 121;
+
+    // is_less[i] = 1 if determined amount < threshold considering limbs [i..7] (121-128)
+    pub const IS_LESS_START: usize = 121;
+    pub const IS_LESS_END: usize = 129;
+
+    // is_equal[i] = 1 if all limbs [i..7] are equal (129-136)
+    pub const IS_EQUAL_START: usize = 129;
+    pub const IS_EQUAL_END: usize = 137;
+
     /// Number of bits per limb
     pub const BITS_PER_LIMB: usize = 32;
+
+    /// Number of limbs
+    pub const NUM_LIMBS: usize = 8;
+
+    /// Get bit column start index for limbs 0-1 (only these have binary decomposition)
+    /// Limbs 2-7 are boundary-asserted to zero and don't need binary decomposition
+    #[inline]
+    pub const fn amount_limb_bits_start(limb_idx: usize) -> usize {
+        match limb_idx {
+            0 => AMOUNT_BITS_LIMB0_START,
+            1 => AMOUNT_BITS_LIMB1_START,
+            // Limbs 2-7 don't have bit decomposition columns
+            // They are boundary-asserted to zero
+            _ => panic!("Only limbs 0-1 have binary decomposition"),
+        }
+    }
 
     /// Get bit column index for limb 0
     #[inline]
@@ -85,6 +129,42 @@ pub mod cols {
     pub fn amount_limb1_bit(bit_idx: usize) -> usize {
         debug_assert!(bit_idx < BITS_PER_LIMB);
         AMOUNT_BITS_LIMB1_START + bit_idx
+    }
+
+    /// Get bit column index for limbs 0-1 only
+    #[inline]
+    pub fn amount_limb_bit(limb_idx: usize, bit_idx: usize) -> usize {
+        debug_assert!(limb_idx < 2, "Only limbs 0-1 have binary decomposition");
+        debug_assert!(bit_idx < BITS_PER_LIMB);
+        amount_limb_bits_start(limb_idx) + bit_idx
+    }
+
+    /// Get diff column index
+    #[inline]
+    pub fn diff(limb_idx: usize) -> usize {
+        debug_assert!(limb_idx < NUM_LIMBS);
+        DIFF_START + limb_idx
+    }
+
+    /// Get borrow column index
+    #[inline]
+    pub fn borrow(limb_idx: usize) -> usize {
+        debug_assert!(limb_idx < NUM_LIMBS);
+        BORROW_START + limb_idx
+    }
+
+    /// Get is_less column index
+    #[inline]
+    pub fn is_less(limb_idx: usize) -> usize {
+        debug_assert!(limb_idx < NUM_LIMBS);
+        IS_LESS_START + limb_idx
+    }
+
+    /// Get is_equal column index
+    #[inline]
+    pub fn is_equal(limb_idx: usize) -> usize {
+        debug_assert!(limb_idx < NUM_LIMBS);
+        IS_EQUAL_START + limb_idx
     }
 }
 

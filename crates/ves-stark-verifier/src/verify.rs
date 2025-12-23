@@ -2,7 +2,7 @@
 //!
 //! This module provides the main verification logic for VES compliance proofs.
 
-use crate::error::VerifierError;
+use crate::error::{VerifierError, validate_hex_string};
 use ves_stark_air::compliance::{ComplianceAir, PublicInputs};
 use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
 use ves_stark_primitives::public_inputs::CompliancePublicInputs;
@@ -55,7 +55,13 @@ pub fn verify_compliance_proof(
 ) -> Result<VerificationResult, VerifierError> {
     let start = Instant::now();
 
-    // Validate public inputs
+    // V2 Security: Validate hex string formats in public inputs
+    validate_hex_string("payload_plain_hash", &public_inputs.payload_plain_hash, 64)?;
+    validate_hex_string("payload_cipher_hash", &public_inputs.payload_cipher_hash, 64)?;
+    validate_hex_string("event_signing_hash", &public_inputs.event_signing_hash, 64)?;
+    validate_hex_string("policy_hash", &public_inputs.policy_hash, 64)?;
+
+    // Validate policy hash
     if !public_inputs.validate_policy_hash() {
         return Err(VerifierError::InvalidPolicyHash {
             expected: CompliancePublicInputs::compute_policy_hash(
