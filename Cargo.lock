@@ -1873,7 +1873,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "ves-stark"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "serde_json",
@@ -1888,7 +1888,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-air"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proptest",
  "rand 0.8.5",
@@ -1965,7 +1965,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-primitives"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hex",
  "proptest",
@@ -1982,7 +1982,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-prover"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64",
  "hex",
@@ -2003,7 +2003,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-verifier"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hex",
  "rand 0.8.5",
