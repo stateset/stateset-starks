@@ -12,7 +12,7 @@ In our context: If the verifier accepts a proof, then with overwhelming probabil
 - The prover knows an amount value
 - That amount satisfies `amount < threshold` (or `amount <= cap`)
 
-## Constraint System Overview (V2)
+## Constraint System Overview (Current)
 
 ### Constraint Categories
 
@@ -21,14 +21,19 @@ In our context: If the verifier accepts a proof, then with overwhelming probabil
 | Round counter | 1 | 1 | Trace length enforcement |
 | Amount consistency | 8 | 1 | Amount constant across rows |
 | Threshold consistency | 8 | 1 | Threshold constant across rows |
-| Comparison consistency | 8 | 1 | Comparison values constant |
-| Binary (limbs 0-7) | 256 | 2 | `b * (1-b) = 0` for all bits |
-| Bit consistency | 256 | 1 | Bits constant across rows |
-| Recomposition | 8 | 1 | `limb = sum(bit[i] * 2^i)` |
-| Comparison gadget | 96 | 2 | Lexicographic comparison |
-| Rescue S-box | 168 | 7 | Forward/inverse S-box |
-| Rescue MDS | 168 | 1 | Linear mixing |
-| **Total** | **~990** | max 7 | |
+| Public input binding | 47 | 1 | Public inputs constant across rows |
+| Amount bit binary (limbs 0-1) | 64 | 2 | `b * (1-b) = 0` for all bits |
+| Amount bit consistency (limbs 0-1) | 64 | 1 | Bits constant across rows |
+| Amount recomposition (limbs 0-1) | 2 | 1 | `limb = sum(bit[i] * 2^i)` |
+| Diff bit binary (limbs 0-1) | 64 | 2 | `b * (1-b) = 0` for all bits |
+| Diff bit consistency (limbs 0-1) | 64 | 1 | Bits constant across rows |
+| Diff recomposition (limbs 0-1) | 2 | 1 | `diff = sum(bit[i] * 2^i)` |
+| Borrow consistency (limbs 0-1) | 2 | 1 | Borrows constant across rows |
+| Borrow binary (limbs 0-1) | 2 | 2 | `b * (1-b) = 0` for borrows |
+| Subtraction constraints (limbs 0-1) | 2 | 1 | Enforce `threshold - amount = diff + borrow` |
+| Rescue permutation transitions | 12 | 9 | Rescue-Prime rounds |
+| Rescue init binding | 8 | 2 | Bind amount limbs to Rescue state |
+| **Total** | **350** | max 9 | |
 
 ### Boundary Assertions
 
@@ -36,59 +41,59 @@ In our context: If the verifier accepts a proof, then with overwhelming probabil
 |-----------|-----|--------|-------|---------|
 | is_first | 0 | FLAG_IS_FIRST | 1 | Mark first row |
 | is_last | last | FLAG_IS_LAST | 1 | Mark last row |
-| threshold_low | 0 | THRESHOLD_START | threshold & 0xFFFFFFFF | Bind public threshold |
-| threshold_high | 0 | THRESHOLD_START+1 | threshold >> 32 | Bind public threshold |
-| comparison_result | last | COMPARISON_END-1 | 1 | Prove amount < threshold |
-| upper_limbs | 0 | AMOUNT_START+2..8 | 0 | Amount fits in u64 |
-| rescue_init | 0 | RESCUE_STATE | amount_limbs | Initialize hash |
-| rescue_output | 14 | RESCUE_STATE | commitment | Hash output matches |
+| limit_low | 0 | THRESHOLD_START | limit & 0xFFFFFFFF | Bind effective policy limit |
+| limit_high | 0 | THRESHOLD_START+1 | limit >> 32 | Bind effective policy limit |
+| upper_amount_limbs | 0 | AMOUNT_START+2..8 | 0 | Amount fits in u64 |
+| upper_limit_limbs | 0 | THRESHOLD_START+2..8 | 0 | Limit fits in u64 |
+| upper_diff_limbs | 0 | DIFF_START+2..8 | 0 | Diff fits in u64 |
+| final_borrow | last | BORROW_START+1 | 0 | Enforce amount <= limit |
+| rescue_domain | 0 | RESCUE_STATE+8..12 | 8, 0...0 | Domain separator + padding |
+| rescue_init | 0 | RESCUE_STATE+0..7 | amount_limbs | Initialize hash |
+| rescue_output | 14 | RESCUE_STATE+0..3 | commitment | Hash output matches |
+| public_inputs | 0 | PUBLIC_INPUTS_* | value | Bind public inputs to trace |
 
 ## Soundness Arguments
 
 ### 1. Range Validity
 
-**Claim**: Each amount limb is a valid u32 (value < 2^32).
+**Claim**: Amount limbs 0-1 and diff limbs 0-1 are valid u32 (value < 2^32); limbs 2-7 are boundary-asserted to 0.
 
 **Proof**:
-1. For each limb `L[i]`, there exist 32 trace columns `b[i][0..31]`
+1. For limbs 0-1, there exist 32 trace columns `b[i][0..31]`
 2. Binary constraints enforce: `b[i][j] * (1 - b[i][j]) = 0` for all j
 3. This means each `b[i][j]` is exactly 0 or 1 in the field
 4. Recomposition constraint: `L[i] = sum(b[i][j] * 2^j for j in 0..32)`
 5. If all bits are 0 or 1, the sum is at most `2^32 - 1`
-6. Therefore `L[i] < 2^32`
+6. Therefore `L[i] < 2^32` for i in {0,1}
+7. Limbs 2-7 are boundary-asserted to 0, which is a valid u32
 
 **Security**: Breaking requires finding non-binary field element satisfying `x * (1-x) = 0`, which has only solutions {0, 1} in any field.
 
-### 2. Comparison Correctness
+### 2. Subtraction Correctness
 
-**Claim**: The comparison gadget correctly computes `amount < threshold`.
+**Claim**: The subtraction gadget correctly enforces `amount <= limit` (where `limit` is the policy's effective limit).
 
-**Proof** (Lexicographic comparison from high to low limb):
+**Proof** (Two-limb subtraction with borrows):
 
-For each limb pair `(A[i], T[i])` from i=7 down to i=0:
+For limbs 0-1 (u64 amounts), the prover supplies `diff[0..1]` and `borrow[0..1]` such that:
 
-1. **is_less propagation**:
+1. **Limb 0**:
    ```
-   is_less[i] = is_less[i+1] OR (is_equal[i+1] AND A[i] < T[i])
+   amount0 + diff0 - limit0 - borrow0 * 2^32 = 0
    ```
-   Constrained by: `is_less[i] = is_less[i+1] + is_equal[i+1] * limb_less[i] * (1 - is_less[i+1])`
-
-2. **is_equal propagation**:
+2. **Limb 1**:
    ```
-   is_equal[i] = is_equal[i+1] AND (A[i] == T[i])
+   amount1 + diff1 + borrow0 - limit1 - borrow1 * 2^32 = 0
    ```
-   Constrained by: `is_equal[i] = is_equal[i+1] * (1 - limb_less[i]) * (1 - limb_greater[i])`
+3. **Range and binary checks**:
+   - `diff0` and `diff1` are range-checked via bit decomposition
+   - `borrow0` and `borrow1` are constrained to {0,1}
+4. **Final borrow must be zero**:
+   - Boundary assertion enforces `borrow1 = 0` at the last row
 
-3. **limb_less witness**: `diff[i] = T[i] - A[i] - 1` when `A[i] < T[i]`
-   - Range proof on `diff[i]` ensures it's a valid u32
-   - If `diff[i]` is valid u32 and `diff[i] = T[i] - A[i] - 1`, then `A[i] < T[i]`
-
-4. **Boundary assertion**: `is_less[0] = 1` at last row
-
-**Conclusion**: The comparison result is sound because:
-- Base case: `is_less[8] = 0, is_equal[8] = 1` (start of comparison)
-- Inductive: Each step correctly propagates less/equal status
-- Final: `is_less[0] = 1` required for valid proof
+If `borrow1 = 0`, the subtraction does not underflow, which implies `amount <= limit`.
+For strict policies (AML threshold), the AIR uses `limit = threshold - 1`, so `amount <= limit`
+is equivalent to `amount < threshold`.
 
 ### 3. Witness Commitment Binding
 
@@ -172,19 +177,19 @@ Where `lambda` is the security parameter and `negl` is negligible.
 | Attack | Complexity | Mitigation |
 |--------|------------|------------|
 | Forge range proof | Find non-binary solution to `x(1-x)=0` | Impossible in field |
-| Forge comparison | Find valid diff for wrong comparison | 2^64 field operations |
+| Forge subtraction | Find valid diff/borrow for wrong amount <= limit | 2^64 field operations |
 | Forge commitment | Rescue preimage attack | 2^128 operations |
 | Policy substitution | SHA256 collision | 2^128 operations |
 | Proof forgery | Break FRI soundness | 2^80 operations |
 
 ## Formal Security Statement
 
-**Theorem** (Soundness): The VES-STARK V2 proof system is computationally sound with soundness error at most `2^(-80)` against adversaries running in time `T < 2^80`.
+**Theorem** (Soundness): The VES-STARK proof system is computationally sound with soundness error at most `2^(-80)` against adversaries running in time `T < 2^80`.
 
 **Proof sketch**:
 1. AIR constraints form a correct encoding of the compliance statement
 2. Binary decomposition ensures valid range (unconditional soundness)
-3. Comparison gadget correctly implements lexicographic comparison
+3. Subtraction gadget correctly enforces `amount <= limit`
 4. Rescue permutation constraints bind commitment (128-bit security)
 5. STARK protocol provides 80-bit computational soundness
 6. Combined: proof accepted implies valid witness with overwhelming probability
@@ -193,9 +198,9 @@ Where `lambda` is the security parameter and `negl` is negligible.
 
 For each constraint category, verify:
 
-- [ ] **Binary constraints**: `b * (1-b) = 0` for all 256 bits
-- [ ] **Recomposition**: `limb = sum(bit * 2^i)` for all 8 limbs
-- [ ] **Comparison gadget**: Correct propagation of is_less/is_equal
+- [ ] **Binary constraints**: `b * (1-b) = 0` for amount bits, diff bits, and borrows
+- [ ] **Recomposition**: `limb = sum(bit * 2^i)` for amount/diff limbs 0-1
+- [ ] **Subtraction gadget**: Enforce limb-wise subtraction with borrows and `borrow1 = 0`
 - [ ] **Rescue initialization**: State correctly initialized from amount
 - [ ] **Rescue rounds**: All 14 half-rounds constrained
 - [ ] **Rescue output**: Output matches commitment

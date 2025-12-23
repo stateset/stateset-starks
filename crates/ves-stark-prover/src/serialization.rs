@@ -32,6 +32,8 @@ pub struct ProofJson {
     pub proof_hash: String,
     /// Proof metadata
     pub metadata: ProofMetadata,
+    /// Witness commitment (4 field elements as u64)
+    pub witness_commitment: [u64; 4],
     /// Policy information (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub policy: Option<PolicyInfo>,
@@ -63,6 +65,7 @@ impl ProofJson {
             proof_b64: base64::engine::general_purpose::STANDARD.encode(&proof.proof_bytes),
             proof_hash: proof.proof_hash.clone(),
             metadata: proof.metadata.clone(),
+            witness_commitment: proof.witness_commitment,
             policy: None,
         }
     }
@@ -73,6 +76,7 @@ impl ProofJson {
             proof_b64: base64::engine::general_purpose::STANDARD.encode(&proof.proof_bytes),
             proof_hash: proof.proof_hash.clone(),
             metadata: proof.metadata.clone(),
+            witness_commitment: proof.witness_commitment,
             policy: Some(PolicyInfo::from(policy)),
         }
     }
@@ -198,6 +202,8 @@ pub struct CompactProof {
     pub limit: u64,
     /// Proving time in ms
     pub proving_time_ms: u64,
+    /// Witness commitment (4 field elements as u64)
+    pub witness_commitment: [u64; 4],
 }
 
 impl CompactProof {
@@ -210,6 +216,7 @@ impl CompactProof {
             policy_id: policy.policy_id().to_string(),
             limit: policy.limit(),
             proving_time_ms: proof.metadata.proving_time_ms,
+            witness_commitment: proof.witness_commitment,
         }
     }
 
@@ -274,6 +281,7 @@ mod tests {
         let json: ProofJson = serde_json::from_slice(&data).unwrap();
         assert_eq!(json.proof_hash, "abcd1234");
         assert_eq!(json.metadata.num_constraints, 167);
+        assert_eq!(json.witness_commitment, proof.witness_commitment);
     }
 
     #[test]
@@ -318,6 +326,7 @@ mod tests {
         let policy_info = json.policy.unwrap();
         assert_eq!(policy_info.policy_type, "aml.threshold");
         assert_eq!(policy_info.limit, 10000);
+        assert_eq!(json.witness_commitment, proof.witness_commitment);
     }
 
     #[test]
@@ -329,6 +338,7 @@ mod tests {
         assert_eq!(compact.version, 1);
         assert_eq!(compact.policy_id, "order_total.cap");
         assert_eq!(compact.limit, 50000);
+        assert_eq!(compact.witness_commitment, proof.witness_commitment);
 
         let bytes = compact.to_bytes().unwrap();
         let recovered = CompactProof::from_bytes(&bytes).unwrap();
@@ -336,5 +346,6 @@ mod tests {
         assert_eq!(recovered.proof, proof.proof_bytes);
         assert_eq!(recovered.hash, proof.proof_hash);
         assert_eq!(recovered.policy_id, "order_total.cap");
+        assert_eq!(recovered.witness_commitment, proof.witness_commitment);
     }
 }

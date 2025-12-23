@@ -84,7 +84,7 @@
 //!
 //! Constraints 25-56: Binary Constraints (Limb 0, 32 bits)
 //!   bit[i] × (1 - bit[i]) ≡ 0  for i in 0..32
-//!   Degree: 2 (algebraically), but constant bits → degree 1 actual
+//!   Degree: 2
 //!   Purpose: Each bit is 0 or 1
 //!
 //!   SOUNDNESS: This is critical! Without b(1-b)=0, a malicious prover
@@ -305,10 +305,8 @@ impl Air for ComplianceAir {
         }
 
         // Amount bit binary constraints (64 bits)
-        // Since bits are constant across all rows, the polynomial is degree 0
-        // but we declare 1 to account for trace polynomial structure
         for _ in 0..64 {
-            degrees.push(TransitionConstraintDegree::new(1));
+            degrees.push(TransitionConstraintDegree::new(2));
         }
 
         // Amount bit consistency (64 bits, degree 1)
@@ -321,9 +319,8 @@ impl Air for ComplianceAir {
         degrees.push(TransitionConstraintDegree::new(1));
 
         // Diff bit binary constraints (64 bits)
-        // Since diff bits are constant across all rows, polynomial is degree 0
         for _ in 0..64 {
-            degrees.push(TransitionConstraintDegree::new(1));
+            degrees.push(TransitionConstraintDegree::new(2));
         }
 
         // Diff bit consistency (64 bits, degree 1)
@@ -341,9 +338,8 @@ impl Air for ComplianceAir {
         }
 
         // Borrow binary (2 constraints)
-        // Borrows are constant across rows
         for _ in 0..2 {
-            degrees.push(TransitionConstraintDegree::new(1));
+            degrees.push(TransitionConstraintDegree::new(2));
         }
 
         // Subtraction constraints (2 constraints, degree 1)

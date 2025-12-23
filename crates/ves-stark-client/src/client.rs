@@ -102,10 +102,11 @@ impl SequencerClient {
 
         let request = SubmitProofRequest {
             proof_type: "stark".to_string(),
-            proof_version: 1,
+            proof_version: ves_stark_verifier::PROOF_VERSION,
             policy_id: submission.policy_id,
             policy_params: submission.policy_params,
             proof_b64,
+            witness_commitment: submission.witness_commitment,
             public_inputs: None, // Let the sequencer compute canonical inputs
         };
 
@@ -229,7 +230,12 @@ impl SequencerClient {
             .map_err(|e| ClientError::ProofGeneration(format!("{:?}", e)))?;
 
         // Submit proof
-        let submission = ProofSubmission::aml_threshold(event_id, threshold, proof.proof_bytes);
+        let submission = ProofSubmission::aml_threshold(
+            event_id,
+            threshold,
+            proof.proof_bytes,
+            proof.witness_commitment,
+        );
         self.submit_proof(submission).await
     }
 }
@@ -258,7 +264,12 @@ mod tests {
     #[test]
     fn test_proof_submission() {
         let event_id = Uuid::new_v4();
-        let submission = ProofSubmission::aml_threshold(event_id, 10000, vec![1, 2, 3, 4]);
+        let submission = ProofSubmission::aml_threshold(
+            event_id,
+            10000,
+            vec![1, 2, 3, 4],
+            [0, 0, 0, 0],
+        );
         assert_eq!(submission.policy_id, "aml.threshold");
         assert_eq!(submission.event_id, event_id);
     }

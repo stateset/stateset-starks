@@ -45,7 +45,7 @@ VES-STARK enables zero-knowledge proofs of policy compliance for encrypted trans
 | **Knowledge Binding** | Witness commitment cryptographically binds the private amount | Rescue-Prime hash commitment |
 | **Policy Binding** | Proof is bound to specific policy ID and parameters | Policy hash in public inputs |
 | **Range Validity** | All limbs are provably valid u32 values (< 2^32) | Binary decomposition constraints |
-| **Comparison Integrity** | Comparison result is correctly computed from limbs | Lexicographic comparison constraints |
+| **Comparison Integrity** | Comparison result is correctly computed from limbs | Subtraction constraints with borrows |
 
 ### Desired Properties
 
@@ -65,18 +65,19 @@ VES-STARK enables zero-knowledge proofs of policy compliance for encrypted trans
 
 ### 2. Fake Limb Values
 
-**Attack**: Prover uses field elements >= 2^32 as "limb" values to bypass comparison.
+**Attack**: Prover uses field elements >= 2^32 as "limb" values to bypass subtraction.
 
 **Mitigation**: Binary decomposition of all 8 limbs (256 bits total) ensures each limb is a valid u32.
 
-### 3. Comparison Gadget Manipulation
+### 3. Subtraction Gadget Manipulation
 
-**Attack**: Prover provides incorrect comparison intermediate values to claim amount < threshold when amount >= threshold.
+**Attack**: Prover provides incorrect diff/borrow values to claim amount <= limit when amount > limit.
 
-**Mitigation**: Full comparison gadget constraints:
-- `is_less[i]` and `is_equal[i]` propagation constraints
-- `diff[i]` range proofs for each limb comparison
-- Final boundary assertion that `is_less[0] = 1`
+**Mitigation**: Full subtraction gadget constraints:
+- `diff[i]` range proofs for each limb
+- `borrow[i]` binary constraints
+- Limb-wise subtraction constraints with borrows
+- Final boundary assertion that `borrow[1] = 0`
 
 ### 4. Hash Commitment Forgery
 
@@ -136,7 +137,7 @@ VES-STARK enables zero-knowledge proofs of policy compliance for encrypted trans
 | Version | AIR Structure | Status |
 |---------|---------------|--------|
 | V1 | Legacy (167 constraints, partial range proofs) | Deprecated |
-| V2 | Full security (990+ constraints, full permutation) | Current |
+| V2 | Full security (350 constraints, full permutation, u64 subtraction gadget) | Current |
 
 **Migration**: V1 proofs are rejected. All clients must regenerate proofs.
 

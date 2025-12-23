@@ -21,6 +21,12 @@ pub enum PublicInputsError {
         field: &'static str,
         source: hex::FromHexError,
     },
+    /// Invalid hex format (length or casing)
+    #[error("Invalid hex format in {field}: {reason}")]
+    InvalidHexFormat {
+        field: &'static str,
+        reason: String,
+    },
     /// JSON serialization failed
     #[error("JSON serialization failed: {0}")]
     Serialization(#[from] serde_json::Error),
@@ -159,6 +165,11 @@ pub struct CompliancePublicInputsFelts {
 impl CompliancePublicInputsFelts {
     /// Convert from CompliancePublicInputs
     pub fn from_public_inputs(inputs: &CompliancePublicInputs) -> Result<Self, PublicInputsError> {
+        validate_hex_string("payloadPlainHash", &inputs.payload_plain_hash, 64)?;
+        validate_hex_string("payloadCipherHash", &inputs.payload_cipher_hash, 64)?;
+        validate_hex_string("eventSigningHash", &inputs.event_signing_hash, 64)?;
+        validate_hex_string("policyHash", &inputs.policy_hash, 64)?;
+
         Ok(Self {
             event_id: uuid_to_felts(&inputs.event_id),
             tenant_id: uuid_to_felts(&inputs.tenant_id),
@@ -240,6 +251,32 @@ pub fn compute_policy_hash(policy_id: &str, policy_params: &PolicyParams) -> Res
 pub fn compute_public_inputs_hash(inputs: &CompliancePublicInputs) -> Result<Hash256, PublicInputsError> {
     let canonical = canonical_json(&serde_json::to_value(inputs)?)?;
     Ok(Hash256::sha256(canonical.as_bytes()))
+}
+
+fn validate_hex_string(field: &'static str, value: &str, expected_len: usize) -> Result<(), PublicInputsError> {
+    if value.len() != expected_len {
+        return Err(PublicInputsError::InvalidHexFormat {
+            field,
+            reason: format!("expected {} characters, got {}", expected_len, value.len()),
+        });
+    }
+
+    for (i, c) in value.chars().enumerate() {
+        if !c.is_ascii_hexdigit() {
+            return Err(PublicInputsError::InvalidHexFormat {
+                field,
+                reason: format!("invalid character '{}' at position {}", c, i),
+            });
+        }
+        if c.is_ascii_uppercase() {
+            return Err(PublicInputsError::InvalidHexFormat {
+                field,
+                reason: format!("uppercase character '{}' at position {} (must be lowercase)", c, i),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 /// Canonicalize JSON according to RFC 8785 (JCS)
@@ -334,5 +371,25 @@ mod tests {
         };
 
         assert!(inputs.validate_policy_hash().unwrap());
+    }
+
+    #[test]
+    fn test_uppercase_hex_rejected() {
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "A".repeat(64),
+            payload_cipher_hash: "b".repeat(64),
+            event_signing_hash: "c".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10000),
+            policy_hash: "d".repeat(64),
+        };
+
+        let result = inputs.to_field_elements();
+        assert!(result.is_err());
     }
 }

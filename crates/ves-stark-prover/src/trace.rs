@@ -285,6 +285,10 @@ mod tests {
     use uuid::Uuid;
     use winter_prover::Trace;
 
+    fn compute_witness_commitment_from_state(state: &[Felt; RESCUE_STATE_WIDTH]) -> [Felt; 4] {
+        [state[0], state[1], state[2], state[3]]
+    }
+
     fn sample_inputs_aml(threshold: u64) -> CompliancePublicInputs {
         let policy_id = "aml.threshold";
         let params = PolicyParams::threshold(threshold);

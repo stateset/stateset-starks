@@ -46,6 +46,7 @@ pub struct SubmitProofRequest {
     pub policy_id: String,
     pub policy_params: serde_json::Value,
     pub proof_b64: String,
+    pub witness_commitment: [u64; 4],
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_inputs: Option<serde_json::Value>,
 }
@@ -63,6 +64,7 @@ pub struct SubmitProofResponse {
     pub policy_params: serde_json::Value,
     pub policy_hash: String,
     pub proof_hash: String,
+    pub witness_commitment: [u64; 4],
     pub public_inputs: Option<serde_json::Value>,
     pub submitted_at: String,
 }
@@ -80,6 +82,7 @@ pub struct ProofSummary {
     pub policy_params: serde_json::Value,
     pub policy_hash: String,
     pub proof_hash: String,
+    pub witness_commitment: [u64; 4],
     pub public_inputs: Option<serde_json::Value>,
     pub submitted_at: String,
 }
@@ -106,6 +109,7 @@ pub struct ProofDetails {
     pub policy_hash: String,
     pub proof_hash: String,
     pub proof_b64: String,
+    pub witness_commitment: [u64; 4],
     pub public_inputs: Option<serde_json::Value>,
     pub submitted_at: String,
 }
@@ -152,16 +156,23 @@ pub struct ProofSubmission {
     pub policy_id: String,
     pub policy_params: serde_json::Value,
     pub proof_bytes: Vec<u8>,
+    pub witness_commitment: [u64; 4],
 }
 
 impl ProofSubmission {
     /// Create a new proof submission for the aml.threshold policy
-    pub fn aml_threshold(event_id: Uuid, threshold: u64, proof_bytes: Vec<u8>) -> Self {
+    pub fn aml_threshold(
+        event_id: Uuid,
+        threshold: u64,
+        proof_bytes: Vec<u8>,
+        witness_commitment: [u64; 4],
+    ) -> Self {
         Self {
             event_id,
             policy_id: "aml.threshold".to_string(),
             policy_params: AmlThresholdParams::new(threshold).to_json(),
             proof_bytes,
+            witness_commitment,
         }
     }
 }

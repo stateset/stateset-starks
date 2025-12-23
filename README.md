@@ -60,10 +60,11 @@ assert!(result.valid);
 // POST /api/v1/ves/compliance/{event_id}/proofs
 let request = SubmitComplianceProofRequest {
     proof_type: "STARK",
-    proof_version: 1,
+    proof_version: 2,
     policy_id: "aml.threshold",
     policy_params: json!({"threshold": 10000}),
     proof_b64: base64::encode(&proof.proof_bytes),
+    witness_commitment: proof.witness_commitment,
     public_inputs: Some(public_inputs),
 };
 ```
