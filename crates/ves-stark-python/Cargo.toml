@@ -1,0 +1,28 @@
+[package]
+name = "ves-stark-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Python bindings for VES STARK proof system"
+
+[lib]
+name = "ves_stark"
+crate-type = ["cdylib"]
+
+[dependencies]
+# PyO3 for Python bindings
+pyo3 = { version = "0.22", features = ["extension-module"] }
+
+# Workspace crates
+ves-stark-primitives = { path = "../ves-stark-primitives" }
+ves-stark-air = { path = "../ves-stark-air" }
+ves-stark-prover = { path = "../ves-stark-prover" }
+ves-stark-verifier = { path = "../ves-stark-verifier" }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# UUID handling
+uuid = { workspace = true }

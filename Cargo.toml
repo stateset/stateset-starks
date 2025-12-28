@@ -8,6 +8,8 @@ members = [
     "crates/ves-stark-batch",
     "crates/ves-stark-client",
     "crates/ves-stark-cli",
+    "crates/ves-stark-nodejs",
+    "crates/ves-stark-python",
 ]
 
 [package]

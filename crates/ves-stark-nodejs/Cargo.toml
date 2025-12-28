@@ -1,0 +1,31 @@
+[package]
+name = "ves-stark-nodejs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Node.js bindings for VES STARK proof system"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# NAPI-RS for Node.js bindings
+napi = { version = "2", default-features = false, features = ["napi8", "serde-json"] }
+napi-derive = "2"
+
+# Workspace crates
+ves-stark-primitives = { path = "../ves-stark-primitives" }
+ves-stark-air = { path = "../ves-stark-air" }
+ves-stark-prover = { path = "../ves-stark-prover" }
+ves-stark-verifier = { path = "../ves-stark-verifier" }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# UUID handling
+uuid = { workspace = true }
+
+[build-dependencies]
+napi-build = "2"
