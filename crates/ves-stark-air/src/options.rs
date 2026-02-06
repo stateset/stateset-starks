@@ -3,7 +3,19 @@
 //! Configurable parameters for STARK proof generation that affect
 //! security level, proof size, and proving/verification time.
 
+use thiserror::Error;
 use winter_air::FieldExtension;
+
+/// Errors that can occur when validating proof options
+#[derive(Debug, Error)]
+pub enum OptionsError {
+    #[error("num_queries must be greater than zero")]
+    InvalidNumQueries,
+    #[error("blowup_factor must be a power of two >= 2, got {0}")]
+    InvalidBlowupFactor(usize),
+    #[error("fri_folding_factor must be a power of two >= 2, got {0}")]
+    InvalidFriFoldingFactor(usize),
+}
 
 /// Options for proof generation
 #[derive(Debug, Clone)]
@@ -67,8 +79,31 @@ impl ProofOptions {
         }
     }
 
+    /// Validate proof options for internal consistency
+    pub fn validate(&self) -> Result<(), OptionsError> {
+        if self.num_queries == 0 {
+            return Err(OptionsError::InvalidNumQueries);
+        }
+        if self.blowup_factor < 2 || !self.blowup_factor.is_power_of_two() {
+            return Err(OptionsError::InvalidBlowupFactor(self.blowup_factor));
+        }
+        if self.fri_folding_factor < 2 || !self.fri_folding_factor.is_power_of_two() {
+            return Err(OptionsError::InvalidFriFoldingFactor(
+                self.fri_folding_factor,
+            ));
+        }
+        Ok(())
+    }
+
     /// Estimate the security level in bits
     pub fn security_level(&self) -> usize {
+        self.try_security_level().unwrap_or(0)
+    }
+
+    /// Estimate the security level in bits without panicking
+    pub fn try_security_level(&self) -> Result<usize, OptionsError> {
+        self.validate()?;
+
         // Simplified security estimation based on FRI security analysis
         // query_security = num_queries * log2(blowup_factor)
         // grinding_factor adds that many bits via proof-of-work
@@ -83,19 +118,25 @@ impl ProofOptions {
             FieldExtension::Cubic => 20,     // ~20 bits bonus
         };
 
-        base_security + extension_bonus
+        Ok(base_security + extension_bonus)
     }
 
     /// Convert to Winterfell ProofOptions
     pub fn to_winterfell(&self) -> winter_air::ProofOptions {
-        winter_air::ProofOptions::new(
+        self.try_to_winterfell().expect("invalid proof options")
+    }
+
+    /// Convert to Winterfell ProofOptions without panicking
+    pub fn try_to_winterfell(&self) -> Result<winter_air::ProofOptions, OptionsError> {
+        self.validate()?;
+        Ok(winter_air::ProofOptions::new(
             self.num_queries,
             self.blowup_factor,
             self.grinding_factor,
             self.field_extension,
             self.fri_folding_factor,
             31, // FRI max remainder polynomial degree
-        )
+        ))
     }
 }
 
@@ -106,19 +147,19 @@ mod tests {
     #[test]
     fn test_default_options() {
         let opts = ProofOptions::default();
-        assert!(opts.security_level() >= 80);
+        assert!(opts.try_security_level().unwrap() >= 80);
     }
 
     #[test]
     fn test_secure_options() {
         let opts = ProofOptions::secure();
-        assert!(opts.security_level() >= 100);
+        assert!(opts.try_security_level().unwrap() >= 100);
     }
 
     #[test]
     fn test_to_winterfell() {
         let opts = ProofOptions::default();
-        let winterfell_opts = opts.to_winterfell();
+        let winterfell_opts = opts.try_to_winterfell().unwrap();
         assert_eq!(winterfell_opts.num_queries(), opts.num_queries);
     }
 }

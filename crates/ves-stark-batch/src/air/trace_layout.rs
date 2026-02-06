@@ -1,17 +1,28 @@
 //! Extended trace layout for batch proofs
 //!
-//! The batch trace extends the single-event compliance trace (105 columns)
+//! The batch trace extends the single-event compliance trace
 //! with additional columns for:
 //! - Event indexing
 //! - Merkle tree computation
 //! - State root tracking
 //! - Batch metadata
 
+use ves_stark_air::trace::cols as base_cols;
 use ves_stark_primitives::Felt;
-use ves_stark_air::trace::TRACE_WIDTH as BASE_TRACE_WIDTH;
+
+/// Width of the "base" portion of the batch trace that mirrors the single-event compliance trace.
+///
+/// This is intentionally **not** `ves_stark_air::trace::TRACE_WIDTH` (which includes extra columns
+/// for public input binding and additional gadgets). The batch trace currently only needs the
+/// original columns up through the Rescue commitment flag, and keeping the width small is required
+/// to stay under Winterfell's 255-column trace limit.
+pub const BASE_TRACE_WIDTH: usize = base_cols::RESCUE_COMMIT_FLAG + 1;
+
+/// Number of batch-specific columns added after the base compliance trace.
+pub const BATCH_EXTENSION_WIDTH: usize = 55;
 
 /// Total width of the batch execution trace
-pub const BATCH_TRACE_WIDTH: usize = 160;
+pub const BATCH_TRACE_WIDTH: usize = BASE_TRACE_WIDTH + BATCH_EXTENSION_WIDTH;
 
 /// Minimum trace length for batch proofs
 pub const MIN_BATCH_TRACE_LENGTH: usize = 256;
@@ -27,117 +38,117 @@ pub mod batch_cols {
     use super::BASE_TRACE_WIDTH;
 
     // =========================================================================
-    // Base compliance columns (0-104)
+    // Base compliance columns (0..BASE_TRACE_WIDTH)
     // These are inherited from the single-event compliance AIR
     // =========================================================================
-    pub const BASE_TRACE_END: usize = BASE_TRACE_WIDTH; // 105
+    pub const BASE_TRACE_END: usize = BASE_TRACE_WIDTH;
 
     // =========================================================================
-    // Event indexing (105-106)
+    // Event indexing (BASE_TRACE_END..BASE_TRACE_END+2)
     // =========================================================================
     /// Current event index in the batch (0 to N-1)
-    pub const EVENT_INDEX: usize = 105;
+    pub const EVENT_INDEX: usize = BASE_TRACE_END;
 
     /// Total number of events in batch
-    pub const NUM_EVENTS: usize = 106;
+    pub const NUM_EVENTS: usize = EVENT_INDEX + 1;
 
     // =========================================================================
-    // Merkle tree columns (107-122)
+    // Merkle tree columns
     // Used during Merkle tree construction phase
     // =========================================================================
     /// Merkle left child (4 elements)
-    pub const MERKLE_LEFT_START: usize = 107;
-    pub const MERKLE_LEFT_END: usize = 111;
+    pub const MERKLE_LEFT_START: usize = NUM_EVENTS + 1;
+    pub const MERKLE_LEFT_END: usize = MERKLE_LEFT_START + 4;
 
     /// Merkle right child (4 elements)
-    pub const MERKLE_RIGHT_START: usize = 111;
-    pub const MERKLE_RIGHT_END: usize = 115;
+    pub const MERKLE_RIGHT_START: usize = MERKLE_LEFT_END;
+    pub const MERKLE_RIGHT_END: usize = MERKLE_RIGHT_START + 4;
 
     /// Merkle parent/output (4 elements)
-    pub const MERKLE_OUTPUT_START: usize = 115;
-    pub const MERKLE_OUTPUT_END: usize = 119;
+    pub const MERKLE_OUTPUT_START: usize = MERKLE_RIGHT_END;
+    pub const MERKLE_OUTPUT_END: usize = MERKLE_OUTPUT_START + 4;
 
     /// Current Merkle tree level (0 = leaves)
-    pub const MERKLE_LEVEL: usize = 119;
+    pub const MERKLE_LEVEL: usize = MERKLE_OUTPUT_END;
 
     /// Index within current level
-    pub const MERKLE_NODE_INDEX: usize = 120;
+    pub const MERKLE_NODE_INDEX: usize = MERKLE_LEVEL + 1;
 
     /// Flag: is this a Merkle computation row?
-    pub const IS_MERKLE_ROW: usize = 121;
+    pub const IS_MERKLE_ROW: usize = MERKLE_NODE_INDEX + 1;
 
     /// Final event tree root (4 elements) - stored after Merkle phase
-    pub const EVENT_TREE_ROOT_START: usize = 122;
-    pub const EVENT_TREE_ROOT_END: usize = 126;
+    pub const EVENT_TREE_ROOT_START: usize = IS_MERKLE_ROW + 1;
+    pub const EVENT_TREE_ROOT_END: usize = EVENT_TREE_ROOT_START + 4;
 
     // =========================================================================
-    // State root columns (126-133)
+    // State root columns
     // =========================================================================
     /// Previous batch state root (4 elements)
-    pub const PREV_STATE_ROOT_START: usize = 126;
-    pub const PREV_STATE_ROOT_END: usize = 130;
+    pub const PREV_STATE_ROOT_START: usize = EVENT_TREE_ROOT_END;
+    pub const PREV_STATE_ROOT_END: usize = PREV_STATE_ROOT_START + 4;
 
     /// New batch state root (4 elements)
-    pub const NEW_STATE_ROOT_START: usize = 130;
-    pub const NEW_STATE_ROOT_END: usize = 134;
+    pub const NEW_STATE_ROOT_START: usize = PREV_STATE_ROOT_END;
+    pub const NEW_STATE_ROOT_END: usize = NEW_STATE_ROOT_START + 4;
 
     // =========================================================================
-    // Compliance accumulator (134-135)
+    // Compliance accumulator
     // =========================================================================
     /// Running AND of all compliance flags
     /// Starts at 1, multiplied by each event's compliance flag
-    pub const COMPLIANCE_ACCUMULATOR: usize = 134;
+    pub const COMPLIANCE_ACCUMULATOR: usize = NEW_STATE_ROOT_END;
 
     /// Current event's compliance flag (copied from comparison result)
-    pub const EVENT_COMPLIANCE_FLAG: usize = 135;
+    pub const EVENT_COMPLIANCE_FLAG: usize = COMPLIANCE_ACCUMULATOR + 1;
 
     // =========================================================================
-    // Batch phase and control (136-139)
+    // Batch phase and control
     // =========================================================================
     /// Current phase (0=event, 1=merkle, 2=finalize)
-    pub const BATCH_PHASE: usize = 136;
+    pub const BATCH_PHASE: usize = EVENT_COMPLIANCE_FLAG + 1;
 
     /// Row within current event
-    pub const EVENT_ROW: usize = 137;
+    pub const EVENT_ROW: usize = BATCH_PHASE + 1;
 
     /// Is this the first row of the trace?
-    pub const IS_FIRST_BATCH_ROW: usize = 138;
+    pub const IS_FIRST_BATCH_ROW: usize = EVENT_ROW + 1;
 
     /// Is this the last row of the trace?
-    pub const IS_LAST_BATCH_ROW: usize = 139;
+    pub const IS_LAST_BATCH_ROW: usize = IS_FIRST_BATCH_ROW + 1;
 
     // =========================================================================
-    // Batch metadata (140-155)
+    // Batch metadata
     // =========================================================================
     /// Batch ID (4 elements)
-    pub const BATCH_ID_START: usize = 140;
-    pub const BATCH_ID_END: usize = 144;
+    pub const BATCH_ID_START: usize = IS_LAST_BATCH_ROW + 1;
+    pub const BATCH_ID_END: usize = BATCH_ID_START + 4;
 
     /// Tenant ID (4 elements)
-    pub const TENANT_ID_START: usize = 144;
-    pub const TENANT_ID_END: usize = 148;
+    pub const TENANT_ID_START: usize = BATCH_ID_END;
+    pub const TENANT_ID_END: usize = TENANT_ID_START + 4;
 
     /// Store ID (4 elements)
-    pub const STORE_ID_START: usize = 148;
-    pub const STORE_ID_END: usize = 152;
+    pub const STORE_ID_START: usize = TENANT_ID_END;
+    pub const STORE_ID_END: usize = STORE_ID_START + 4;
 
     /// Sequence start
-    pub const SEQUENCE_START: usize = 152;
+    pub const SEQUENCE_START: usize = STORE_ID_END;
 
     /// Sequence end
-    pub const SEQUENCE_END: usize = 153;
+    pub const SEQUENCE_END: usize = SEQUENCE_START + 1;
 
     /// Timestamp
-    pub const TIMESTAMP: usize = 154;
+    pub const TIMESTAMP: usize = SEQUENCE_END + 1;
 
     /// Metadata hash (4 elements)
-    pub const METADATA_HASH_START: usize = 155;
-    pub const METADATA_HASH_END: usize = 159;
+    pub const METADATA_HASH_START: usize = TIMESTAMP + 1;
+    pub const METADATA_HASH_END: usize = METADATA_HASH_START + 4;
 
     // =========================================================================
-    // Reserved (159)
+    // Reserved (last column)
     // =========================================================================
-    pub const RESERVED: usize = 159;
+    pub const RESERVED: usize = METADATA_HASH_END;
 
     // =========================================================================
     // Helper functions
@@ -256,8 +267,9 @@ mod tests {
 
     #[test]
     fn test_trace_width() {
-        assert_eq!(BATCH_TRACE_WIDTH, 160);
+        assert_eq!(BATCH_TRACE_WIDTH, BASE_TRACE_WIDTH + BATCH_EXTENSION_WIDTH);
         assert!(BATCH_TRACE_WIDTH > BASE_TRACE_WIDTH);
+        assert_eq!(batch_cols::RESERVED + 1, BATCH_TRACE_WIDTH);
     }
 
     #[test]
@@ -287,7 +299,12 @@ mod tests {
 
     #[test]
     fn test_batch_phase_conversion() {
-        for phase in [BatchPhase::Event, BatchPhase::Merkle, BatchPhase::Finalize, BatchPhase::Padding] {
+        for phase in [
+            BatchPhase::Event,
+            BatchPhase::Merkle,
+            BatchPhase::Finalize,
+            BatchPhase::Padding,
+        ] {
             let felt = phase.to_felt();
             let recovered = BatchPhase::from_felt(felt);
             assert_eq!(recovered, Some(phase));

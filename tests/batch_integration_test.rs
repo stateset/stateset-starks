@@ -8,13 +8,13 @@
 
 use uuid::Uuid;
 use ves_stark_batch::{
-    BatchMetadata, BatchStateRoot, BatchWitnessBuilder, BatchEventWitness,
-    EventMerkleTree, EventLeaf, BatchVerifier,
+    BatchEventWitness, BatchMetadata, BatchStateRoot, BatchVerifier, BatchWitnessBuilder,
+    EventLeaf, EventMerkleTree,
 };
 use ves_stark_primitives::public_inputs::{
-    CompliancePublicInputs, PolicyParams, compute_policy_hash,
+    compute_policy_hash, CompliancePublicInputs, PolicyParams,
 };
-use ves_stark_primitives::{felt_from_u64, Felt, FELT_ZERO, FELT_ONE};
+use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
 
 /// Get current Unix timestamp (for test purposes, use 0)
 fn timestamp() -> u64 {
@@ -115,7 +115,11 @@ fn test_batch_event_witness_creation() {
 
     assert_eq!(witness.event_index, 0);
     assert_eq!(witness.amount, amount);
-    assert!(witness.is_compliant, "Amount {} < threshold {} should be compliant", amount, threshold);
+    assert!(
+        witness.is_compliant,
+        "Amount {} < threshold {} should be compliant",
+        amount, threshold
+    );
 }
 
 #[test]
@@ -126,7 +130,11 @@ fn test_batch_event_witness_non_compliant() {
 
     let witness = BatchEventWitness::new(0, amount, public_inputs, threshold);
 
-    assert!(!witness.is_compliant, "Amount {} >= threshold {} should NOT be compliant", amount, threshold);
+    assert!(
+        !witness.is_compliant,
+        "Amount {} >= threshold {} should NOT be compliant",
+        amount, threshold
+    );
 }
 
 #[test]
@@ -137,7 +145,10 @@ fn test_batch_event_witness_boundary() {
 
     let witness = BatchEventWitness::new(0, amount, public_inputs, threshold);
 
-    assert!(!witness.is_compliant, "Amount == threshold should NOT be compliant (strict <)");
+    assert!(
+        !witness.is_compliant,
+        "Amount == threshold should NOT be compliant (strict <)"
+    );
 }
 
 #[test]
@@ -153,8 +164,8 @@ fn test_batch_event_witness_amount_limbs() {
     assert_eq!(limbs[1].as_int(), 0x12345678);
 
     // Upper limbs should be zero
-    for i in 2..8 {
-        assert_eq!(limbs[i].as_int(), 0);
+    for limb in limbs.iter().skip(2) {
+        assert_eq!(limb.as_int(), 0);
     }
 }
 
@@ -183,8 +194,8 @@ fn test_batch_event_witness_to_event_leaf() {
     assert_eq!(leaf.compliance_flag.as_int(), 1);
 
     // Verify policy hash matches
-    for i in 0..8 {
-        assert_eq!(leaf.policy_hash[i].as_int(), policy_hash[i].as_int());
+    for (leaf_limb, expected_limb) in leaf.policy_hash.iter().zip(policy_hash.iter()) {
+        assert_eq!(leaf_limb.as_int(), expected_limb.as_int());
     }
 }
 
@@ -275,7 +286,7 @@ fn test_batch_witness_builder_with_prev_state_root() {
         .metadata(metadata)
         .policy_hash(policy_hash)
         .policy_limit(threshold)
-        .prev_state_root(prev_root.clone())
+        .prev_state_root(prev_root)
         .add_event(5000, create_public_inputs(threshold, 0))
         .build();
 
@@ -361,8 +372,18 @@ fn test_event_merkle_tree_empty() {
 #[test]
 fn test_event_merkle_tree_single_leaf() {
     let leaf = EventLeaf {
-        event_id: [felt_from_u64(1), felt_from_u64(2), felt_from_u64(3), felt_from_u64(4)],
-        amount_commitment: [felt_from_u64(5), felt_from_u64(6), felt_from_u64(7), felt_from_u64(8)],
+        event_id: [
+            felt_from_u64(1),
+            felt_from_u64(2),
+            felt_from_u64(3),
+            felt_from_u64(4),
+        ],
+        amount_commitment: [
+            felt_from_u64(5),
+            felt_from_u64(6),
+            felt_from_u64(7),
+            felt_from_u64(8),
+        ],
         policy_hash: [FELT_ZERO; 8],
         compliance_flag: FELT_ONE,
     };
@@ -376,12 +397,19 @@ fn test_event_merkle_tree_single_leaf() {
 
 #[test]
 fn test_event_merkle_tree_deterministic() {
-    let leaves: Vec<EventLeaf> = (0..4).map(|i| EventLeaf {
-        event_id: [felt_from_u64(i), felt_from_u64(i + 1), felt_from_u64(i + 2), felt_from_u64(i + 3)],
-        amount_commitment: [felt_from_u64(i * 10), FELT_ZERO, FELT_ZERO, FELT_ZERO],
-        policy_hash: [FELT_ZERO; 8],
-        compliance_flag: FELT_ONE,
-    }).collect();
+    let leaves: Vec<EventLeaf> = (0..4)
+        .map(|i| EventLeaf {
+            event_id: [
+                felt_from_u64(i),
+                felt_from_u64(i + 1),
+                felt_from_u64(i + 2),
+                felt_from_u64(i + 3),
+            ],
+            amount_commitment: [felt_from_u64(i * 10), FELT_ZERO, FELT_ZERO, FELT_ZERO],
+            policy_hash: [FELT_ZERO; 8],
+            compliance_flag: FELT_ONE,
+        })
+        .collect();
 
     let tree1 = EventMerkleTree::from_leaves(leaves.clone()).unwrap();
     let tree2 = EventMerkleTree::from_leaves(leaves).unwrap();
@@ -390,7 +418,11 @@ fn test_event_merkle_tree_deterministic() {
     let root2 = tree2.root();
 
     for i in 0..4 {
-        assert_eq!(root1[i].as_int(), root2[i].as_int(), "Merkle root should be deterministic");
+        assert_eq!(
+            root1[i].as_int(),
+            root2[i].as_int(),
+            "Merkle root should be deterministic"
+        );
     }
 }
 
@@ -423,7 +455,10 @@ fn test_event_merkle_tree_different_leaves_different_root() {
             break;
         }
     }
-    assert!(any_different, "Different leaves should produce different roots");
+    assert!(
+        any_different,
+        "Different leaves should produce different roots"
+    );
 }
 
 // =============================================================================
@@ -445,12 +480,12 @@ fn test_batch_verifier_proof_hash() {
     let proof_bytes = b"test batch proof";
 
     use ves_stark_primitives::Hash256;
-    let hash = Hash256::sha256_with_domain(
-        b"STATESET_VES_BATCH_PROOF_HASH_V1",
-        proof_bytes,
-    );
+    let hash = Hash256::sha256_with_domain(b"STATESET_VES_BATCH_PROOF_HASH_V1", proof_bytes);
 
-    assert!(BatchVerifier::verify_proof_hash(proof_bytes, &hash.to_hex()));
+    assert!(BatchVerifier::verify_proof_hash(
+        proof_bytes,
+        &hash.to_hex()
+    ));
     assert!(!BatchVerifier::verify_proof_hash(proof_bytes, "wrong_hash"));
 }
 
@@ -472,7 +507,10 @@ fn test_batch_with_all_non_compliant() {
 
     // All events exceed threshold
     for i in 0..3 {
-        builder = builder.add_event(threshold + (i as u64 * 1000) + 1, create_public_inputs(threshold, i as u64));
+        builder = builder.add_event(
+            threshold + (i as u64 * 1000) + 1,
+            create_public_inputs(threshold, i as u64),
+        );
     }
 
     let result = builder.build();

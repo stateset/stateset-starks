@@ -7,14 +7,14 @@
 //! - Canonical public inputs structures
 
 pub mod field;
-pub mod rescue;
 pub mod hash;
 pub mod public_inputs;
+pub mod rescue;
 
-pub use field::{Felt, felt_from_u64, felt_to_u64, FELT_ZERO, FELT_ONE};
-pub use rescue::{rescue_hash, rescue_hash_pair, RescueState};
-pub use hash::{hash_to_felts, felts_to_hash, Hash256};
+pub use field::{felt_from_u64, felt_to_u64, Felt, FELT_ONE, FELT_ZERO};
+pub use hash::{felts_to_hash, hash_to_felts, Hash256};
 pub use public_inputs::{
-    CompliancePublicInputs, PolicyParams, compute_policy_hash,
-    compute_public_inputs_hash, canonical_json, PublicInputsError,
+    canonical_json, compute_policy_hash, compute_public_inputs_hash, CompliancePublicInputs,
+    PolicyParams, PublicInputsError,
 };
+pub use rescue::{rescue_hash, rescue_hash_pair, RescueState};

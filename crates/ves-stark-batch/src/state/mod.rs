@@ -5,10 +5,10 @@
 //! - `EventMerkleTree`: Rescue-based Merkle tree for event commitments
 //! - `BatchMetadata`: Metadata about the batch (id, sequence range, timestamp)
 
-mod root;
 mod merkle;
 mod metadata;
+mod root;
 
-pub use root::BatchStateRoot;
-pub use merkle::{EventMerkleTree, EventLeaf};
+pub use merkle::{EventLeaf, EventMerkleTree};
 pub use metadata::BatchMetadata;
+pub use root::BatchStateRoot;

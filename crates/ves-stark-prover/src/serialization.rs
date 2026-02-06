@@ -3,9 +3,9 @@
 //! This module provides utilities for serializing and deserializing compliance proofs
 //! in various formats suitable for storage, transmission, and inspection.
 
-use crate::prover::{ComplianceProof, ProofMetadata};
-use crate::policy::Policy;
 use crate::error::ProverError;
+use crate::policy::Policy;
+use crate::prover::{ComplianceProof, ProofMetadata};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
@@ -90,7 +90,10 @@ impl ProofJson {
 }
 
 /// Serialize a proof to the specified format
-pub fn serialize_proof(proof: &ComplianceProof, format: ProofFormat) -> Result<Vec<u8>, ProverError> {
+pub fn serialize_proof(
+    proof: &ComplianceProof,
+    format: ProofFormat,
+) -> Result<Vec<u8>, ProverError> {
     match format {
         ProofFormat::Binary => Ok(proof.proof_bytes.clone()),
         ProofFormat::Base64 => {
@@ -99,8 +102,9 @@ pub fn serialize_proof(proof: &ComplianceProof, format: ProofFormat) -> Result<V
         }
         ProofFormat::Json | ProofFormat::JsonFull => {
             let json = ProofJson::from_proof(proof);
-            serde_json::to_vec_pretty(&json)
-                .map_err(|e| ProverError::SerializationError(format!("JSON serialization error: {}", e)))
+            serde_json::to_vec_pretty(&json).map_err(|e| {
+                ProverError::SerializationError(format!("JSON serialization error: {}", e))
+            })
         }
     }
 }
@@ -119,8 +123,9 @@ pub fn serialize_proof_with_policy(
         }
         ProofFormat::Json | ProofFormat::JsonFull => {
             let json = ProofJson::from_proof_with_policy(proof, policy);
-            serde_json::to_vec_pretty(&json)
-                .map_err(|e| ProverError::SerializationError(format!("JSON serialization error: {}", e)))
+            serde_json::to_vec_pretty(&json).map_err(|e| {
+                ProverError::SerializationError(format!("JSON serialization error: {}", e))
+            })
         }
     }
 }
@@ -152,7 +157,10 @@ pub fn deserialize_proof_bytes_auto(data: &[u8]) -> Result<Vec<u8>, ProverError>
         if trimmed.starts_with('{') {
             // Looks like JSON
             return deserialize_proof_bytes(data, ProofFormat::Json);
-        } else if trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=') {
+        } else if trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+        {
             // Looks like Base64
             return deserialize_proof_bytes(data, ProofFormat::Base64);
         }
@@ -168,14 +176,19 @@ pub fn write_proof<W: Write>(
     format: ProofFormat,
 ) -> Result<(), ProverError> {
     let data = serialize_proof(proof, format)?;
-    writer.write_all(&data)
+    writer
+        .write_all(&data)
         .map_err(|e| ProverError::SerializationError(format!("Write error: {}", e)))
 }
 
 /// Read proof bytes from a reader
-pub fn read_proof_bytes<R: Read>(reader: &mut R, format: ProofFormat) -> Result<Vec<u8>, ProverError> {
+pub fn read_proof_bytes<R: Read>(
+    reader: &mut R,
+    format: ProofFormat,
+) -> Result<Vec<u8>, ProverError> {
     let mut data = Vec::new();
-    reader.read_to_end(&mut data)
+    reader
+        .read_to_end(&mut data)
         .map_err(|e| ProverError::SerializationError(format!("Read error: {}", e)))?;
     deserialize_proof_bytes(&data, format)
 }
@@ -223,14 +236,16 @@ impl CompactProof {
     /// Serialize to binary format (using bincode)
     pub fn to_bytes(&self) -> Result<Vec<u8>, ProverError> {
         // Use JSON as a portable format for now
-        serde_json::to_vec(self)
-            .map_err(|e| ProverError::SerializationError(format!("Compact serialization error: {}", e)))
+        serde_json::to_vec(self).map_err(|e| {
+            ProverError::SerializationError(format!("Compact serialization error: {}", e))
+        })
     }
 
     /// Deserialize from binary format
     pub fn from_bytes(data: &[u8]) -> Result<Self, ProverError> {
-        serde_json::from_slice(data)
-            .map_err(|e| ProverError::SerializationError(format!("Compact deserialization error: {}", e)))
+        serde_json::from_slice(data).map_err(|e| {
+            ProverError::SerializationError(format!("Compact deserialization error: {}", e))
+        })
     }
 
     /// Get the raw proof bytes

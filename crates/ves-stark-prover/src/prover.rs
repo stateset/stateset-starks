@@ -19,20 +19,20 @@
 //! let prover = ComplianceProver::with_policy(Policy::order_total_cap(50000));
 //! ```
 
-use ves_stark_air::compliance::{ComplianceAir, PublicInputs};
-use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
-use ves_stark_air::options::ProofOptions;
-use ves_stark_primitives::{Felt, Hash256};
-use ves_stark_primitives::rescue::rescue_hash;
+use crate::error::ProverError;
+use crate::policy::Policy;
 use crate::trace::TraceBuilder;
 use crate::witness::ComplianceWitness;
-use crate::policy::Policy;
-use crate::error::ProverError;
-use winter_prover::{Prover, Trace, TraceTable};
-use winter_air::TraceInfo;
-use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
+use ves_stark_air::compliance::{ComplianceAir, PublicInputs};
+use ves_stark_air::options::ProofOptions;
+use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
+use ves_stark_primitives::rescue::rescue_hash;
+use ves_stark_primitives::{Felt, Hash256};
+use winter_air::TraceInfo;
+use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
+use winter_prover::{Prover, Trace, TraceTable};
 
 /// Type alias for the hash function used
 pub type Hasher = Blake3_256<Felt>;
@@ -83,10 +83,7 @@ pub struct ProofMetadata {
 impl ComplianceProof {
     /// Compute the proof hash using the domain separator
     pub fn compute_hash(proof_bytes: &[u8]) -> Hash256 {
-        Hash256::sha256_with_domain(
-            b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1",
-            proof_bytes
-        )
+        Hash256::sha256_with_domain(b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1", proof_bytes)
     }
 }
 
@@ -156,16 +153,14 @@ impl ComplianceProver {
         }
 
         // Build execution trace with unified policy
-        let trace = TraceBuilder::new(witness.clone(), self.policy.clone())
-            .build()?;
+        let trace = TraceBuilder::new(witness.clone(), self.policy.clone()).build()?;
 
         let trace_length = trace.length();
 
         // Compute witness commitment using Rescue hash
         // This binds the private amount to the proof
         let amount_limbs = witness.amount_limbs();
-        let hash_input: Vec<Felt> = amount_limbs.iter().cloned().collect();
-        let hash_output = rescue_hash(&hash_input);
+        let hash_output = rescue_hash(&amount_limbs);
         let witness_commitment: [Felt; 4] = [
             hash_output[0],
             hash_output[1],
@@ -174,28 +169,28 @@ impl ComplianceProver {
         ];
 
         // Build public inputs (use limit as threshold for AIR compatibility)
-        let pub_inputs_felts = witness.public_inputs
+        let pub_inputs_felts = witness
+            .public_inputs
             .to_field_elements()
             .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?;
         let policy_limit = self
             .policy
             .effective_limit()
             .map_err(|e| ProverError::PolicyValidationFailed(format!("{e}")))?;
-        let pub_inputs = PublicInputs::with_commitment(
+        let pub_inputs = PublicInputs::try_with_commitment(
             policy_limit,
             pub_inputs_felts.to_vec(),
             witness_commitment,
-        );
+        )
+        .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?;
 
         // Create internal prover
-        let prover = VesComplianceProver::new(
-            self.policy.clone(),
-            self.options.clone(),
-            pub_inputs,
-        );
+        let prover =
+            VesComplianceProver::try_new(self.policy.clone(), self.options.clone(), pub_inputs)?;
 
         // Generate proof
-        let proof = prover.prove(trace)
+        let proof = prover
+            .prove(trace)
             .map_err(|e| ProverError::ProofGenerationFailed(format!("{:?}", e)))?;
 
         // Serialize proof
@@ -246,12 +241,19 @@ struct VesComplianceProver {
 }
 
 impl VesComplianceProver {
-    fn new(policy: Policy, options: ProofOptions, pub_inputs: PublicInputs) -> Self {
-        Self {
+    fn try_new(
+        policy: Policy,
+        options: ProofOptions,
+        pub_inputs: PublicInputs,
+    ) -> Result<Self, ProverError> {
+        let options = options
+            .try_to_winterfell()
+            .map_err(|e| ProverError::InvalidPublicInputs(format!("Invalid proof options: {e}")))?;
+        Ok(Self {
             policy,
-            options: options.to_winterfell(),
+            options,
             pub_inputs,
-        }
+        })
     }
 }
 
@@ -291,35 +293,17 @@ impl Prover for VesComplianceProver {
         aux_rand_elements: Option<winter_air::AuxRandElements<E>>,
         composition_coefficients: winter_air::ConstraintCompositionCoefficients<E>,
     ) -> Self::ConstraintEvaluator<'a, E> {
-        winter_prover::DefaultConstraintEvaluator::new(air, aux_rand_elements, composition_coefficients)
+        winter_prover::DefaultConstraintEvaluator::new(
+            air,
+            aux_rand_elements,
+            composition_coefficients,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ves_stark_primitives::public_inputs::{CompliancePublicInputs, PolicyParams, compute_policy_hash};
-    use uuid::Uuid;
-
-    fn sample_inputs(threshold: u64) -> CompliancePublicInputs {
-        let policy_id = "aml.threshold";
-        let params = PolicyParams::threshold(threshold);
-        let hash = compute_policy_hash(policy_id, &params).unwrap();
-
-        CompliancePublicInputs {
-            event_id: Uuid::new_v4(),
-            tenant_id: Uuid::new_v4(),
-            store_id: Uuid::new_v4(),
-            sequence_number: 1,
-            payload_kind: 1,
-            payload_plain_hash: "0".repeat(64),
-            payload_cipher_hash: "0".repeat(64),
-            event_signing_hash: "0".repeat(64),
-            policy_id: policy_id.to_string(),
-            policy_params: params,
-            policy_hash: hash.to_hex(),
-        }
-    }
 
     #[test]
     fn test_prover_creation() {

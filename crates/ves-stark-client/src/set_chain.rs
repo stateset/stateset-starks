@@ -6,7 +6,7 @@
 use base64::Engine;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::error::{ClientError, Result};
@@ -295,7 +295,9 @@ impl SetChainClient {
             let body = response.text().await.unwrap_or_default();
             Err(ClientError::Unauthorized(body))
         } else if status.as_u16() == 409 {
-            Err(ClientError::BatchAlreadyCommitted(request.submission.batch_id))
+            Err(ClientError::BatchAlreadyCommitted(
+                request.submission.batch_id,
+            ))
         } else {
             let body = response.text().await.unwrap_or_default();
             Err(ClientError::ApiError {
@@ -434,6 +436,9 @@ impl SetChainClient {
     }
 
     /// Create a batch proof submission from a BatchProof
+    ///
+    /// Prefer `BatchSubmissionBuilder` for readability.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_submission(
         batch_id: Uuid,
         tenant_id: Uuid,

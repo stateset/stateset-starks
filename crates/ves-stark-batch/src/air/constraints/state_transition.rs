@@ -2,8 +2,8 @@
 //!
 //! These constraints verify the correct transition from prev_state_root to new_state_root.
 
-use winter_math::FieldElement;
 use crate::air::trace_layout::batch_cols;
+use winter_math::FieldElement;
 
 /// Evaluate state transition constraints
 ///

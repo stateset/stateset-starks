@@ -7,12 +7,12 @@
 //! - `aml.threshold`: Proves amount < threshold (strict less-than)
 //! - `order_total.cap`: Proves amount <= cap (less-than-or-equal)
 
+use uuid::Uuid;
 use ves_stark_primitives::public_inputs::{
-    CompliancePublicInputs, PolicyParams, compute_policy_hash,
+    compute_policy_hash, CompliancePublicInputs, PolicyParams,
 };
 use ves_stark_prover::{ComplianceProver, ComplianceWitness, Policy};
 use ves_stark_verifier::verify_compliance_proof;
-use uuid::Uuid;
 
 /// Create sample public inputs for AML threshold policy
 fn sample_aml_public_inputs(threshold: u64) -> CompliancePublicInputs {
@@ -75,15 +75,28 @@ fn test_valid_witness_creates_valid_proof() {
     let proof = prover.prove(&witness);
 
     // Should succeed since amount < threshold
-    assert!(proof.is_ok(), "Proof generation should succeed: {:?}", proof.err());
+    assert!(
+        proof.is_ok(),
+        "Proof generation should succeed: {:?}",
+        proof.err()
+    );
 
     let proof = proof.unwrap();
     println!("Proof size: {} bytes", proof.metadata.proof_size);
     println!("Proving time: {} ms", proof.metadata.proving_time_ms);
 
     // Verify the proof (pass witness commitment from proof)
-    let result = verify_compliance_proof(&proof.proof_bytes, &inputs, &policy, &proof.witness_commitment);
-    assert!(result.is_ok(), "Verification should succeed: {:?}", result.err());
+    let result = verify_compliance_proof(
+        &proof.proof_bytes,
+        &inputs,
+        &policy,
+        &proof.witness_commitment,
+    );
+    assert!(
+        result.is_ok(),
+        "Verification should succeed: {:?}",
+        result.err()
+    );
 
     let result = result.unwrap();
     assert!(result.valid, "Proof should be valid");
@@ -136,7 +149,12 @@ fn test_zero_amount_succeeds() {
     assert!(proof.is_ok());
 
     let proof = proof.unwrap();
-    let result = verify_compliance_proof(&proof.proof_bytes, &inputs, &policy, &proof.witness_commitment);
+    let result = verify_compliance_proof(
+        &proof.proof_bytes,
+        &inputs,
+        &policy,
+        &proof.witness_commitment,
+    );
     assert!(result.is_ok());
     assert!(result.unwrap().valid);
 }
@@ -156,7 +174,12 @@ fn test_max_valid_amount_succeeds() {
     assert!(proof.is_ok());
 
     let proof = proof.unwrap();
-    let result = verify_compliance_proof(&proof.proof_bytes, &inputs, &policy, &proof.witness_commitment);
+    let result = verify_compliance_proof(
+        &proof.proof_bytes,
+        &inputs,
+        &policy,
+        &proof.witness_commitment,
+    );
     assert!(result.is_ok());
     assert!(result.unwrap().valid);
 }
@@ -200,11 +223,12 @@ fn test_verifier_rejects_tampered_proof() {
 
     // Verification should fail or return invalid
     let result = verify_compliance_proof(&tampered, &inputs, &policy, &proof.witness_commitment);
-    // Either deserialization fails or proof is invalid
-    match result {
-        Ok(r) => assert!(!r.valid || r.error.is_some()),
-        Err(_) => {} // Deserialization error is also acceptable
-    }
+    // Either deserialization fails or proof is invalid.
+    let Ok(r) = result else {
+        // Deserialization error is also acceptable.
+        return;
+    };
+    assert!(!r.valid || r.error.is_some());
 }
 
 #[test]
@@ -238,6 +262,54 @@ fn test_large_threshold_values() {
     assert!(proof.is_ok());
 }
 
+#[test]
+fn test_order_total_cap_valid_proof() {
+    let cap = 10000u64;
+    let amount = 5000u64;
+
+    let inputs = sample_cap_public_inputs(cap);
+    let witness = ComplianceWitness::new(amount, inputs.clone());
+    let policy = Policy::order_total_cap(cap);
+
+    let prover = ComplianceProver::with_policy(policy.clone());
+    let proof = prover
+        .prove(&witness)
+        .expect("Proof generation should succeed");
+
+    let result = verify_compliance_proof(
+        &proof.proof_bytes,
+        &inputs,
+        &policy,
+        &proof.witness_commitment,
+    )
+    .expect("Verification should succeed");
+    assert!(result.valid, "Proof should be valid for amount < cap");
+}
+
+#[test]
+fn test_order_total_cap_equal_proof() {
+    let cap = 10000u64;
+    let amount = 10000u64;
+
+    let inputs = sample_cap_public_inputs(cap);
+    let witness = ComplianceWitness::new(amount, inputs.clone());
+    let policy = Policy::order_total_cap(cap);
+
+    let prover = ComplianceProver::with_policy(policy.clone());
+    let proof = prover
+        .prove(&witness)
+        .expect("Proof generation should succeed");
+
+    let result = verify_compliance_proof(
+        &proof.proof_bytes,
+        &inputs,
+        &policy,
+        &proof.witness_commitment,
+    )
+    .expect("Verification should succeed");
+    assert!(result.valid, "Proof should be valid for amount == cap");
+}
+
 // =============================================================================
 // Order Total Cap Policy Tests
 // =============================================================================
@@ -254,16 +326,35 @@ fn test_order_total_cap_valid_amount() {
     let prover = ComplianceProver::with_policy(policy);
     let proof = prover.prove(&witness);
 
-    assert!(proof.is_ok(), "Proof generation should succeed: {:?}", proof.err());
+    assert!(
+        proof.is_ok(),
+        "Proof generation should succeed: {:?}",
+        proof.err()
+    );
 
     let proof = proof.unwrap();
-    println!("[order_total.cap] Proof size: {} bytes", proof.metadata.proof_size);
-    println!("[order_total.cap] Proving time: {} ms", proof.metadata.proving_time_ms);
+    println!(
+        "[order_total.cap] Proof size: {} bytes",
+        proof.metadata.proof_size
+    );
+    println!(
+        "[order_total.cap] Proving time: {} ms",
+        proof.metadata.proving_time_ms
+    );
 
     // Verify the proof using the same policy parameters as the public inputs
     let verify_policy = Policy::order_total_cap(cap);
-    let result = verify_compliance_proof(&proof.proof_bytes, &inputs, &verify_policy, &proof.witness_commitment);
-    assert!(result.is_ok(), "Verification should succeed: {:?}", result.err());
+    let result = verify_compliance_proof(
+        &proof.proof_bytes,
+        &inputs,
+        &verify_policy,
+        &proof.witness_commitment,
+    );
+    assert!(
+        result.is_ok(),
+        "Verification should succeed: {:?}",
+        result.err()
+    );
 
     let result = result.unwrap();
     assert!(result.valid, "Proof should be valid");
@@ -282,15 +373,27 @@ fn test_order_total_cap_boundary_succeeds() {
     let prover = ComplianceProver::with_policy(policy);
     let proof = prover.prove(&witness);
 
-    assert!(proof.is_ok(), "Proof generation should succeed for amount == cap: {:?}", proof.err());
+    assert!(
+        proof.is_ok(),
+        "Proof generation should succeed for amount == cap: {:?}",
+        proof.err()
+    );
 
     let proof = proof.unwrap();
 
     // Verify the proof
     let verify_policy = Policy::order_total_cap(cap);
-    let result = verify_compliance_proof(&proof.proof_bytes, &inputs, &verify_policy, &proof.witness_commitment);
+    let result = verify_compliance_proof(
+        &proof.proof_bytes,
+        &inputs,
+        &verify_policy,
+        &proof.witness_commitment,
+    );
     assert!(result.is_ok());
-    assert!(result.unwrap().valid, "Boundary proof (amount == cap) should be valid");
+    assert!(
+        result.unwrap().valid,
+        "Boundary proof (amount == cap) should be valid"
+    );
 }
 
 #[test]
@@ -306,7 +409,10 @@ fn test_order_total_cap_exceeds_fails() {
     let prover = ComplianceProver::with_policy(policy);
     let proof = prover.prove(&witness);
 
-    assert!(proof.is_err(), "Proof generation should fail for amount > cap");
+    assert!(
+        proof.is_err(),
+        "Proof generation should fail for amount > cap"
+    );
 }
 
 #[test]
@@ -325,7 +431,12 @@ fn test_order_total_cap_zero_amount() {
 
     let proof = proof.unwrap();
     let verify_policy = Policy::order_total_cap(cap);
-    let result = verify_compliance_proof(&proof.proof_bytes, &inputs, &verify_policy, &proof.witness_commitment);
+    let result = verify_compliance_proof(
+        &proof.proof_bytes,
+        &inputs,
+        &verify_policy,
+        &proof.witness_commitment,
+    );
     assert!(result.is_ok());
     assert!(result.unwrap().valid);
 }
@@ -358,7 +469,10 @@ fn test_order_total_cap_max_amount_equals_cap() {
     let prover = ComplianceProver::with_policy(policy);
     let proof = prover.prove(&witness);
 
-    assert!(proof.is_ok(), "Proof should succeed for MAX amount == MAX cap");
+    assert!(
+        proof.is_ok(),
+        "Proof should succeed for MAX amount == MAX cap"
+    );
 }
 
 // =============================================================================
@@ -377,7 +491,10 @@ fn test_policy_comparison_semantics() {
     let aml_policy = Policy::aml_threshold(limit);
     let aml_prover = ComplianceProver::with_policy(aml_policy);
     let aml_result = aml_prover.prove(&aml_witness);
-    assert!(aml_result.is_err(), "AML threshold should reject amount == threshold");
+    assert!(
+        aml_result.is_err(),
+        "AML threshold should reject amount == threshold"
+    );
 
     // Order total cap: amount <= cap (should SUCCEED)
     let cap_inputs = sample_cap_public_inputs(limit);
@@ -385,7 +502,10 @@ fn test_policy_comparison_semantics() {
     let cap_policy = Policy::order_total_cap(limit);
     let cap_prover = ComplianceProver::with_policy(cap_policy);
     let cap_result = cap_prover.prove(&cap_witness);
-    assert!(cap_result.is_ok(), "Order total cap should accept amount == cap");
+    assert!(
+        cap_result.is_ok(),
+        "Order total cap should accept amount == cap"
+    );
 }
 
 #[test]

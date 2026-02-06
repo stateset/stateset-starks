@@ -19,7 +19,7 @@
 //! This is done by decomposing each limb into bits and constraining
 //! the bit decomposition.
 
-use ves_stark_primitives::{Felt, felt_from_u64, FELT_ZERO, FELT_ONE};
+use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
 
 /// AML Threshold Policy
 #[derive(Debug, Clone)]
@@ -118,7 +118,10 @@ impl ComparisonState {
 ///
 /// Returns 8 field elements representing the comparison state at each step.
 /// Element i represents whether amount < threshold considering limbs [7-i..7].
-pub fn compute_comparison_values(amount_limbs: &[Felt; 8], threshold_limbs: &[Felt; 8]) -> [Felt; 8] {
+pub fn compute_comparison_values(
+    amount_limbs: &[Felt; 8],
+    threshold_limbs: &[Felt; 8],
+) -> [Felt; 8] {
     let mut result = [FELT_ZERO; 8];
     let mut state = ComparisonState::initial();
 
@@ -213,12 +216,24 @@ mod tests {
     #[test]
     fn test_compute_comparison_values() {
         let amount = [
-            felt_from_u64(1000), felt_from_u64(0), felt_from_u64(0), felt_from_u64(0),
-            felt_from_u64(0), felt_from_u64(0), felt_from_u64(0), felt_from_u64(0),
+            felt_from_u64(1000),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
         ];
         let threshold = [
-            felt_from_u64(2000), felt_from_u64(0), felt_from_u64(0), felt_from_u64(0),
-            felt_from_u64(0), felt_from_u64(0), felt_from_u64(0), felt_from_u64(0),
+            felt_from_u64(2000),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
         ];
 
         let comparison = compute_comparison_values(&amount, &threshold);

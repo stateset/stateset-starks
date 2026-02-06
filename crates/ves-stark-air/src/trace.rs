@@ -266,25 +266,31 @@ impl TraceRow {
     /// Get bit decomposition for amount limb 0
     pub fn amount_limb0_bits(&self) -> [Felt; 32] {
         let mut bits = [ves_stark_primitives::FELT_ZERO; 32];
-        bits.copy_from_slice(&self.values[cols::AMOUNT_BITS_LIMB0_START..cols::AMOUNT_BITS_LIMB0_END]);
+        bits.copy_from_slice(
+            &self.values[cols::AMOUNT_BITS_LIMB0_START..cols::AMOUNT_BITS_LIMB0_END],
+        );
         bits
     }
 
     /// Set bit decomposition for amount limb 0
     pub fn set_amount_limb0_bits(&mut self, bits: &[Felt; 32]) {
-        self.values[cols::AMOUNT_BITS_LIMB0_START..cols::AMOUNT_BITS_LIMB0_END].copy_from_slice(bits);
+        self.values[cols::AMOUNT_BITS_LIMB0_START..cols::AMOUNT_BITS_LIMB0_END]
+            .copy_from_slice(bits);
     }
 
     /// Get bit decomposition for amount limb 1
     pub fn amount_limb1_bits(&self) -> [Felt; 32] {
         let mut bits = [ves_stark_primitives::FELT_ZERO; 32];
-        bits.copy_from_slice(&self.values[cols::AMOUNT_BITS_LIMB1_START..cols::AMOUNT_BITS_LIMB1_END]);
+        bits.copy_from_slice(
+            &self.values[cols::AMOUNT_BITS_LIMB1_START..cols::AMOUNT_BITS_LIMB1_END],
+        );
         bits
     }
 
     /// Set bit decomposition for amount limb 1
     pub fn set_amount_limb1_bits(&mut self, bits: &[Felt; 32]) {
-        self.values[cols::AMOUNT_BITS_LIMB1_START..cols::AMOUNT_BITS_LIMB1_END].copy_from_slice(bits);
+        self.values[cols::AMOUNT_BITS_LIMB1_START..cols::AMOUNT_BITS_LIMB1_END]
+            .copy_from_slice(bits);
     }
 
     /// Get rescue commit flag

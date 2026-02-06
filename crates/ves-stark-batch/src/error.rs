@@ -7,10 +7,7 @@ use thiserror::Error;
 pub enum BatchError {
     /// An event in the batch does not comply with the policy
     #[error("Event {event_index} not compliant: {message}")]
-    EventNotCompliant {
-        event_index: usize,
-        message: String,
-    },
+    EventNotCompliant { event_index: usize, message: String },
 
     /// Batch is empty
     #[error("Batch cannot be empty")]
@@ -18,10 +15,7 @@ pub enum BatchError {
 
     /// Batch exceeds maximum size
     #[error("Batch size {size} exceeds maximum {max}")]
-    BatchTooLarge {
-        size: usize,
-        max: usize,
-    },
+    BatchTooLarge { size: usize, max: usize },
 
     /// Invalid previous state root
     #[error("Invalid previous state root")]
@@ -41,13 +35,14 @@ pub enum BatchError {
 
     /// Proof verification failed for a specific batch
     #[error("Batch {batch_index} verification failed: {message}")]
-    VerificationFailed {
-        batch_index: usize,
-        message: String,
-    },
+    VerificationFailed { batch_index: usize, message: String },
 
     /// Invalid state chain (new root doesn't match expected)
-    #[error("Invalid state chain at batch {batch_index}: expected root {:?}, got {:?}", expected, actual)]
+    #[error(
+        "Invalid state chain at batch {batch_index}: expected root {:?}, got {:?}",
+        expected,
+        actual
+    )]
     InvalidStateChain {
         batch_index: usize,
         expected: [u64; 4],

@@ -10,10 +10,12 @@
 //! SECURITY: A passing test suite here doesn't guarantee security, but a failing
 //! test indicates a potential vulnerability that must be investigated.
 
-use ves_stark_prover::{ComplianceProver, ComplianceWitness, Policy, ComplianceProof};
-use ves_stark_verifier::{verify_compliance_proof, VerifierError, validate_hex_string};
-use ves_stark_primitives::public_inputs::{CompliancePublicInputs, PolicyParams, compute_policy_hash};
 use uuid::Uuid;
+use ves_stark_primitives::public_inputs::{
+    compute_policy_hash, CompliancePublicInputs, PolicyParams,
+};
+use ves_stark_prover::{ComplianceProof, ComplianceProver, ComplianceWitness, Policy};
+use ves_stark_verifier::{validate_hex_string, verify_compliance_proof, VerifierError};
 
 // =============================================================================
 // Test Helpers
@@ -64,7 +66,9 @@ fn generate_valid_proof(amount: u64, threshold: u64) -> (ComplianceProof, Compli
     let witness = ComplianceWitness::new(amount, inputs.clone());
     let policy = Policy::aml_threshold(threshold);
     let prover = ComplianceProver::with_policy(policy);
-    let proof = prover.prove(&witness).expect("Proof generation should succeed");
+    let proof = prover
+        .prove(&witness)
+        .expect("Proof generation should succeed");
     (proof, inputs)
 }
 
@@ -390,10 +394,8 @@ fn test_amount_exceeds_cap_rejected() {
 // =============================================================================
 
 #[test]
-fn test_proof_with_different_event_id_still_validates() {
-    // NOTE: This test documents current behavior - proofs can be replayed
-    // with different event IDs. This is a known limitation that should be
-    // addressed by including event_id in the proof circuit.
+fn test_proof_with_different_event_id_rejected() {
+    // Proofs must be bound to the event_id via public inputs.
 
     let threshold = 10000u64;
     let amount = 5000u64;
@@ -411,13 +413,33 @@ fn test_proof_with_different_event_id_still_validates() {
         &proof.witness_commitment,
     );
 
-    // TODO: In a future version, this should fail!
-    // Currently, the event_id is not bound to the proof circuit.
-    // This is documented as a limitation.
-    if let Ok(res) = result {
-        println!("WARNING: Proof replay with different event_id succeeded (known limitation)");
-        println!("Result valid: {}", res.valid);
-    }
+    assert!(
+        result.is_err() || !result.as_ref().unwrap().valid,
+        "Verification should fail when event_id differs from the proof's public inputs"
+    );
+}
+
+#[test]
+fn test_payload_hash_mismatch_rejected() {
+    let threshold = 10000u64;
+    let amount = 5000u64;
+    let (proof, original_inputs) = generate_valid_proof(amount, threshold);
+
+    let mut tampered_inputs = original_inputs.clone();
+    tampered_inputs.payload_plain_hash = "f".repeat(64);
+
+    let verify_policy = Policy::aml_threshold(threshold);
+    let result = verify_compliance_proof(
+        &proof.proof_bytes,
+        &tampered_inputs,
+        &verify_policy,
+        &proof.witness_commitment,
+    );
+
+    assert!(
+        result.is_err() || !result.as_ref().unwrap().valid,
+        "Verification should fail for mismatched payload hash"
+    );
 }
 
 // =============================================================================
@@ -431,17 +453,9 @@ fn test_empty_proof_bytes_rejected() {
     let verify_policy = Policy::aml_threshold(threshold);
     let witness_commitment = [0u64; 4];
 
-    let result = verify_compliance_proof(
-        &[],
-        &inputs,
-        &verify_policy,
-        &witness_commitment,
-    );
+    let result = verify_compliance_proof(&[], &inputs, &verify_policy, &witness_commitment);
 
-    assert!(
-        result.is_err(),
-        "Empty proof bytes should be rejected"
-    );
+    assert!(result.is_err(), "Empty proof bytes should be rejected");
 }
 
 #[test]
@@ -452,17 +466,9 @@ fn test_garbage_proof_bytes_rejected() {
     let witness_commitment = [0u64; 4];
     let garbage = vec![0xFF; 1000];
 
-    let result = verify_compliance_proof(
-        &garbage,
-        &inputs,
-        &verify_policy,
-        &witness_commitment,
-    );
+    let result = verify_compliance_proof(&garbage, &inputs, &verify_policy, &witness_commitment);
 
-    assert!(
-        result.is_err(),
-        "Garbage proof bytes should be rejected"
-    );
+    assert!(result.is_err(), "Garbage proof bytes should be rejected");
 }
 
 #[test]
@@ -482,10 +488,7 @@ fn test_truncated_proof_rejected() {
         &proof.witness_commitment,
     );
 
-    assert!(
-        result.is_err(),
-        "Truncated proof should be rejected"
-    );
+    assert!(result.is_err(), "Truncated proof should be rejected");
 }
 
 #[test]

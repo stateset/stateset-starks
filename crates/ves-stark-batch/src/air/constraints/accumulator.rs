@@ -3,8 +3,8 @@
 //! These constraints ensure that the compliance accumulator correctly
 //! tracks the AND of all individual event compliance flags.
 
-use winter_math::FieldElement;
 use crate::air::trace_layout::batch_cols;
+use winter_math::FieldElement;
 
 /// Evaluate compliance accumulator constraints
 ///

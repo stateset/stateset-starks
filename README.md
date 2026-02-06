@@ -8,9 +8,11 @@ STARK proving system for VES (Verifiable Event Sync) compliance proofs.
 
 ## Phase 1: Per-Event Compliance Proofs
 
-Phase 1 implements per-event compliance proofs for the `aml.threshold` policy:
+Phase 1 implements per-event compliance proofs for:
 
 - **Policy**: Proves that an encrypted order amount is strictly less than a threshold
+  - `aml.threshold`: amount < threshold (strict)
+  - `order_total.cap`: amount <= cap (non-strict)
 - **Use Case**: AML compliance (e.g., "order total < $10,000") without data exposure
 - **Integration**: Works with `stateset-sequencer` proof registry
 
@@ -22,7 +24,10 @@ stateset-stark/
 │   ├── ves-stark-primitives/   # Field arithmetic, Rescue hash, public inputs
 │   ├── ves-stark-air/          # AIR constraint definitions
 │   ├── ves-stark-prover/       # Proof generation
-│   └── ves-stark-verifier/     # Proof verification
+│   ├── ves-stark-verifier/     # Proof verification
+│   ├── ves-stark-client/       # Sequencer/Set Chain client
+│   ├── ves-stark-cli/          # CLI utilities
+│   └── ves-stark-batch/        # Experimental batch proofs (not yet sound)
 └── tests/                       # Integration tests
 ```
 
@@ -31,15 +36,14 @@ stateset-stark/
 ### Generate a Proof
 
 ```rust
-use ves_stark_prover::{ComplianceProver, ComplianceWitness};
-use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
+use ves_stark_prover::{ComplianceProver, ComplianceWitness, Policy};
 
 // Create witness with private amount and public inputs
 let witness = ComplianceWitness::new(amount, public_inputs);
 
 // Create prover for the policy
-let policy = AmlThresholdPolicy::new(10000); // threshold
-let prover = ComplianceProver::new(policy);
+let policy = Policy::aml_threshold(10000);
+let prover = ComplianceProver::with_policy(policy);
 
 // Generate proof
 let proof = prover.prove(&witness)?;
@@ -57,16 +61,28 @@ assert!(result.valid);
 ### Submit to Sequencer
 
 ```rust
-// POST /api/v1/ves/compliance/{event_id}/proofs
-let request = SubmitComplianceProofRequest {
-    proof_type: "STARK",
-    proof_version: 2,
-    policy_id: "aml.threshold",
-    policy_params: json!({"threshold": 10000}),
-    proof_b64: base64::encode(&proof.proof_bytes),
-    witness_commitment: proof.witness_commitment,
-    public_inputs: Some(public_inputs),
-};
+use ves_stark_client::{ProofSubmission, SequencerClient};
+
+let client = SequencerClient::try_new("http://localhost:8080", "api_key_here")?;
+
+// Fetch inputs and validate the sequencer-provided hash matches the canonical hash computed locally.
+let inputs = client
+    .get_public_inputs_validated(event_id, "aml.threshold", 10000)
+    .await?;
+
+// Build proof
+let witness = ComplianceWitness::new(amount, inputs);
+let prover = ComplianceProver::with_policy(Policy::aml_threshold(10000));
+let proof = prover.prove(&witness)?;
+
+// Submit proof
+let submission = ProofSubmission::aml_threshold(
+    event_id,
+    10000,
+    proof.proof_bytes,
+    proof.witness_commitment,
+);
+client.submit_proof(submission).await?;
 ```
 
 ## Public Inputs Format
@@ -95,6 +111,12 @@ Canonical public inputs (RFC 8785 JCS canonicalized):
 - **Hash**: Rescue-Prime (STARK-friendly, algebraic S-box)
 - **Security**: ~100 bits with default options
 - **Proof Size**: ~100-200 KB typical
+
+## Docs
+
+- Soundness notes: `docs/SOUNDNESS.md`
+- Threat model: `docs/THREAT_MODEL.md`
+- Rescue constants (frozen + hashed): `docs/RESCUE_CONSTANTS.md`
 
 ## Building
 

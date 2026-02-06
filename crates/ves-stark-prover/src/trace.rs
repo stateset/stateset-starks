@@ -4,13 +4,13 @@
 //! The trace is a 2D matrix of field elements where each row represents a
 //! step in the computation.
 
-use ves_stark_air::trace::{cols, phases, TRACE_WIDTH, MIN_TRACE_LENGTH};
-use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
-use ves_stark_primitives::{Felt, felt_from_u64, FELT_ZERO, FELT_ONE};
-use ves_stark_primitives::rescue::{rescue_permutation_trace, STATE_WIDTH as RESCUE_STATE_WIDTH};
-use crate::witness::ComplianceWitness;
-use crate::policy::Policy;
 use crate::error::ProverError;
+use crate::policy::Policy;
+use crate::witness::ComplianceWitness;
+use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
+use ves_stark_air::trace::{cols, phases, MIN_TRACE_LENGTH, TRACE_WIDTH};
+use ves_stark_primitives::rescue::{rescue_permutation_trace, STATE_WIDTH as RESCUE_STATE_WIDTH};
+use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
 use winter_prover::TraceTable;
 
 /// Decompose a field element (representing a u32 limb) into 32 bits
@@ -19,9 +19,9 @@ fn decompose_to_bits(limb: Felt) -> [Felt; 32] {
     let mut bits = [FELT_ZERO; 32];
     let value = limb.as_int() as u32;
 
-    for i in 0..32 {
+    for (i, bit) in bits.iter_mut().enumerate() {
         if (value >> i) & 1 == 1 {
-            bits[i] = FELT_ONE;
+            *bit = FELT_ONE;
         }
     }
 
@@ -71,7 +71,6 @@ fn compute_subtraction_witness(
     Ok((diff, borrow))
 }
 
-
 /// Build the execution trace for a compliance proof
 pub struct TraceBuilder {
     /// The witness data
@@ -118,7 +117,8 @@ impl TraceBuilder {
         }
 
         // Validate public inputs policy hash + match policy parameters
-        let policy_hash_valid = self.witness
+        let policy_hash_valid = self
+            .witness
             .public_inputs
             .validate_policy_hash()
             .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?;
@@ -170,7 +170,8 @@ impl TraceBuilder {
             .ok_or_else(|| ProverError::TraceGenerationError("Rescue trace missing".to_string()))?;
 
         // Convert public inputs to field elements and bind into trace columns
-        let pub_inputs_felts = self.witness
+        let pub_inputs_felts = self
+            .witness
             .public_inputs
             .to_field_elements()
             .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?;
@@ -183,6 +184,13 @@ impl TraceBuilder {
             )));
         }
 
+        let junk_bit = felt_from_u64(2);
+        let junk_bits = [junk_bit; 32];
+        let junk_limbs = [FELT_ZERO; 8];
+        let mut junk_borrow = [FELT_ZERO; 8];
+        junk_borrow[0] = junk_bit;
+        junk_borrow[1] = junk_bit;
+
         // Fill the trace
         for row in 0..self.trace_length {
             // Set Rescue state columns (permutation trace for first 15 rows, then constant)
@@ -194,9 +202,17 @@ impl TraceBuilder {
             for i in 0..RESCUE_STATE_WIDTH {
                 trace[cols::RESCUE_STATE_START + i][row] = rescue_state[i];
             }
-            // Set amount limbs (constant throughout trace for this simple AIR)
+            // Only row 0 carries the real witness values; other rows are padding.
+            let use_real_witness = row == 0;
+            let row_amount_limbs = if use_real_witness {
+                amount_limbs
+            } else {
+                junk_limbs
+            };
+
+            // Set amount limbs (row 0 = witness amount, other rows = junk)
             for i in 0..8 {
-                trace[cols::AMOUNT_START + i][row] = amount_limbs[i];
+                trace[cols::AMOUNT_START + i][row] = row_amount_limbs[i];
             }
 
             // Set threshold/cap limbs (constant throughout trace)
@@ -209,34 +225,56 @@ impl TraceBuilder {
                 trace[cols::COMPARISON_START + i][row] = FELT_ZERO;
             }
 
-            // Set bit decomposition for limb 0 (constant throughout trace)
+            // Set bit decomposition for limb 0/1 (row 0 = real, other rows = junk)
+            let row_limb0_bits = if use_real_witness {
+                limb0_bits
+            } else {
+                junk_bits
+            };
+            let row_limb1_bits = if use_real_witness {
+                limb1_bits
+            } else {
+                junk_bits
+            };
             for i in 0..32 {
-                trace[cols::AMOUNT_BITS_LIMB0_START + i][row] = limb0_bits[i];
-            }
-
-            // Set bit decomposition for limb 1 (constant throughout trace)
-            for i in 0..32 {
-                trace[cols::AMOUNT_BITS_LIMB1_START + i][row] = limb1_bits[i];
+                trace[cols::AMOUNT_BITS_LIMB0_START + i][row] = row_limb0_bits[i];
+                trace[cols::AMOUNT_BITS_LIMB1_START + i][row] = row_limb1_bits[i];
             }
 
             // Note: Limbs 2-7 are boundary-asserted to zero, no bit decomposition needed
 
-            // Set subtraction witness columns
+            // Set subtraction witness columns (row 0 = real, other rows = junk)
+            let row_diff = if use_real_witness { diff } else { junk_limbs };
+            let mut row_borrow = if use_real_witness {
+                borrow
+            } else {
+                junk_borrow
+            };
+            if row == self.trace_length - 1 {
+                // Satisfy boundary assertion: final borrow must be zero at last row.
+                row_borrow[1] = FELT_ZERO;
+            }
             for i in 0..8 {
-                trace[cols::diff(i)][row] = diff[i];
-                trace[cols::borrow(i)][row] = borrow[i];
+                trace[cols::diff(i)][row] = row_diff[i];
+                trace[cols::borrow(i)][row] = row_borrow[i];
                 trace[cols::is_less(i)][row] = FELT_ZERO;
                 trace[cols::is_equal(i)][row] = FELT_ZERO;
             }
 
-            // Set diff bit decomposition for limb 0
+            // Set diff bit decomposition for limb 0/1 (row 0 = real, other rows = junk)
+            let row_diff0_bits = if use_real_witness {
+                diff0_bits
+            } else {
+                junk_bits
+            };
+            let row_diff1_bits = if use_real_witness {
+                diff1_bits
+            } else {
+                junk_bits
+            };
             for i in 0..32 {
-                trace[cols::DIFF_BITS_LIMB0_START + i][row] = diff0_bits[i];
-            }
-
-            // Set diff bit decomposition for limb 1
-            for i in 0..32 {
-                trace[cols::DIFF_BITS_LIMB1_START + i][row] = diff1_bits[i];
+                trace[cols::DIFF_BITS_LIMB0_START + i][row] = row_diff0_bits[i];
+                trace[cols::DIFF_BITS_LIMB1_START + i][row] = row_diff1_bits[i];
             }
 
             // Bind public inputs into trace columns
@@ -246,7 +284,11 @@ impl TraceBuilder {
 
             // Set control flags
             trace[cols::FLAG_IS_FIRST][row] = if row == 0 { FELT_ONE } else { FELT_ZERO };
-            trace[cols::FLAG_IS_LAST][row] = if row == self.trace_length - 1 { FELT_ONE } else { FELT_ZERO };
+            trace[cols::FLAG_IS_LAST][row] = if row == self.trace_length - 1 {
+                FELT_ONE
+            } else {
+                FELT_ZERO
+            };
             trace[cols::ROUND_COUNTER][row] = felt_from_u64(row as u64);
             trace[cols::PHASE][row] = if row < rescue_states.len() {
                 felt_from_u64(phases::RESCUE_HASH)
@@ -281,8 +323,10 @@ impl TraceInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ves_stark_primitives::public_inputs::{CompliancePublicInputs, PolicyParams, compute_policy_hash};
     use uuid::Uuid;
+    use ves_stark_primitives::public_inputs::{
+        compute_policy_hash, CompliancePublicInputs, PolicyParams,
+    };
     use winter_prover::Trace;
 
     fn compute_witness_commitment_from_state(state: &[Felt; RESCUE_STATE_WIDTH]) -> [Felt; 4] {
@@ -451,7 +495,7 @@ mod tests {
 
         // Test decomposition of 5 (binary: 101)
         let bits = decompose_to_bits(felt_from_u64(5));
-        assert_eq!(bits[0], FELT_ONE);  // LSB
+        assert_eq!(bits[0], FELT_ONE); // LSB
         assert_eq!(bits[1], FELT_ZERO);
         assert_eq!(bits[2], FELT_ONE);
         for bit in &bits[3..] {
@@ -503,7 +547,10 @@ mod tests {
                 recomposed_limb0 += 1u64 << i;
             }
         }
-        assert_eq!(recomposed_limb0, limb0_value as u64, "Limb 0 bit decomposition mismatch");
+        assert_eq!(
+            recomposed_limb0, limb0_value as u64,
+            "Limb 0 bit decomposition mismatch"
+        );
 
         // Check limb 1 bits
         let mut recomposed_limb1 = 0u64;
@@ -513,7 +560,10 @@ mod tests {
                 recomposed_limb1 += 1u64 << i;
             }
         }
-        assert_eq!(recomposed_limb1, limb1_value as u64, "Limb 1 bit decomposition mismatch");
+        assert_eq!(
+            recomposed_limb1, limb1_value as u64,
+            "Limb 1 bit decomposition mismatch"
+        );
     }
 
     #[test]
@@ -543,16 +593,22 @@ mod tests {
         // Verify Rescue output state columns contain the witness commitment
         for i in 0..4 {
             let trace_value = trace.get(cols::RESCUE_STATE_START + i, rescue_output_row);
-            assert_eq!(trace_value, expected_commitment[i],
-                "Rescue commitment column {} mismatch at output row", i);
+            assert_eq!(
+                trace_value, expected_commitment[i],
+                "Rescue commitment column {} mismatch at output row",
+                i
+            );
         }
 
         // Verify commitment is constant across rows after the output row
         for row in rescue_output_row..trace.length() {
             for i in 0..4 {
                 let trace_value = trace.get(cols::RESCUE_STATE_START + i, row);
-                assert_eq!(trace_value, expected_commitment[i],
-                    "Rescue commitment column {} changed at row {}", i, row);
+                assert_eq!(
+                    trace_value, expected_commitment[i],
+                    "Rescue commitment column {} changed at row {}",
+                    i, row
+                );
             }
         }
     }
@@ -560,10 +616,26 @@ mod tests {
     #[test]
     fn test_witness_commitment_deterministic() {
         // Same amount should produce same commitment
-        let limbs1 = [felt_from_u64(5000), FELT_ZERO, FELT_ZERO, FELT_ZERO,
-                      FELT_ZERO, FELT_ZERO, FELT_ZERO, FELT_ZERO];
-        let limbs2 = [felt_from_u64(5000), FELT_ZERO, FELT_ZERO, FELT_ZERO,
-                      FELT_ZERO, FELT_ZERO, FELT_ZERO, FELT_ZERO];
+        let limbs1 = [
+            felt_from_u64(5000),
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+        ];
+        let limbs2 = [
+            felt_from_u64(5000),
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+        ];
 
         let mut rescue_init_state1 = [FELT_ZERO; RESCUE_STATE_WIDTH];
         rescue_init_state1[..8].copy_from_slice(&limbs1);
@@ -584,13 +656,24 @@ mod tests {
         );
 
         for i in 0..4 {
-            assert_eq!(commitment1[i], commitment2[i],
-                "Commitment not deterministic at position {}", i);
+            assert_eq!(
+                commitment1[i], commitment2[i],
+                "Commitment not deterministic at position {}",
+                i
+            );
         }
 
         // Different amount should produce different commitment
-        let limbs3 = [felt_from_u64(6000), FELT_ZERO, FELT_ZERO, FELT_ZERO,
-                      FELT_ZERO, FELT_ZERO, FELT_ZERO, FELT_ZERO];
+        let limbs3 = [
+            felt_from_u64(6000),
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+            FELT_ZERO,
+        ];
         let mut rescue_init_state3 = [FELT_ZERO; RESCUE_STATE_WIDTH];
         rescue_init_state3[..8].copy_from_slice(&limbs3);
         rescue_init_state3[8] = felt_from_u64(8);
@@ -601,12 +684,16 @@ mod tests {
         );
 
         let mut any_different = false;
-        for i in 0..4 { // Only check first 4 elements (hash output)
+        for i in 0..4 {
+            // Only check first 4 elements (hash output)
             if commitment1[i] != commitment3[i] {
                 any_different = true;
                 break;
             }
         }
-        assert!(any_different, "Different amounts should produce different commitments");
+        assert!(
+            any_different,
+            "Different amounts should produce different commitments"
+        );
     }
 }

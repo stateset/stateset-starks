@@ -15,15 +15,15 @@
 //! - `trace`: Trace layout and column definitions
 
 pub mod compliance;
+pub mod options;
 pub mod policies;
 pub mod policy;
 pub mod range_check;
 pub mod rescue_air;
 pub mod trace;
-pub mod options;
 
 pub use compliance::ComplianceAir;
 pub use options::ProofOptions;
-pub use policy::{Policy, ComparisonType, PolicyError};
-pub use range_check::{validate_limbs, is_valid_u32};
+pub use policy::{ComparisonType, Policy, PolicyError};
+pub use range_check::{is_valid_u32, validate_limbs};
 pub use trace::{TraceInfo, TRACE_WIDTH};

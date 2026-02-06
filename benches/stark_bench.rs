@@ -39,16 +39,14 @@
 //! | Witness creation | < 1ms | Negligible overhead |
 //! | Serialization | < 1ms | For network transmission |
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use uuid::Uuid;
 
+use ves_stark_primitives::felt_from_u64;
 use ves_stark_primitives::public_inputs::{
-    CompliancePublicInputs, PolicyParams, compute_policy_hash,
+    compute_policy_hash, CompliancePublicInputs, PolicyParams,
 };
 use ves_stark_primitives::rescue::{rescue_hash, rescue_hash_pair};
-use ves_stark_primitives::felt_from_u64;
 use ves_stark_prover::{ComplianceProver, ComplianceWitness, Policy};
 use ves_stark_verifier::verify_compliance_proof;
 
@@ -120,7 +118,9 @@ fn bench_proof_generation(c: &mut Criterion) {
             threshold,
             |b, _| {
                 b.iter(|| {
-                    prover.prove(black_box(&witness)).expect("proof generation failed")
+                    prover
+                        .prove(black_box(&witness))
+                        .expect("proof generation failed")
                 })
             },
         );
@@ -148,15 +148,13 @@ fn bench_proof_generation_by_amount(c: &mut Criterion) {
         let inputs = sample_inputs(threshold);
         let witness = ComplianceWitness::new(amount, inputs);
 
-        group.bench_with_input(
-            BenchmarkId::new("amount", label),
-            &amount,
-            |b, _| {
-                b.iter(|| {
-                    prover.prove(black_box(&witness)).expect("proof generation failed")
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("amount", label), &amount, |b, _| {
+            b.iter(|| {
+                prover
+                    .prove(black_box(&witness))
+                    .expect("proof generation failed")
+            })
+        });
     }
 
     group.finish();
@@ -181,7 +179,12 @@ fn bench_verification(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(proof.proof_bytes.len() as u64));
         group.bench_with_input(
             BenchmarkId::new("threshold", threshold),
-            &(proof.proof_bytes.clone(), proof.witness_commitment, inputs, policy),
+            &(
+                proof.proof_bytes.clone(),
+                proof.witness_commitment,
+                inputs,
+                policy,
+            ),
             |b, (proof_bytes, commitment, inputs, policy)| {
                 b.iter(|| {
                     verify_compliance_proof(
@@ -242,16 +245,17 @@ fn bench_witness_creation(c: &mut Criterion) {
     let inputs = sample_inputs(threshold);
 
     group.bench_function("new_witness", |b| {
-        b.iter(|| {
-            ComplianceWitness::new(black_box(5000), black_box(inputs.clone()))
-        })
+        b.iter(|| ComplianceWitness::new(black_box(5000), black_box(inputs.clone())))
     });
 
     // Benchmark witness validation
     let witness = ComplianceWitness::new(5000, inputs.clone());
+    let policy = Policy::aml_threshold(threshold);
     group.bench_function("validate_witness", |b| {
         b.iter(|| {
-            witness.validate(black_box(threshold)).expect("validation failed")
+            witness
+                .validate(black_box(&policy))
+                .expect("validation failed")
         })
     });
 
@@ -272,20 +276,30 @@ fn bench_rescue_hash(c: &mut Criterion) {
     });
 
     // Hash 8 elements (full rate)
-    let rate_input: Vec<_> = (0..8).map(|i| felt_from_u64(i)).collect();
+    let rate_input: Vec<_> = (0u64..8).map(felt_from_u64).collect();
     group.bench_function("full_rate_8", |b| {
         b.iter(|| rescue_hash(black_box(&rate_input)))
     });
 
     // Hash 16 elements (2x rate, requires 2 absorb rounds)
-    let double_rate: Vec<_> = (0..16).map(|i| felt_from_u64(i)).collect();
+    let double_rate: Vec<_> = (0u64..16).map(felt_from_u64).collect();
     group.bench_function("double_rate_16", |b| {
         b.iter(|| rescue_hash(black_box(&double_rate)))
     });
 
     // Hash pair (for Merkle tree)
-    let left = [felt_from_u64(1), felt_from_u64(2), felt_from_u64(3), felt_from_u64(4)];
-    let right = [felt_from_u64(5), felt_from_u64(6), felt_from_u64(7), felt_from_u64(8)];
+    let left = [
+        felt_from_u64(1),
+        felt_from_u64(2),
+        felt_from_u64(3),
+        felt_from_u64(4),
+    ];
+    let right = [
+        felt_from_u64(5),
+        felt_from_u64(6),
+        felt_from_u64(7),
+        felt_from_u64(8),
+    ];
     group.bench_function("hash_pair", |b| {
         b.iter(|| rescue_hash_pair(black_box(&left), black_box(&right)))
     });
@@ -358,7 +372,9 @@ fn bench_policy_comparison(c: &mut Criterion) {
 
     group.bench_function("aml_threshold_prove", |b| {
         b.iter(|| {
-            aml_prover.prove(black_box(&aml_witness)).expect("proof failed")
+            aml_prover
+                .prove(black_box(&aml_witness))
+                .expect("proof failed")
         })
     });
 
@@ -370,7 +386,9 @@ fn bench_policy_comparison(c: &mut Criterion) {
 
     group.bench_function("order_total_cap_prove", |b| {
         b.iter(|| {
-            cap_prover.prove(black_box(&cap_witness)).expect("proof failed")
+            cap_prover
+                .prove(black_box(&cap_witness))
+                .expect("proof failed")
         })
     });
 
@@ -380,7 +398,9 @@ fn bench_policy_comparison(c: &mut Criterion) {
 
     group.bench_function("boundary_cap_prove", |b| {
         b.iter(|| {
-            cap_prover.prove(black_box(&boundary_witness)).expect("proof failed")
+            cap_prover
+                .prove(black_box(&boundary_witness))
+                .expect("proof failed")
         })
     });
 

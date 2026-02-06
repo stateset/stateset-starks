@@ -5,8 +5,8 @@
 
 use uuid::Uuid;
 
-use crate::set_chain::{BatchProofSubmission, SetChainClient, BatchProofResponse};
 use crate::error::{ClientError, Result};
+use crate::set_chain::{BatchProofResponse, BatchProofSubmission, SetChainClient};
 
 /// Extension trait for SetChainClient to handle BatchProof from ves-stark-batch
 impl SetChainClient {
@@ -37,14 +37,13 @@ impl SetChainClient {
         policy_limit: u64,
     ) -> Result<BatchProofResponse> {
         // Parse batch_id from hex string
-        let batch_id = Uuid::parse_str(&proof.metadata.batch_id)
-            .unwrap_or_else(|_| {
-                // If batch_id is a hex string but not a UUID, create one from the hash
-                let bytes = hex::decode(&proof.metadata.batch_id).unwrap_or_else(|_| vec![0u8; 16]);
-                let mut uuid_bytes = [0u8; 16];
-                uuid_bytes.copy_from_slice(&bytes[..16.min(bytes.len())]);
-                Uuid::from_bytes(uuid_bytes)
-            });
+        let batch_id = Uuid::parse_str(&proof.metadata.batch_id).unwrap_or_else(|_| {
+            // If batch_id is a hex string but not a UUID, create one from the hash
+            let bytes = hex::decode(&proof.metadata.batch_id).unwrap_or_else(|_| vec![0u8; 16]);
+            let mut uuid_bytes = [0u8; 16];
+            uuid_bytes.copy_from_slice(&bytes[..16.min(bytes.len())]);
+            Uuid::from_bytes(uuid_bytes)
+        });
 
         // Convert state roots from [u64; 4] to [u8; 32]
         let prev_state_root = u64_array_to_bytes(&proof.prev_state_root);
@@ -84,13 +83,12 @@ impl SetChainClient {
         policy_limit: u64,
     ) -> Result<BatchProofResponse> {
         // Parse batch_id from hex string
-        let batch_id = Uuid::parse_str(&proof.metadata.batch_id)
-            .unwrap_or_else(|_| {
-                let bytes = hex::decode(&proof.metadata.batch_id).unwrap_or_else(|_| vec![0u8; 16]);
-                let mut uuid_bytes = [0u8; 16];
-                uuid_bytes.copy_from_slice(&bytes[..16.min(bytes.len())]);
-                Uuid::from_bytes(uuid_bytes)
-            });
+        let batch_id = Uuid::parse_str(&proof.metadata.batch_id).unwrap_or_else(|_| {
+            let bytes = hex::decode(&proof.metadata.batch_id).unwrap_or_else(|_| vec![0u8; 16]);
+            let mut uuid_bytes = [0u8; 16];
+            uuid_bytes.copy_from_slice(&bytes[..16.min(bytes.len())]);
+            Uuid::from_bytes(uuid_bytes)
+        });
 
         let prev_state_root = u64_array_to_bytes(&proof.prev_state_root);
         let new_state_root = u64_array_to_bytes(&proof.new_state_root);
@@ -111,7 +109,8 @@ impl SetChainClient {
             proof.metadata.all_compliant,
         );
 
-        self.submit_batch_with_proof(submission, proof.metadata.proving_time_ms).await
+        self.submit_batch_with_proof(submission, proof.metadata.proving_time_ms)
+            .await
     }
 
     /// Verify a batch proof hash against the on-chain record
@@ -120,13 +119,12 @@ impl SetChainClient {
         proof: &ves_stark_batch::prover::BatchProof,
     ) -> Result<bool> {
         // Parse batch_id
-        let batch_id = Uuid::parse_str(&proof.metadata.batch_id)
-            .unwrap_or_else(|_| {
-                let bytes = hex::decode(&proof.metadata.batch_id).unwrap_or_else(|_| vec![0u8; 16]);
-                let mut uuid_bytes = [0u8; 16];
-                uuid_bytes.copy_from_slice(&bytes[..16.min(bytes.len())]);
-                Uuid::from_bytes(uuid_bytes)
-            });
+        let batch_id = Uuid::parse_str(&proof.metadata.batch_id).unwrap_or_else(|_| {
+            let bytes = hex::decode(&proof.metadata.batch_id).unwrap_or_else(|_| vec![0u8; 16]);
+            let mut uuid_bytes = [0u8; 16];
+            uuid_bytes.copy_from_slice(&bytes[..16.min(bytes.len())]);
+            Uuid::from_bytes(uuid_bytes)
+        });
 
         let verification = self.verify_proof_hash(batch_id, &proof.proof_hash).await?;
         Ok(verification.proof_hash_valid)
@@ -179,13 +177,12 @@ impl BatchSubmissionBuilder {
     }
 
     pub fn from_batch_proof(proof: &ves_stark_batch::prover::BatchProof) -> Self {
-        let batch_id = Uuid::parse_str(&proof.metadata.batch_id)
-            .unwrap_or_else(|_| {
-                let bytes = hex::decode(&proof.metadata.batch_id).unwrap_or_else(|_| vec![0u8; 16]);
-                let mut uuid_bytes = [0u8; 16];
-                uuid_bytes.copy_from_slice(&bytes[..16.min(bytes.len())]);
-                Uuid::from_bytes(uuid_bytes)
-            });
+        let batch_id = Uuid::parse_str(&proof.metadata.batch_id).unwrap_or_else(|_| {
+            let bytes = hex::decode(&proof.metadata.batch_id).unwrap_or_else(|_| vec![0u8; 16]);
+            let mut uuid_bytes = [0u8; 16];
+            uuid_bytes.copy_from_slice(&bytes[..16.min(bytes.len())]);
+            Uuid::from_bytes(uuid_bytes)
+        });
 
         Self {
             batch_id: Some(batch_id),

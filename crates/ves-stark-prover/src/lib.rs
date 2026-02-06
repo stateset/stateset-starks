@@ -38,9 +38,9 @@ pub mod witness;
 
 pub use error::ProverError;
 pub use policy::{ComparisonType, Policy, PolicyError};
-pub use prover::{ComplianceProver, ComplianceProof, ProofMetadata};
+pub use prover::{ComplianceProof, ComplianceProver, ProofMetadata};
 pub use serialization::{
-    CompactProof, PolicyInfo, ProofFormat, ProofJson, deserialize_proof_bytes,
-    deserialize_proof_bytes_auto, serialize_proof, serialize_proof_with_policy,
+    deserialize_proof_bytes, deserialize_proof_bytes_auto, serialize_proof,
+    serialize_proof_with_policy, CompactProof, PolicyInfo, ProofFormat, ProofJson,
 };
 pub use witness::ComplianceWitness;

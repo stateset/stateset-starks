@@ -109,20 +109,31 @@ pub fn prove(
 ) -> Result<JsComplianceProof> {
     // Validate amount is non-negative
     if amount < 0 {
-        return Err(Error::new(Status::InvalidArg, "Amount must be non-negative"));
+        return Err(Error::new(
+            Status::InvalidArg,
+            "Amount must be non-negative",
+        ));
     }
     if policy_limit < 0 {
-        return Err(Error::new(Status::InvalidArg, "Policy limit must be non-negative"));
+        return Err(Error::new(
+            Status::InvalidArg,
+            "Policy limit must be non-negative",
+        ));
     }
 
     // Create policy based on type
     let policy = match policy_type.as_str() {
         "aml.threshold" => Policy::aml_threshold(policy_limit as u64),
         "order_total.cap" => Policy::order_total_cap(policy_limit as u64),
-        _ => return Err(Error::new(
-            Status::InvalidArg,
-            format!("Unknown policy type: {}. Supported: aml.threshold, order_total.cap", policy_type),
-        )),
+        _ => {
+            return Err(Error::new(
+                Status::InvalidArg,
+                format!(
+                    "Unknown policy type: {}. Supported: aml.threshold, order_total.cap",
+                    policy_type
+                ),
+            ))
+        }
     };
 
     // Convert public inputs
@@ -134,15 +145,14 @@ pub fn prove(
     // Create prover and generate proof
     let prover = ComplianceProver::with_policy(policy);
     let proof = prover.prove(&witness).map_err(|e| {
-        Error::new(Status::GenericFailure, format!("Proof generation failed: {}", e))
+        Error::new(
+            Status::GenericFailure,
+            format!("Proof generation failed: {}", e),
+        )
     })?;
 
     // Convert witness commitment to i64 vec (JS doesn't have native u64)
-    let witness_commitment: Vec<i64> = proof
-        .witness_commitment
-        .iter()
-        .map(|&v| v as i64)
-        .collect();
+    let witness_commitment: Vec<i64> = proof.witness_commitment.iter().map(|&v| v as i64).collect();
 
     Ok(JsComplianceProof {
         proof_bytes: Buffer::from(proof.proof_bytes),
@@ -172,7 +182,10 @@ pub fn verify(
     if witness_commitment.len() != 4 {
         return Err(Error::new(
             Status::InvalidArg,
-            format!("Witness commitment must have exactly 4 elements, got {}", witness_commitment.len()),
+            format!(
+                "Witness commitment must have exactly 4 elements, got {}",
+                witness_commitment.len()
+            ),
         ));
     }
     let commitment: [u64; 4] = [
@@ -211,8 +224,12 @@ pub fn verify(
 #[napi]
 pub fn compute_policy_hash(policy_id: String, policy_params: serde_json::Value) -> Result<String> {
     let params = PolicyParams(policy_params);
-    let hash = ves_stark_primitives::compute_policy_hash(&policy_id, &params)
-        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to compute policy hash: {}", e)))?;
+    let hash = ves_stark_primitives::compute_policy_hash(&policy_id, &params).map_err(|e| {
+        Error::new(
+            Status::GenericFailure,
+            format!("Failed to compute policy hash: {}", e),
+        )
+    })?;
     Ok(hash.to_hex())
 }
 

@@ -2,15 +2,15 @@
 //!
 //! This module provides the main verification logic for VES compliance proofs.
 
-use crate::error::{VerifierError, validate_hex_string};
+use crate::error::{validate_hex_string, VerifierError};
+use serde::{Deserialize, Serialize};
+use std::time::Instant;
 use ves_stark_air::compliance::{ComplianceAir, PublicInputs};
 use ves_stark_air::policy::Policy;
 use ves_stark_primitives::public_inputs::CompliancePublicInputs;
-use ves_stark_primitives::{Felt, Hash256, felt_from_u64};
+use ves_stark_primitives::{felt_from_u64, Felt, Hash256};
 use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
 use winter_verifier::{verify, AcceptableOptions};
-use serde::{Deserialize, Serialize};
-use std::time::Instant;
 
 /// Type alias for the hash function
 pub type Hasher = Blake3_256<Felt>;
@@ -57,7 +57,11 @@ pub fn verify_compliance_proof(
 
     // V2 Security: Validate hex string formats in public inputs
     validate_hex_string("payload_plain_hash", &public_inputs.payload_plain_hash, 64)?;
-    validate_hex_string("payload_cipher_hash", &public_inputs.payload_cipher_hash, 64)?;
+    validate_hex_string(
+        "payload_cipher_hash",
+        &public_inputs.payload_cipher_hash,
+        64,
+    )?;
     validate_hex_string("event_signing_hash", &public_inputs.event_signing_hash, 64)?;
     validate_hex_string("policy_hash", &public_inputs.policy_hash, 64)?;
 
@@ -78,11 +82,11 @@ pub fn verify_compliance_proof(
     }
 
     // Policy must match public inputs
-    let derived_policy = Policy::from_public_inputs(
-        &public_inputs.policy_id,
-        &public_inputs.policy_params,
-    )
-    .map_err(|e| VerifierError::PublicInputMismatch(format!("Invalid policy params: {e}")))?;
+    let derived_policy =
+        Policy::from_public_inputs(&public_inputs.policy_id, &public_inputs.policy_params)
+            .map_err(|e| {
+                VerifierError::PublicInputMismatch(format!("Invalid policy params: {e}"))
+            })?;
     if policy.policy_id() != derived_policy.policy_id() {
         return Err(VerifierError::policy_mismatch(
             policy.policy_id(),
@@ -90,8 +94,17 @@ pub fn verify_compliance_proof(
         ));
     }
     if policy.limit() != derived_policy.limit() {
-        return Err(VerifierError::limit_mismatch(policy.limit(), derived_policy.limit()));
+        return Err(VerifierError::limit_mismatch(
+            policy.limit(),
+            derived_policy.limit(),
+        ));
     }
+
+    // Validate policy semantics before touching proof bytes so callers get consistent
+    // public-input errors even if the proof encoding is malformed.
+    let policy_limit = policy
+        .effective_limit()
+        .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?;
 
     // Deserialize proof
     let proof = winter_verifier::Proof::from_bytes(proof_bytes)
@@ -109,20 +122,30 @@ pub fn verify_compliance_proof(
     let pub_inputs_felts = public_inputs
         .to_field_elements()
         .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?;
-    let policy_limit = policy
-        .effective_limit()
-        .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?;
-    let pub_inputs = PublicInputs::with_commitment(
+    let pub_inputs = PublicInputs::try_with_commitment(
         policy_limit,
         pub_inputs_felts.to_vec(),
         commitment_felts,
-    );
+    )
+    .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?;
 
     // Define acceptable proof options
     let acceptable_options = AcceptableOptions::OptionSet(vec![
-        ves_stark_air::options::ProofOptions::default().to_winterfell(),
-        ves_stark_air::options::ProofOptions::fast().to_winterfell(),
-        ves_stark_air::options::ProofOptions::secure().to_winterfell(),
+        ves_stark_air::options::ProofOptions::default()
+            .try_to_winterfell()
+            .map_err(|e| {
+                VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
+            })?,
+        ves_stark_air::options::ProofOptions::fast()
+            .try_to_winterfell()
+            .map_err(|e| {
+                VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
+            })?,
+        ves_stark_air::options::ProofOptions::secure()
+            .try_to_winterfell()
+            .map_err(|e| {
+                VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
+            })?,
     ]);
 
     // Verify the proof
@@ -158,11 +181,8 @@ pub fn verify_compliance_proof_auto(
     public_inputs: &CompliancePublicInputs,
     witness_commitment: &[u64; 4],
 ) -> Result<VerificationResult, VerifierError> {
-    let policy = Policy::from_public_inputs(
-        &public_inputs.policy_id,
-        &public_inputs.policy_params,
-    )
-    .map_err(|e| VerifierError::PublicInputMismatch(format!("Invalid policy params: {e}")))?;
+    let policy = Policy::from_public_inputs(&public_inputs.policy_id, &public_inputs.policy_params)
+        .map_err(|e| VerifierError::PublicInputMismatch(format!("Invalid policy params: {e}")))?;
     verify_compliance_proof(proof_bytes, public_inputs, &policy, witness_commitment)
 }
 
@@ -176,13 +196,30 @@ pub struct ComplianceVerifier {
 impl ComplianceVerifier {
     /// Create a new verifier with default options
     pub fn new() -> Self {
-        Self {
+        Self::try_new().expect("invalid proof options")
+    }
+
+    /// Create a new verifier with default options without panicking
+    pub fn try_new() -> Result<Self, VerifierError> {
+        Ok(Self {
             acceptable_options: AcceptableOptions::OptionSet(vec![
-                ves_stark_air::options::ProofOptions::default().to_winterfell(),
-                ves_stark_air::options::ProofOptions::fast().to_winterfell(),
-                ves_stark_air::options::ProofOptions::secure().to_winterfell(),
+                ves_stark_air::options::ProofOptions::default()
+                    .try_to_winterfell()
+                    .map_err(|e| {
+                        VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
+                    })?,
+                ves_stark_air::options::ProofOptions::fast()
+                    .try_to_winterfell()
+                    .map_err(|e| {
+                        VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
+                    })?,
+                ves_stark_air::options::ProofOptions::secure()
+                    .try_to_winterfell()
+                    .map_err(|e| {
+                        VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
+                    })?,
             ]),
-        }
+        })
     }
 
     /// Create a verifier with custom acceptable options
@@ -215,10 +252,8 @@ impl ComplianceVerifier {
 
     /// Verify proof hash matches
     pub fn verify_proof_hash(proof_bytes: &[u8], expected_hash: &str) -> bool {
-        let computed = Hash256::sha256_with_domain(
-            b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1",
-            proof_bytes,
-        );
+        let computed =
+            Hash256::sha256_with_domain(b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1", proof_bytes);
         computed.to_hex() == expected_hash
     }
 }
@@ -232,8 +267,8 @@ impl Default for ComplianceVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ves_stark_primitives::public_inputs::PolicyParams;
     use uuid::Uuid;
+    use ves_stark_primitives::public_inputs::PolicyParams;
 
     fn sample_inputs(threshold: u64) -> CompliancePublicInputs {
         let policy_id = "aml.threshold";
@@ -274,9 +309,10 @@ mod tests {
     #[test]
     fn test_verifier_with_custom_options() {
         use winter_verifier::AcceptableOptions;
-        let options = AcceptableOptions::OptionSet(vec![
-            ves_stark_air::options::ProofOptions::secure().to_winterfell(),
-        ]);
+        let options =
+            AcceptableOptions::OptionSet(vec![ves_stark_air::options::ProofOptions::secure()
+                .try_to_winterfell()
+                .unwrap()]);
         let _verifier = ComplianceVerifier::with_options(options);
     }
 
@@ -288,13 +324,19 @@ mod tests {
     fn test_invalid_policy_hash() {
         let threshold = 10000u64;
         let mut inputs = sample_inputs(threshold);
-        inputs.policy_hash = "invalid".repeat(8);
+        // Keep a valid lowercase hex string (length 64) but force a mismatch.
+        let mut chars: Vec<char> = inputs.policy_hash.chars().collect();
+        chars[0] = if chars[0] == '0' { '1' } else { '0' };
+        inputs.policy_hash = chars.into_iter().collect();
 
         let policy = Policy::aml_threshold(threshold);
         let witness_commitment = [0u64; 4];
         let result = verify_compliance_proof(&[], &inputs, &policy, &witness_commitment);
 
-        assert!(matches!(result, Err(VerifierError::InvalidPolicyHash { .. })));
+        assert!(matches!(
+            result,
+            Err(VerifierError::InvalidPolicyHash { .. })
+        ));
     }
 
     #[test]
@@ -307,7 +349,10 @@ mod tests {
         let witness_commitment = [0u64; 4];
         let result = verify_compliance_proof(&[], &inputs, &policy, &witness_commitment);
 
-        assert!(matches!(result, Err(VerifierError::InvalidPolicyHash { .. })));
+        assert!(matches!(
+            result,
+            Err(VerifierError::InvalidHexFormat { .. })
+        ));
     }
 
     #[test]
@@ -321,7 +366,10 @@ mod tests {
         let witness_commitment = [0u64; 4];
         let result = verify_compliance_proof(&[], &inputs, &policy, &witness_commitment);
 
-        assert!(matches!(result, Err(VerifierError::InvalidPolicyHash { .. })));
+        assert!(matches!(
+            result,
+            Err(VerifierError::InvalidHexFormat { .. })
+        ));
     }
 
     #[test]
@@ -340,48 +388,50 @@ mod tests {
     #[test]
     fn test_proof_hash_verification() {
         let proof_bytes = b"test proof data";
-        let hash = Hash256::sha256_with_domain(
-            b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1",
-            proof_bytes,
-        );
+        let hash =
+            Hash256::sha256_with_domain(b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1", proof_bytes);
 
-        assert!(ComplianceVerifier::verify_proof_hash(proof_bytes, &hash.to_hex()));
-        assert!(!ComplianceVerifier::verify_proof_hash(proof_bytes, "wrong_hash"));
+        assert!(ComplianceVerifier::verify_proof_hash(
+            proof_bytes,
+            &hash.to_hex()
+        ));
+        assert!(!ComplianceVerifier::verify_proof_hash(
+            proof_bytes,
+            "wrong_hash"
+        ));
     }
 
     #[test]
     fn test_proof_hash_empty_bytes() {
         let proof_bytes: &[u8] = b"";
-        let hash = Hash256::sha256_with_domain(
-            b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1",
-            proof_bytes,
-        );
+        let hash =
+            Hash256::sha256_with_domain(b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1", proof_bytes);
 
-        assert!(ComplianceVerifier::verify_proof_hash(proof_bytes, &hash.to_hex()));
+        assert!(ComplianceVerifier::verify_proof_hash(
+            proof_bytes,
+            &hash.to_hex()
+        ));
     }
 
     #[test]
     fn test_proof_hash_large_input() {
         let proof_bytes: Vec<u8> = (0..10000).map(|i| (i % 256) as u8).collect();
-        let hash = Hash256::sha256_with_domain(
-            b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1",
-            &proof_bytes,
-        );
+        let hash =
+            Hash256::sha256_with_domain(b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1", &proof_bytes);
 
-        assert!(ComplianceVerifier::verify_proof_hash(&proof_bytes, &hash.to_hex()));
+        assert!(ComplianceVerifier::verify_proof_hash(
+            &proof_bytes,
+            &hash.to_hex()
+        ));
     }
 
     #[test]
     fn test_proof_hash_deterministic() {
         let proof_bytes = b"deterministic test data";
-        let hash1 = Hash256::sha256_with_domain(
-            b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1",
-            proof_bytes,
-        );
-        let hash2 = Hash256::sha256_with_domain(
-            b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1",
-            proof_bytes,
-        );
+        let hash1 =
+            Hash256::sha256_with_domain(b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1", proof_bytes);
+        let hash2 =
+            Hash256::sha256_with_domain(b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1", proof_bytes);
 
         assert_eq!(hash1.to_hex(), hash2.to_hex());
     }
@@ -391,14 +441,8 @@ mod tests {
         let proof1 = b"proof data 1";
         let proof2 = b"proof data 2";
 
-        let hash1 = Hash256::sha256_with_domain(
-            b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1",
-            proof1,
-        );
-        let hash2 = Hash256::sha256_with_domain(
-            b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1",
-            proof2,
-        );
+        let hash1 = Hash256::sha256_with_domain(b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1", proof1);
+        let hash2 = Hash256::sha256_with_domain(b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1", proof2);
 
         assert_ne!(hash1.to_hex(), hash2.to_hex());
     }
@@ -417,7 +461,10 @@ mod tests {
         let result = verify_compliance_proof(&[], &inputs, &policy, &witness_commitment);
 
         // Should fail with deserialization error (empty proof can't be parsed)
-        assert!(matches!(result, Err(VerifierError::DeserializationError(_))));
+        assert!(matches!(
+            result,
+            Err(VerifierError::DeserializationError(_))
+        ));
     }
 
     #[test]
@@ -430,7 +477,10 @@ mod tests {
 
         let result = verify_compliance_proof(&garbage_bytes, &inputs, &policy, &witness_commitment);
 
-        assert!(matches!(result, Err(VerifierError::DeserializationError(_))));
+        assert!(matches!(
+            result,
+            Err(VerifierError::DeserializationError(_))
+        ));
     }
 
     #[test]
@@ -442,9 +492,13 @@ mod tests {
         // Some bytes that look like they could be a proof header but are truncated
         let truncated_bytes = vec![0x01, 0x02, 0x03, 0x04, 0x05];
 
-        let result = verify_compliance_proof(&truncated_bytes, &inputs, &policy, &witness_commitment);
+        let result =
+            verify_compliance_proof(&truncated_bytes, &inputs, &policy, &witness_commitment);
 
-        assert!(matches!(result, Err(VerifierError::DeserializationError(_))));
+        assert!(matches!(
+            result,
+            Err(VerifierError::DeserializationError(_))
+        ));
     }
 
     // =========================================================================
@@ -514,7 +568,10 @@ mod tests {
 
         let result = verify_compliance_proof(&[], &inputs, &policy, &witness_commitment);
         // Should fail at deserialization
-        assert!(matches!(result, Err(VerifierError::DeserializationError(_))));
+        assert!(matches!(
+            result,
+            Err(VerifierError::DeserializationError(_))
+        ));
     }
 
     #[test]

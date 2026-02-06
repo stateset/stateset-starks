@@ -8,7 +8,7 @@
 //!
 //! It does **not** yet verify Merkle transitions or per-event proof correctness.
 
-use ves_stark_primitives::{Felt, felt_from_u64, FELT_ZERO, FELT_ONE};
+use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
 use winter_air::{
     Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,
     TransitionConstraintDegree,
@@ -32,7 +32,11 @@ pub struct BatchComplianceAir {
 
 impl BatchComplianceAir {
     /// Create a new batch compliance AIR
-    pub fn new(trace_info: TraceInfo, pub_inputs: BatchPublicInputs, options: ProofOptions) -> Self {
+    pub fn new(
+        trace_info: TraceInfo,
+        pub_inputs: BatchPublicInputs,
+        options: ProofOptions,
+    ) -> Self {
         // Define constraint degrees
         let mut degrees = Vec::with_capacity(NUM_BATCH_CONSTRAINTS);
 
@@ -61,7 +65,10 @@ impl BatchComplianceAir {
 
         let context = AirContext::new(trace_info, degrees, NUM_BATCH_ASSERTIONS, options);
 
-        Self { context, pub_inputs }
+        Self {
+            context,
+            pub_inputs,
+        }
     }
 
     /// Get the public inputs
@@ -109,11 +116,7 @@ impl Air for BatchComplianceAir {
         ));
 
         // Event index starts at 0
-        assertions.push(Assertion::single(
-            batch_cols::EVENT_INDEX,
-            0,
-            FELT_ZERO,
-        ));
+        assertions.push(Assertion::single(batch_cols::EVENT_INDEX, 0, FELT_ZERO));
 
         // First row flag
         assertions.push(Assertion::single(
@@ -244,7 +247,10 @@ impl Air for BatchComplianceAir {
         // phase * (phase - 1) * (phase - 2) * (phase - 3) = 0
         // Simplified: we just check it doesn't exceed 3
         let three = E::from(felt_from_u64(3));
-        result[idx] = phase_curr * (phase_curr - E::ONE) * (phase_curr - E::from(felt_from_u64(2))) * (phase_curr - three);
+        result[idx] = phase_curr
+            * (phase_curr - E::ONE)
+            * (phase_curr - E::from(felt_from_u64(2)))
+            * (phase_curr - three);
         idx += 1;
 
         // =========================================================================
@@ -265,12 +271,15 @@ impl Air for BatchComplianceAir {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::air::BATCH_TRACE_WIDTH;
 
     #[test]
     fn test_air_creation() {
         let trace_info = TraceInfo::new(BATCH_TRACE_WIDTH, 256);
         let pub_inputs = BatchPublicInputs::default();
-        let options = ves_stark_air::options::ProofOptions::default().to_winterfell();
+        let options = ves_stark_air::options::ProofOptions::default()
+            .try_to_winterfell()
+            .unwrap();
 
         let air = BatchComplianceAir::new(trace_info, pub_inputs, options);
 
@@ -281,7 +290,9 @@ mod tests {
     fn test_assertions_count() {
         let trace_info = TraceInfo::new(BATCH_TRACE_WIDTH, 256);
         let pub_inputs = BatchPublicInputs::default();
-        let options = ves_stark_air::options::ProofOptions::default().to_winterfell();
+        let options = ves_stark_air::options::ProofOptions::default()
+            .try_to_winterfell()
+            .unwrap();
 
         let air = BatchComplianceAir::new(trace_info, pub_inputs, options);
         let assertions = air.get_assertions();

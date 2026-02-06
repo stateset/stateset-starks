@@ -3,19 +3,19 @@
 //! This module provides the high-level interface for generating batch
 //! state transition proofs.
 
-use std::time::Instant;
 use serde::{Deserialize, Serialize};
-use winter_prover::{Prover, Trace, TraceTable};
+use std::time::Instant;
 use winter_air::TraceInfo;
 use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
+use winter_prover::{Prover, Trace, TraceTable};
 
 use ves_stark_air::options::ProofOptions;
 use ves_stark_primitives::{Felt, Hash256};
 
 use crate::air::batch_air::BatchComplianceAir;
-use crate::error::BatchError;
-use crate::prover::witness::BatchWitness;
+use crate::error::{BatchError, BatchResult};
 use crate::prover::batch_trace::BatchTraceBuilder;
+use crate::prover::witness::BatchWitness;
 use crate::public_inputs::BatchPublicInputs;
 use crate::state::BatchStateRoot;
 
@@ -119,10 +119,7 @@ pub struct BatchProofMetadata {
 impl BatchProof {
     /// Compute the proof hash using the domain separator
     pub fn compute_hash(proof_bytes: &[u8]) -> Hash256 {
-        Hash256::sha256_with_domain(
-            b"STATESET_VES_BATCH_PROOF_HASH_V1",
-            proof_bytes
-        )
+        Hash256::sha256_with_domain(b"STATESET_VES_BATCH_PROOF_HASH_V1", proof_bytes)
     }
 
     /// Get previous state root as field elements
@@ -186,8 +183,7 @@ impl BatchProver {
         let all_compliant = witness.all_compliant();
 
         // Build execution trace
-        let trace = BatchTraceBuilder::new(witness.clone())
-            .build()?;
+        let trace = BatchTraceBuilder::new(witness.clone()).build()?;
 
         let trace_length = trace.length();
 
@@ -207,13 +203,11 @@ impl BatchProver {
         );
 
         // Create internal prover
-        let prover = VesBatchProver::new(
-            self.config.options.clone(),
-            pub_inputs.clone(),
-        );
+        let prover = VesBatchProver::try_new(self.config.options.clone(), pub_inputs.clone())?;
 
         // Generate proof
-        let proof = prover.prove(trace)
+        let proof = prover
+            .prove(trace)
             .map_err(|e| BatchError::ProofGenerationFailed(format!("{:?}", e)))?;
 
         // Serialize proof
@@ -258,7 +252,10 @@ impl BatchProver {
     ///
     /// This is a convenience method that generates the proof and returns
     /// the computed new state root for chaining batches.
-    pub fn prove_and_get_root(&self, witness: &BatchWitness) -> Result<(BatchProof, BatchStateRoot), BatchError> {
+    pub fn prove_and_get_root(
+        &self,
+        witness: &BatchWitness,
+    ) -> Result<(BatchProof, BatchStateRoot), BatchError> {
         let new_root = witness.compute_new_state_root();
         let proof = self.prove(witness)?;
         Ok((proof, new_root))
@@ -283,11 +280,14 @@ struct VesBatchProver {
 }
 
 impl VesBatchProver {
-    fn new(options: ProofOptions, pub_inputs: BatchPublicInputs) -> Self {
-        Self {
-            options: options.to_winterfell(),
+    fn try_new(options: ProofOptions, pub_inputs: BatchPublicInputs) -> BatchResult<Self> {
+        let options = options
+            .try_to_winterfell()
+            .map_err(|e| BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}")))?;
+        Ok(Self {
+            options,
             pub_inputs,
-        }
+        })
     }
 }
 
@@ -327,44 +327,17 @@ impl Prover for VesBatchProver {
         aux_rand_elements: Option<winter_air::AuxRandElements<E>>,
         composition_coefficients: winter_air::ConstraintCompositionCoefficients<E>,
     ) -> Self::ConstraintEvaluator<'a, E> {
-        winter_prover::DefaultConstraintEvaluator::new(air, aux_rand_elements, composition_coefficients)
+        winter_prover::DefaultConstraintEvaluator::new(
+            air,
+            aux_rand_elements,
+            composition_coefficients,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prover::witness::BatchWitnessBuilder;
-    use crate::state::BatchMetadata;
-    use ves_stark_primitives::public_inputs::{CompliancePublicInputs, PolicyParams, compute_policy_hash};
-    use uuid::Uuid;
-
-    fn sample_public_inputs(threshold: u64, idx: usize) -> CompliancePublicInputs {
-        let policy_id = "aml.threshold";
-        let params = PolicyParams::threshold(threshold);
-        let hash = compute_policy_hash(policy_id, &params).unwrap();
-
-        CompliancePublicInputs {
-            event_id: Uuid::new_v4(),
-            tenant_id: Uuid::new_v4(),
-            store_id: Uuid::new_v4(),
-            sequence_number: idx as u64,
-            payload_kind: 1,
-            payload_plain_hash: "0".repeat(64),
-            payload_cipher_hash: "0".repeat(64),
-            event_signing_hash: "0".repeat(64),
-            policy_id: policy_id.to_string(),
-            policy_params: params,
-            policy_hash: hash.to_hex(),
-        }
-    }
-
-    fn sample_policy_hash(threshold: u64) -> [Felt; 8] {
-        let policy_id = "aml.threshold";
-        let params = PolicyParams::threshold(threshold);
-        let hash = compute_policy_hash(policy_id, &params).unwrap();
-        ves_stark_primitives::hash_to_felts(&hash)
-    }
 
     #[test]
     fn test_prover_creation() {
@@ -380,35 +353,4 @@ mod tests {
         let config = BatchProverConfig::large_batch();
         assert_eq!(config.max_batch_size, 128);
     }
-
-    // Integration test - uncomment when AIR is fully implemented
-    // #[test]
-    // fn test_batch_proof_generation() {
-    //     let threshold = 10000u64;
-    //     let policy_hash = sample_policy_hash(threshold);
-    //     let metadata = BatchMetadata::new(
-    //         Uuid::new_v4(),
-    //         Uuid::new_v4(),
-    //         Uuid::new_v4(),
-    //         0,
-    //         7,
-    //     );
-    //
-    //     let mut builder = BatchWitnessBuilder::new()
-    //         .metadata(metadata)
-    //         .policy_hash(policy_hash)
-    //         .policy_limit(threshold);
-    //
-    //     for i in 0..8 {
-    //         let inputs = sample_public_inputs(threshold, i);
-    //         builder = builder.add_event(5000, inputs);
-    //     }
-    //
-    //     let witness = builder.build().unwrap();
-    //     let prover = BatchProver::new();
-    //     let proof = prover.prove(&witness).unwrap();
-    //
-    //     assert!(proof.metadata.all_compliant);
-    //     assert_eq!(proof.metadata.num_events, 8);
-    // }
 }

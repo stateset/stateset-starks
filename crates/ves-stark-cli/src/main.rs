@@ -22,15 +22,16 @@ use std::path::PathBuf;
 use std::time::Instant;
 use uuid::Uuid;
 
-use ves_stark_primitives::public_inputs::{CompliancePublicInputs, PolicyParams, compute_policy_hash};
-use ves_stark_primitives::{Felt, hash_to_felts};
-use ves_stark_prover::{ComplianceProver, ComplianceWitness, ComplianceProof, Policy};
+use ves_stark_primitives::public_inputs::{
+    compute_policy_hash, CompliancePublicInputs, PolicyParams,
+};
+use ves_stark_primitives::{hash_to_felts, Felt};
+use ves_stark_prover::{ComplianceProof, ComplianceProver, ComplianceWitness, Policy};
 use ves_stark_verifier::verify_compliance_proof;
 
 // Batch proving imports
 use ves_stark_batch::{
-    BatchProver, BatchProverConfig, BatchWitnessBuilder, BatchMetadata,
-    BatchVerifier, BatchStateRoot,
+    BatchMetadata, BatchProver, BatchStateRoot, BatchVerifier, BatchWitnessBuilder,
 };
 
 /// Policy type for CLI
@@ -245,7 +246,11 @@ fn main() -> Result<()> {
 
         Commands::Inspect { proof } => inspect(proof),
 
-        Commands::GenerateInputs { limit, policy, output } => generate_inputs(limit, policy, output),
+        Commands::GenerateInputs {
+            limit,
+            policy,
+            output,
+        } => generate_inputs(limit, policy, output),
 
         Commands::Benchmark {
             count,
@@ -268,7 +273,13 @@ fn main() -> Result<()> {
             limit,
             include_violations,
             output_dir,
-        } => run_sequencer(num_events, batch_size, limit, include_violations, output_dir),
+        } => run_sequencer(
+            num_events,
+            batch_size,
+            limit,
+            include_violations,
+            output_dir,
+        ),
     }
 }
 
@@ -297,15 +308,19 @@ fn prove(
     let public_inputs = if let Some(path) = inputs_path {
         let contents = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read inputs file: {}", path.display()))?;
-        serde_json::from_str(&contents)
-            .with_context(|| "Failed to parse public inputs JSON")?
+        serde_json::from_str(&contents).with_context(|| "Failed to parse public inputs JSON")?
     } else {
         generate_random_public_inputs(limit, policy_type)?
     };
 
     eprintln!("Generating proof...");
     eprintln!("  Policy: {}", policy_type.policy_id());
-    eprintln!("  Amount: {} {} {}", amount, policy_type.comparison_desc(), limit);
+    eprintln!(
+        "  Amount: {} {} {}",
+        amount,
+        policy_type.comparison_desc(),
+        limit
+    );
     eprintln!("  Event ID: {}", public_inputs.event_id);
 
     let start = Instant::now();
@@ -315,7 +330,8 @@ fn prove(
     let prover = ComplianceProver::with_policy(policy);
 
     // Generate proof
-    let proof = prover.prove(&witness)
+    let proof = prover
+        .prove(&witness)
         .map_err(|e| anyhow::anyhow!("Proof generation failed: {:?}", e))?;
 
     let elapsed = start.elapsed();
@@ -362,19 +378,27 @@ fn prove(
     Ok(())
 }
 
-fn verify(proof_path: PathBuf, inputs_path: PathBuf, limit: u64, policy_type: PolicyType) -> Result<()> {
+fn verify(
+    proof_path: PathBuf,
+    inputs_path: PathBuf,
+    limit: u64,
+    policy_type: PolicyType,
+) -> Result<()> {
     // Load public inputs
     let inputs_str = fs::read_to_string(&inputs_path)
         .with_context(|| format!("Failed to read inputs file: {}", inputs_path.display()))?;
-    let public_inputs: CompliancePublicInputs = serde_json::from_str(&inputs_str)
-        .with_context(|| "Failed to parse public inputs JSON")?;
+    let public_inputs: CompliancePublicInputs =
+        serde_json::from_str(&inputs_str).with_context(|| "Failed to parse public inputs JSON")?;
 
     // Load proof
     let proof_str = fs::read_to_string(&proof_path)
         .with_context(|| format!("Failed to read proof file: {}", proof_path.display()))?;
 
     // Try to parse as JSON first, then as raw base64
-    let (proof_bytes, witness_commitment): (Vec<u8>, [u64; 4]) = if proof_str.trim().starts_with('{') {
+    let (proof_bytes, witness_commitment): (Vec<u8>, [u64; 4]) = if proof_str
+        .trim()
+        .starts_with('{')
+    {
         let json: serde_json::Value = serde_json::from_str(&proof_str)?;
         let b64 = json["proof_b64"]
             .as_str()
@@ -383,16 +407,25 @@ fn verify(proof_path: PathBuf, inputs_path: PathBuf, limit: u64, policy_type: Po
 
         // Load witness commitment from JSON
         let commitment = if let Some(wc) = json.get("witness_commitment") {
-            let arr = wc.as_array()
+            let arr = wc
+                .as_array()
                 .ok_or_else(|| anyhow::anyhow!("witness_commitment must be an array"))?;
             if arr.len() != 4 {
                 anyhow::bail!("witness_commitment must have exactly 4 elements");
             }
             [
-                arr[0].as_u64().ok_or_else(|| anyhow::anyhow!("Invalid commitment element"))?,
-                arr[1].as_u64().ok_or_else(|| anyhow::anyhow!("Invalid commitment element"))?,
-                arr[2].as_u64().ok_or_else(|| anyhow::anyhow!("Invalid commitment element"))?,
-                arr[3].as_u64().ok_or_else(|| anyhow::anyhow!("Invalid commitment element"))?,
+                arr[0]
+                    .as_u64()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid commitment element"))?,
+                arr[1]
+                    .as_u64()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid commitment element"))?,
+                arr[2]
+                    .as_u64()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid commitment element"))?,
+                arr[3]
+                    .as_u64()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid commitment element"))?,
             ]
         } else {
             anyhow::bail!("Missing witness_commitment in proof JSON");
@@ -413,8 +446,9 @@ fn verify(proof_path: PathBuf, inputs_path: PathBuf, limit: u64, policy_type: Po
 
     // Verify with explicit policy parameters (verifier will check they match public inputs)
     let policy = policy_type.to_policy(limit);
-    let result = verify_compliance_proof(&proof_bytes, &public_inputs, &policy, &witness_commitment)
-        .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
+    let result =
+        verify_compliance_proof(&proof_bytes, &public_inputs, &policy, &witness_commitment)
+            .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
 
     let elapsed = start.elapsed();
 
@@ -468,7 +502,10 @@ fn inspect(proof_path: PathBuf) -> Result<()> {
                 println!("  Trace Length: {}", trace_len);
             }
             if let Some(version) = metadata.get("prover_version") {
-                println!("  Prover Version: {}", version.as_str().unwrap_or("unknown"));
+                println!(
+                    "  Prover Version: {}",
+                    version.as_str().unwrap_or("unknown")
+                );
             }
         }
 
@@ -477,7 +514,10 @@ fn inspect(proof_path: PathBuf) -> Result<()> {
                 println!("  Event ID: {}", event_id.as_str().unwrap_or("unknown"));
             }
             if let Some(policy_id) = inputs.get("policyId") {
-                println!("  Input Policy: {}", policy_id.as_str().unwrap_or("unknown"));
+                println!(
+                    "  Input Policy: {}",
+                    policy_id.as_str().unwrap_or("unknown")
+                );
             }
         }
 
@@ -504,7 +544,11 @@ fn inspect(proof_path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn generate_inputs(limit: u64, policy_type: PolicyType, output_path: Option<PathBuf>) -> Result<()> {
+fn generate_inputs(
+    limit: u64,
+    policy_type: PolicyType,
+    output_path: Option<PathBuf>,
+) -> Result<()> {
     let inputs = generate_random_public_inputs(limit, policy_type)?;
     let json = serde_json::to_string_pretty(&inputs)?;
 
@@ -519,7 +563,10 @@ fn generate_inputs(limit: u64, policy_type: PolicyType, output_path: Option<Path
     Ok(())
 }
 
-fn generate_random_public_inputs(limit: u64, policy_type: PolicyType) -> Result<CompliancePublicInputs> {
+fn generate_random_public_inputs(
+    limit: u64,
+    policy_type: PolicyType,
+) -> Result<CompliancePublicInputs> {
     let policy_id = policy_type.policy_id();
     let params = policy_type.create_policy_params(limit);
     let hash = compute_policy_hash(policy_id, &params)?;
@@ -571,7 +618,8 @@ fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType)
 
         // Time proof generation
         let start = Instant::now();
-        let proof = prover.prove(&witness)
+        let proof = prover
+            .prove(&witness)
             .map_err(|e| anyhow::anyhow!("Proof generation failed: {:?}", e))?;
         let prove_time = start.elapsed();
         prove_times.push(prove_time);
@@ -580,8 +628,13 @@ fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType)
         // Time verification (use the same policy parameters as the inputs)
         let verify_policy = policy.clone();
         let start = Instant::now();
-        let result = verify_compliance_proof(&proof.proof_bytes, &inputs, &verify_policy, &proof.witness_commitment)
-            .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
+        let result = verify_compliance_proof(
+            &proof.proof_bytes,
+            &inputs,
+            &verify_policy,
+            &proof.witness_commitment,
+        )
+        .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
         let verify_time = start.elapsed();
         verify_times.push(verify_time);
 
@@ -620,7 +673,11 @@ fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType)
     println!("  Max: {:?}", max_verify);
     println!();
     println!("Proof Size:");
-    println!("  Average: {} bytes ({:.2} KB)", avg_size, avg_size as f64 / 1024.0);
+    println!(
+        "  Average: {} bytes ({:.2} KB)",
+        avg_size,
+        avg_size as f64 / 1024.0
+    );
     println!("  Min: {} bytes", min_size);
     println!("  Max: {} bytes", max_size);
 
@@ -703,7 +760,8 @@ fn batch_prove(num_events: usize, limit: u64, output_path: Option<PathBuf>) -> R
     println!(" Done");
     println!();
 
-    let witness = builder.build()
+    let witness = builder
+        .build()
         .map_err(|e| anyhow::anyhow!("Failed to build witness: {:?}", e))?;
 
     println!("Witness built:");
@@ -716,7 +774,8 @@ fn batch_prove(num_events: usize, limit: u64, output_path: Option<PathBuf>) -> R
     let start = Instant::now();
 
     let prover = BatchProver::new();
-    let (proof, new_state_root) = prover.prove_and_get_root(&witness)
+    let (proof, _new_state_root) = prover
+        .prove_and_get_root(&witness)
         .map_err(|e| anyhow::anyhow!("Batch proof generation failed: {:?}", e))?;
 
     let elapsed = start.elapsed();
@@ -724,7 +783,11 @@ fn batch_prove(num_events: usize, limit: u64, output_path: Option<PathBuf>) -> R
     println!();
     println!("Batch Proof Generated!");
     println!("  Proving time: {:?}", elapsed);
-    println!("  Proof size: {} bytes ({:.2} KB)", proof.metadata.proof_size, proof.metadata.proof_size as f64 / 1024.0);
+    println!(
+        "  Proof size: {} bytes ({:.2} KB)",
+        proof.metadata.proof_size,
+        proof.metadata.proof_size as f64 / 1024.0
+    );
     println!("  Trace length: {}", proof.metadata.trace_length);
     println!("  Proof hash: {}...", &proof.proof_hash[..16]);
     println!();
@@ -813,10 +876,11 @@ fn batch_verify(proof_path: PathBuf) -> Result<()> {
         num_events,
         all_compliant,
         [Felt::new(0); 8], // policy_hash placeholder
-        10000, // policy_limit placeholder
+        10000,             // policy_limit placeholder
     );
 
-    let result = verifier.verify(&proof_bytes, &pub_inputs)
+    let result = verifier
+        .verify(&proof_bytes, &pub_inputs)
         .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
 
     let elapsed = start.elapsed();
@@ -825,9 +889,11 @@ fn batch_verify(proof_path: PathBuf) -> Result<()> {
         println!();
         println!("Batch Proof VALID!");
         println!("  Verification time: {:?}", elapsed);
-        println!("  State transition verified: {} -> {}",
+        println!(
+            "  State transition verified: {} -> {}",
             format!("{:?}", prev_state_root),
-            format!("{:?}", new_state_root));
+            format!("{:?}", new_state_root)
+        );
         Ok(())
     } else {
         println!();
@@ -929,7 +995,11 @@ fn run_sequencer(
         let events_in_batch = (num_events - total_events_processed).min(batch_size);
 
         println!("--- Batch {} ---", batch_num);
-        println!("  Events: {} - {}", total_events_processed, total_events_processed + events_in_batch - 1);
+        println!(
+            "  Events: {} - {}",
+            total_events_processed,
+            total_events_processed + events_in_batch - 1
+        );
 
         // Create metadata for this batch
         let metadata = BatchMetadata::with_ids(
@@ -972,9 +1042,13 @@ fn run_sequencer(
             }
         }
 
-        println!("  Compliant: {}, Violations: {}", compliant_count, violation_count);
+        println!(
+            "  Compliant: {}, Violations: {}",
+            compliant_count, violation_count
+        );
 
-        let witness = builder.build()
+        let witness = builder
+            .build()
             .map_err(|e| anyhow::anyhow!("Failed to build witness: {:?}", e))?;
 
         // Generate batch proof
@@ -983,14 +1057,18 @@ fn run_sequencer(
 
         let start = Instant::now();
         let prover = BatchProver::new();
-        let (proof, new_state_root) = prover.prove_and_get_root(&witness)
+        let (proof, new_state_root) = prover
+            .prove_and_get_root(&witness)
             .map_err(|e| anyhow::anyhow!("Batch proof failed: {:?}", e))?;
         let prove_time = start.elapsed();
 
         total_proving_time += prove_time;
         total_proof_size += proof.metadata.proof_size;
 
-        println!("Done! ({:?}, {} bytes)", prove_time, proof.metadata.proof_size);
+        println!(
+            "Done! ({:?}, {} bytes)",
+            prove_time, proof.metadata.proof_size
+        );
 
         // Verify the proof
         print!("  Verifying... ");
@@ -1012,7 +1090,8 @@ fn run_sequencer(
         );
 
         let start = Instant::now();
-        let result = verifier.verify(&proof.proof_bytes, &pub_inputs)
+        let result = verifier
+            .verify(&proof.proof_bytes, &pub_inputs)
             .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
         let verify_time = start.elapsed();
 
@@ -1024,9 +1103,10 @@ fn run_sequencer(
         }
 
         // Update state
-        println!("  State: {:?} -> {:?}",
-            current_state_root.root,
-            new_state_root.root);
+        println!(
+            "  State: {:?} -> {:?}",
+            current_state_root.root, new_state_root.root
+        );
 
         // Save proof if output directory specified
         if let Some(ref dir) = output_dir {
@@ -1058,8 +1138,15 @@ fn run_sequencer(
     println!("  Total events: {}", total_events_processed);
     println!("  Total batches: {}", batch_num);
     println!("  Total proving time: {:?}", total_proving_time);
-    println!("  Avg proving time/batch: {:?}", total_proving_time / batch_num as u32);
-    println!("  Total proof size: {} bytes ({:.2} KB)", total_proof_size, total_proof_size as f64 / 1024.0);
+    println!(
+        "  Avg proving time/batch: {:?}",
+        total_proving_time / batch_num as u32
+    );
+    println!(
+        "  Total proof size: {} bytes ({:.2} KB)",
+        total_proof_size,
+        total_proof_size as f64 / 1024.0
+    );
     println!("  Final state root: {:?}", current_state_root.root);
     println!();
 

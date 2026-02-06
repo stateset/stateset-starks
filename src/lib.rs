@@ -25,8 +25,8 @@
 //! ```
 
 // Re-export sub-crates
-pub use ves_stark_primitives as primitives;
 pub use ves_stark_air as air;
+pub use ves_stark_client as client;
+pub use ves_stark_primitives as primitives;
 pub use ves_stark_prover as prover;
 pub use ves_stark_verifier as verifier;
-pub use ves_stark_client as client;

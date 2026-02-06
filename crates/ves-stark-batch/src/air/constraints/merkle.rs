@@ -3,8 +3,8 @@
 //! These constraints verify the correct construction of the Merkle tree
 //! from event leaves to the event tree root.
 
-use winter_math::FieldElement;
 use crate::air::trace_layout::batch_cols;
+use winter_math::FieldElement;
 
 /// Evaluate Merkle tree construction constraints
 ///

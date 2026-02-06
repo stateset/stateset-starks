@@ -19,21 +19,18 @@ In our context: If the verifier accepts a proof, then with overwhelming probabil
 | Category | Count | Degree | Purpose |
 |----------|-------|--------|---------|
 | Round counter | 1 | 1 | Trace length enforcement |
-| Amount consistency | 8 | 1 | Amount constant across rows |
-| Threshold consistency | 8 | 1 | Threshold constant across rows |
-| Public input binding | 47 | 1 | Public inputs constant across rows |
-| Amount bit binary (limbs 0-1) | 64 | 2 | `b * (1-b) = 0` for all bits |
-| Amount bit consistency (limbs 0-1) | 64 | 1 | Bits constant across rows |
-| Amount recomposition (limbs 0-1) | 2 | 1 | `limb = sum(bit[i] * 2^i)` |
-| Diff bit binary (limbs 0-1) | 64 | 2 | `b * (1-b) = 0` for all bits |
-| Diff bit consistency (limbs 0-1) | 64 | 1 | Bits constant across rows |
-| Diff recomposition (limbs 0-1) | 2 | 1 | `diff = sum(bit[i] * 2^i)` |
-| Borrow consistency (limbs 0-1) | 2 | 1 | Borrows constant across rows |
-| Borrow binary (limbs 0-1) | 2 | 2 | `b * (1-b) = 0` for borrows |
-| Subtraction constraints (limbs 0-1) | 2 | 1 | Enforce `threshold - amount = diff + borrow` |
+| Amount bit binary (limbs 0-1, gated) | 64 | 3 | `b * (1-b) = 0` at row 0 |
+| Amount recomposition (limbs 0-1, gated) | 2 | 2 | `limb = sum(bit[i] * 2^i)` at row 0 |
+| Diff bit binary (limbs 0-1, gated) | 64 | 3 | `b * (1-b) = 0` at row 0 |
+| Diff recomposition (limbs 0-1, gated) | 2 | 2 | `diff = sum(bit[i] * 2^i)` at row 0 |
+| Borrow binary (limbs 0-1, gated) | 2 | 3 | `b * (1-b) = 0` at row 0 |
+| Subtraction constraints (limbs 0-1, gated) | 2 | 2 | Enforce `threshold - amount = diff + borrow` |
 | Rescue permutation transitions | 12 | 9 | Rescue-Prime rounds |
 | Rescue init binding | 8 | 2 | Bind amount limbs to Rescue state |
-| **Total** | **350** | max 9 | |
+| **Total** | **157** | max 9 | |
+
+**Note**: Comparison constraints are gated by the `rescue_init` selector (1 only at row 0). Padding
+rows may contain arbitrary values; only row 0 is required to satisfy the comparison gadget.
 
 ### Boundary Assertions
 
@@ -46,7 +43,7 @@ In our context: If the verifier accepts a proof, then with overwhelming probabil
 | upper_amount_limbs | 0 | AMOUNT_START+2..8 | 0 | Amount fits in u64 |
 | upper_limit_limbs | 0 | THRESHOLD_START+2..8 | 0 | Limit fits in u64 |
 | upper_diff_limbs | 0 | DIFF_START+2..8 | 0 | Diff fits in u64 |
-| final_borrow | last | BORROW_START+1 | 0 | Enforce amount <= limit |
+| final_borrow | 0 | BORROW_START+1 | 0 | Enforce amount <= limit |
 | rescue_domain | 0 | RESCUE_STATE+8..12 | 8, 0...0 | Domain separator + padding |
 | rescue_init | 0 | RESCUE_STATE+0..7 | amount_limbs | Initialize hash |
 | rescue_output | 14 | RESCUE_STATE+0..3 | commitment | Hash output matches |
@@ -60,12 +57,14 @@ In our context: If the verifier accepts a proof, then with overwhelming probabil
 
 **Proof**:
 1. For limbs 0-1, there exist 32 trace columns `b[i][0..31]`
-2. Binary constraints enforce: `b[i][j] * (1 - b[i][j]) = 0` for all j
+2. Binary constraints enforce: `rescue_init * b[i][j] * (1 - b[i][j]) = 0` for all j
 3. This means each `b[i][j]` is exactly 0 or 1 in the field
-4. Recomposition constraint: `L[i] = sum(b[i][j] * 2^j for j in 0..32)`
+4. Recomposition constraint (gated): `rescue_init * (L[i] - sum(b[i][j] * 2^j)) = 0`
 5. If all bits are 0 or 1, the sum is at most `2^32 - 1`
 6. Therefore `L[i] < 2^32` for i in {0,1}
 7. Limbs 2-7 are boundary-asserted to 0, which is a valid u32
+
+These constraints are enforced at row 0 via the `rescue_init` selector.
 
 **Security**: Breaking requires finding non-binary field element satisfying `x * (1-x) = 0`, which has only solutions {0, 1} in any field.
 
@@ -77,19 +76,19 @@ In our context: If the verifier accepts a proof, then with overwhelming probabil
 
 For limbs 0-1 (u64 amounts), the prover supplies `diff[0..1]` and `borrow[0..1]` such that:
 
-1. **Limb 0**:
+1. **Limb 0** (gated):
    ```
-   amount0 + diff0 - limit0 - borrow0 * 2^32 = 0
+   rescue_init * (amount0 + diff0 - limit0 - borrow0 * 2^32) = 0
    ```
-2. **Limb 1**:
+2. **Limb 1** (gated):
    ```
-   amount1 + diff1 + borrow0 - limit1 - borrow1 * 2^32 = 0
+   rescue_init * (amount1 + diff1 + borrow0 - limit1 - borrow1 * 2^32) = 0
    ```
-3. **Range and binary checks**:
+3. **Range and binary checks** (gated):
    - `diff0` and `diff1` are range-checked via bit decomposition
    - `borrow0` and `borrow1` are constrained to {0,1}
 4. **Final borrow must be zero**:
-   - Boundary assertion enforces `borrow1 = 0` at the last row
+   - Boundary assertion enforces `borrow1 = 0` at row 0
 
 If `borrow1 = 0`, the subtraction does not underflow, which implies `amount <= limit`.
 For strict policies (AML threshold), the AIR uses `limit = threshold - 1`, so `amount <= limit`
@@ -205,7 +204,7 @@ For each constraint category, verify:
 - [ ] **Rescue rounds**: All 14 half-rounds constrained
 - [ ] **Rescue output**: Output matches commitment
 - [ ] **Boundary assertions**: All public inputs bound
-- [ ] **Consistency**: All values constant where required
+- [ ] **Row-0 gating**: Comparison gadget enforced only when `rescue_init = 1`
 
 ## References
 

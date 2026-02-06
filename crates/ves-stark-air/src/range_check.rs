@@ -40,7 +40,7 @@
 //! For production use, full binary decomposition or lookup arguments should
 //! be implemented to prevent malicious witness attacks.
 
-use ves_stark_primitives::{Felt, felt_from_u64, FELT_ZERO, FELT_ONE};
+use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
 
 /// Maximum value for a u32 limb
 pub const U32_MAX: u64 = 0xFFFFFFFF;
@@ -54,9 +54,9 @@ pub const U32_BITS: usize = 32;
 /// Index 0 is the LSB, index 31 is the MSB.
 pub fn decompose_u32(value: u32) -> [Felt; U32_BITS] {
     let mut bits = [FELT_ZERO; U32_BITS];
-    for i in 0..U32_BITS {
+    for (i, bit) in bits.iter_mut().enumerate() {
         if (value >> i) & 1 == 1 {
-            bits[i] = FELT_ONE;
+            *bit = FELT_ONE;
         }
     }
     bits
@@ -70,9 +70,9 @@ pub fn recompose_u32(bits: &[Felt; U32_BITS]) -> Felt {
     let mut power = FELT_ONE;
     let two = felt_from_u64(2);
 
-    for i in 0..U32_BITS {
-        result = result + bits[i] * power;
-        power = power * two;
+    for &bit in bits.iter() {
+        result += bit * power;
+        power *= two;
     }
     result
 }
@@ -95,8 +95,8 @@ pub fn binary_constraint(b: Felt) -> Felt {
 pub fn u32_range_check(limb: Felt, bits: &[Felt; U32_BITS]) -> ([Felt; U32_BITS], Felt) {
     // Binary constraints
     let mut binary_constraints = [FELT_ZERO; U32_BITS];
-    for i in 0..U32_BITS {
-        binary_constraints[i] = binary_constraint(bits[i]);
+    for (out, &bit) in binary_constraints.iter_mut().zip(bits.iter()) {
+        *out = binary_constraint(bit);
     }
 
     // Recomposition constraint

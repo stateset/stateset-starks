@@ -2,8 +2,8 @@
 //!
 //! This implements a STARK-friendly Merkle tree using Rescue-Prime hash.
 
-use ves_stark_primitives::{Felt, FELT_ZERO, felt_from_u64, rescue::rescue_hash};
 use crate::error::{BatchError, BatchResult};
+use ves_stark_primitives::{felt_from_u64, rescue::rescue_hash, Felt, FELT_ZERO};
 
 /// A leaf in the event Merkle tree
 #[derive(Debug, Clone)]
@@ -33,7 +33,11 @@ impl EventLeaf {
             event_id,
             amount_commitment,
             policy_hash,
-            compliance_flag: if is_compliant { felt_from_u64(1) } else { FELT_ZERO },
+            compliance_flag: if is_compliant {
+                felt_from_u64(1)
+            } else {
+                FELT_ZERO
+            },
         }
     }
 
@@ -168,7 +172,11 @@ impl EventMerkleTree {
 
         // Walk up the tree collecting siblings
         for level in 0..self.levels.len() - 1 {
-            let sibling_index = if index % 2 == 0 { index + 1 } else { index - 1 };
+            let sibling_index = if index.is_multiple_of(2) {
+                index + 1
+            } else {
+                index - 1
+            };
 
             if let Some(level_nodes) = self.levels.get(level) {
                 if sibling_index < level_nodes.len() {
@@ -178,7 +186,7 @@ impl EventMerkleTree {
                 }
             }
 
-            path_indices.push(index % 2 == 0); // true = left child, false = right child
+            path_indices.push(index.is_multiple_of(2)); // true = left child, false = right child
             index /= 2;
         }
 
@@ -190,11 +198,7 @@ impl EventMerkleTree {
     }
 
     /// Verify a Merkle proof
-    pub fn verify_proof(
-        root: &[Felt; 4],
-        leaf_hash: &[Felt; 4],
-        proof: &MerkleProof,
-    ) -> bool {
+    pub fn verify_proof(root: &[Felt; 4], leaf_hash: &[Felt; 4], proof: &MerkleProof) -> bool {
         let mut current_hash = *leaf_hash;
 
         for (sibling, is_left) in proof.siblings.iter().zip(proof.path_indices.iter()) {
@@ -264,8 +268,8 @@ mod tests {
         let tree = EventMerkleTree::from_leaves(leaves).unwrap();
 
         assert_eq!(tree.num_leaves(), 1);
-        // Single leaf padded to 2, so depth is 1
-        assert!(tree.depth() >= 0);
+        // Single leaf is already a power of two, so there are no internal levels.
+        assert_eq!(tree.depth(), 0);
     }
 
     #[test]

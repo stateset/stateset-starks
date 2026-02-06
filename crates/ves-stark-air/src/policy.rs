@@ -6,10 +6,10 @@
 use crate::policies::aml_threshold::AmlThresholdPolicy;
 use crate::policies::order_total_cap::OrderTotalCapPolicy;
 use crate::policies::policy_ids;
-use ves_stark_primitives::{Felt, FELT_ZERO, felt_from_u64};
-use ves_stark_primitives::public_inputs::PolicyParams;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use ves_stark_primitives::public_inputs::PolicyParams;
+use ves_stark_primitives::{felt_from_u64, Felt, FELT_ZERO};
 
 /// Comparison type for policy validation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,13 +39,9 @@ pub enum PolicyError {
 #[serde(tag = "type")]
 pub enum Policy {
     /// AML threshold policy (amount < threshold)
-    AmlThreshold {
-        threshold: u64,
-    },
+    AmlThreshold { threshold: u64 },
     /// Order total cap policy (amount <= cap)
-    OrderTotalCap {
-        cap: u64,
-    },
+    OrderTotalCap { cap: u64 },
 }
 
 impl Policy {
@@ -107,7 +103,10 @@ impl Policy {
     }
 
     /// Parse a policy from public input policy id + params.
-    pub fn from_public_inputs(policy_id: &str, policy_params: &PolicyParams) -> Result<Self, PolicyError> {
+    pub fn from_public_inputs(
+        policy_id: &str,
+        policy_params: &PolicyParams,
+    ) -> Result<Self, PolicyError> {
         match policy_id {
             policy_ids::AML_THRESHOLD => {
                 let threshold = policy_params
@@ -162,7 +161,9 @@ impl Policy {
 
 impl From<AmlThresholdPolicy> for Policy {
     fn from(policy: AmlThresholdPolicy) -> Self {
-        Policy::AmlThreshold { threshold: policy.threshold }
+        Policy::AmlThreshold {
+            threshold: policy.threshold,
+        }
     }
 }
 
@@ -212,7 +213,10 @@ mod tests {
         assert_eq!(policy.effective_limit().unwrap(), 10);
 
         let policy = Policy::aml_threshold(0);
-        assert!(matches!(policy.effective_limit(), Err(PolicyError::InvalidThreshold)));
+        assert!(matches!(
+            policy.effective_limit(),
+            Err(PolicyError::InvalidThreshold)
+        ));
     }
 
     #[test]

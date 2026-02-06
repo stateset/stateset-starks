@@ -5,9 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::BatchError;
 use crate::prover::BatchProof;
 use crate::public_inputs::BatchPublicInputs;
-use crate::error::BatchError;
 
 /// Serializable batch proof with public inputs
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,7 +150,9 @@ impl SerializableBatchProof {
     /// Deserialize from compact binary format
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, BatchError> {
         if bytes.len() < 5 {
-            return Err(BatchError::DeserializationFailed("Input too short".to_string()));
+            return Err(BatchError::DeserializationFailed(
+                "Input too short".to_string(),
+            ));
         }
 
         let mut pos = 0;
@@ -159,19 +161,22 @@ impl SerializableBatchProof {
         let version = bytes[pos];
         if version != Self::VERSION {
             return Err(BatchError::DeserializationFailed(format!(
-                "Unsupported version: {}", version
+                "Unsupported version: {}",
+                version
             )));
         }
         pos += 1;
 
         // Proof length
-        let proof_len = u32::from_be_bytes([
-            bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]
-        ]) as usize;
+        let proof_len =
+            u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]])
+                as usize;
         pos += 4;
 
         if bytes.len() < pos + proof_len + 256 {
-            return Err(BatchError::DeserializationFailed("Input too short for proof".to_string()));
+            return Err(BatchError::DeserializationFailed(
+                "Input too short for proof".to_string(),
+            ));
         }
 
         // Proof bytes
@@ -181,8 +186,14 @@ impl SerializableBatchProof {
         // Helper to read u64
         let read_u64 = |pos: &mut usize| -> u64 {
             let val = u64::from_le_bytes([
-                bytes[*pos], bytes[*pos + 1], bytes[*pos + 2], bytes[*pos + 3],
-                bytes[*pos + 4], bytes[*pos + 5], bytes[*pos + 6], bytes[*pos + 7],
+                bytes[*pos],
+                bytes[*pos + 1],
+                bytes[*pos + 2],
+                bytes[*pos + 3],
+                bytes[*pos + 4],
+                bytes[*pos + 5],
+                bytes[*pos + 6],
+                bytes[*pos + 7],
             ]);
             *pos += 8;
             val
@@ -233,8 +244,10 @@ impl SerializableBatchProof {
             prev_state_root,
             new_state_root,
             metadata: crate::prover::BatchProofMetadata {
-                batch_id: format!("{:016x}{:016x}{:016x}{:016x}",
-                    batch_id[0], batch_id[1], batch_id[2], batch_id[3]),
+                batch_id: format!(
+                    "{:016x}{:016x}{:016x}{:016x}",
+                    batch_id[0], batch_id[1], batch_id[2], batch_id[3]
+                ),
                 num_events: num_events as usize,
                 all_compliant: all_compliant == 1,
                 proving_time_ms: 0,
@@ -378,8 +391,7 @@ impl From<SerializableBatchPublicInputs> for BatchPublicInputs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prover::{BatchProofMetadata};
-    use ves_stark_primitives::FELT_ZERO;
+    use crate::prover::BatchProofMetadata;
 
     fn sample_proof() -> BatchProof {
         BatchProof {
@@ -427,8 +439,14 @@ mod tests {
 
         assert_eq!(deserialized.version, SerializableBatchProof::VERSION);
         assert_eq!(deserialized.proof.proof_bytes, proof.proof_bytes);
-        assert_eq!(deserialized.public_inputs.prev_state_root, serializable.public_inputs.prev_state_root);
-        assert_eq!(deserialized.public_inputs.new_state_root, serializable.public_inputs.new_state_root);
+        assert_eq!(
+            deserialized.public_inputs.prev_state_root,
+            serializable.public_inputs.prev_state_root
+        );
+        assert_eq!(
+            deserialized.public_inputs.new_state_root,
+            serializable.public_inputs.new_state_root
+        );
     }
 
     #[test]

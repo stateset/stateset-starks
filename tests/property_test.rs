@@ -7,12 +7,14 @@
 //! - Comparison results match native Rust comparisons
 
 use proptest::prelude::*;
+use uuid::Uuid;
+use ves_stark_primitives::public_inputs::{
+    compute_policy_hash, CompliancePublicInputs, PolicyParams,
+};
+use ves_stark_primitives::rescue::rescue_hash;
+use ves_stark_primitives::{felt_from_u64, Felt};
 use ves_stark_prover::{ComplianceProver, ComplianceWitness, Policy};
 use ves_stark_verifier::verify_compliance_proof;
-use ves_stark_primitives::public_inputs::{CompliancePublicInputs, PolicyParams, compute_policy_hash};
-use ves_stark_primitives::rescue::rescue_hash;
-use ves_stark_primitives::{Felt, felt_from_u64};
-use uuid::Uuid;
 
 // =============================================================================
 // Test Helpers
@@ -60,8 +62,8 @@ fn sample_cap_public_inputs(cap: u64) -> CompliancePublicInputs {
 
 /// Convert u64 amount to limbs for commitment computation
 fn amount_to_limbs(amount: u64) -> [Felt; 8] {
-    let low = (amount & 0xFFFFFFFF) as u64;
-    let high = (amount >> 32) as u64;
+    let low = amount & 0xFFFFFFFF;
+    let high = amount >> 32;
     [
         felt_from_u64(low),
         felt_from_u64(high),
@@ -274,10 +276,8 @@ proptest! {
     #[test]
     fn prop_commitment_is_deterministic(amount in any::<u64>()) {
         let limbs = amount_to_limbs(amount);
-        let input: Vec<Felt> = limbs.iter().cloned().collect();
-
-        let hash1 = rescue_hash(&input);
-        let hash2 = rescue_hash(&input);
+        let hash1 = rescue_hash(&limbs);
+        let hash2 = rescue_hash(&limbs);
 
         prop_assert_eq!(hash1, hash2, "Rescue hash should be deterministic");
     }
@@ -293,11 +293,8 @@ proptest! {
         let limbs1 = amount_to_limbs(amount1);
         let limbs2 = amount_to_limbs(amount2);
 
-        let input1: Vec<Felt> = limbs1.iter().cloned().collect();
-        let input2: Vec<Felt> = limbs2.iter().cloned().collect();
-
-        let hash1 = rescue_hash(&input1);
-        let hash2 = rescue_hash(&input2);
+        let hash1 = rescue_hash(&limbs1);
+        let hash2 = rescue_hash(&limbs2);
 
         // Different inputs should produce different hashes
         // (collision probability is negligible for cryptographic hash)
@@ -311,8 +308,7 @@ proptest! {
     #[test]
     fn prop_zero_amount_commitment(_dummy in 0u8..1) {
         let limbs = amount_to_limbs(0);
-        let input: Vec<Felt> = limbs.iter().cloned().collect();
-        let hash = rescue_hash(&input);
+        let hash = rescue_hash(&limbs);
 
         // Hash should not be all zeros (that would be suspicious)
         let all_zero = hash.iter().all(|&x| x == felt_from_u64(0));
@@ -323,8 +319,7 @@ proptest! {
     #[test]
     fn prop_max_amount_commitment(_dummy in 0u8..1) {
         let limbs = amount_to_limbs(u64::MAX);
-        let input: Vec<Felt> = limbs.iter().cloned().collect();
-        let hash = rescue_hash(&input);
+        let hash = rescue_hash(&limbs);
 
         // Hash should exist and not panic
         prop_assert!(hash.len() == 4);

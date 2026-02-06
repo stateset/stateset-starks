@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use ves_stark_primitives::{Felt, felt_from_u64, rescue::rescue_hash};
+use ves_stark_primitives::{felt_from_u64, rescue::rescue_hash, Felt};
 
 /// Metadata about a batch of compliance events
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,12 +153,7 @@ mod tests {
 
     #[test]
     fn test_metadata_creation() {
-        let metadata = BatchMetadata::with_sequence(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            0,
-            9,
-        );
+        let metadata = BatchMetadata::with_sequence(Uuid::new_v4(), Uuid::new_v4(), 0, 9);
 
         assert_eq!(metadata.num_events(), 10);
         assert!(metadata.timestamp > 0);

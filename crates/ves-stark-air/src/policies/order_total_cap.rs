@@ -13,7 +13,7 @@
 //! - If high limb of amount < high limb of cap, amount <= cap
 //! - If all limbs are equal, amount <= cap (since amount == cap is allowed)
 
-use ves_stark_primitives::{Felt, felt_from_u64, FELT_ZERO, FELT_ONE};
+use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
 
 /// Order Total Cap Policy
 ///
@@ -136,7 +136,11 @@ pub fn compute_comparison_values_lte(amount_limbs: &[Felt; 8], cap_limbs: &[Felt
 
         // Store whether we've determined amount <= cap at this point
         // For LTE, valid if less OR still equal
-        result[7 - i] = if state.is_valid() { FELT_ONE } else { FELT_ZERO };
+        result[7 - i] = if state.is_valid() {
+            FELT_ONE
+        } else {
+            FELT_ZERO
+        };
     }
 
     result
@@ -207,12 +211,24 @@ mod tests {
     fn test_compute_comparison_values_lte() {
         // Test less than
         let amount = [
-            felt_from_u64(1000), felt_from_u64(0), felt_from_u64(0), felt_from_u64(0),
-            felt_from_u64(0), felt_from_u64(0), felt_from_u64(0), felt_from_u64(0),
+            felt_from_u64(1000),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
         ];
         let cap = [
-            felt_from_u64(2000), felt_from_u64(0), felt_from_u64(0), felt_from_u64(0),
-            felt_from_u64(0), felt_from_u64(0), felt_from_u64(0), felt_from_u64(0),
+            felt_from_u64(2000),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
         ];
 
         let comparison = compute_comparison_values_lte(&amount, &cap);
@@ -220,8 +236,14 @@ mod tests {
 
         // Test equal (should also be valid for LTE)
         let amount_eq = [
-            felt_from_u64(2000), felt_from_u64(0), felt_from_u64(0), felt_from_u64(0),
-            felt_from_u64(0), felt_from_u64(0), felt_from_u64(0), felt_from_u64(0),
+            felt_from_u64(2000),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
         ];
 
         let comparison_eq = compute_comparison_values_lte(&amount_eq, &cap);

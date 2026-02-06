@@ -50,13 +50,13 @@
 //! assert!(result.valid);
 //! ```
 
-pub mod state;
 pub mod air;
+pub mod error;
 pub mod prover;
-pub mod verifier;
 pub mod public_inputs;
 pub mod serialization;
-pub mod error;
+pub mod state;
+pub mod verifier;
 
 // Re-exports for convenience
 pub use error::BatchError;
@@ -64,16 +64,15 @@ pub use public_inputs::BatchPublicInputs;
 
 // Prover types
 pub use prover::{
-    BatchProver, BatchProverConfig,
-    BatchWitness, BatchWitnessBuilder, BatchEventWitness,
-    BatchTraceBuilder, BatchProof, BatchProofMetadata,
+    BatchEventWitness, BatchProof, BatchProofMetadata, BatchProver, BatchProverConfig,
+    BatchTraceBuilder, BatchWitness, BatchWitnessBuilder,
 };
 
 // Verifier types
-pub use verifier::{BatchVerifier, BatchVerificationResult, verify_batch_proof};
+pub use verifier::{verify_batch_proof, BatchVerificationResult, BatchVerifier};
 
 // Serialization
 pub use serialization::{SerializableBatchProof, SerializableBatchPublicInputs};
 
 // State types
-pub use state::{BatchStateRoot, EventMerkleTree, EventLeaf, BatchMetadata};
+pub use state::{BatchMetadata, BatchStateRoot, EventLeaf, EventMerkleTree};

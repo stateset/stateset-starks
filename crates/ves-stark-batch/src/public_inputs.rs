@@ -2,7 +2,7 @@
 //!
 //! This module defines the public inputs for batch state transition proofs.
 
-use ves_stark_primitives::{Felt, felt_from_u64, FELT_ZERO, FELT_ONE};
+use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
 use winter_math::ToElements;
 
 /// Public inputs for a batch state transition proof

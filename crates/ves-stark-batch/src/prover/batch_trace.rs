@@ -4,18 +4,18 @@
 //! The trace extends the single-event compliance trace with batch-specific columns.
 
 use rayon::prelude::*;
-use ves_stark_air::trace::{cols as base_cols, TRACE_WIDTH as BASE_TRACE_WIDTH};
 use ves_stark_air::policies::aml_threshold::compute_comparison_values;
-use ves_stark_primitives::{Felt, felt_from_u64, FELT_ZERO, FELT_ONE};
+use ves_stark_air::trace::cols as base_cols;
 use ves_stark_primitives::rescue::{rescue_hash, STATE_WIDTH as RESCUE_STATE_WIDTH};
+use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
 use winter_prover::TraceTable;
 
 use crate::air::trace_layout::{
-    batch_cols, BatchPhase, BATCH_TRACE_WIDTH, MIN_BATCH_TRACE_LENGTH,
-    ROWS_PER_EVENT, calculate_trace_length,
+    batch_cols, calculate_trace_length, BatchPhase, BASE_TRACE_WIDTH, BATCH_TRACE_WIDTH,
+    MIN_BATCH_TRACE_LENGTH, ROWS_PER_EVENT,
 };
 use crate::error::BatchError;
-use crate::prover::witness::{BatchWitness, BatchEventWitness};
+use crate::prover::witness::{BatchEventWitness, BatchWitness};
 use crate::state::{BatchStateRoot, EventMerkleTree};
 
 /// Decompose a field element (representing a u32 limb) into 32 bits
@@ -23,9 +23,9 @@ fn decompose_to_bits(limb: Felt) -> [Felt; 32] {
     let mut bits = [FELT_ZERO; 32];
     let value = limb.as_int() as u32;
 
-    for i in 0..32 {
+    for (i, bit) in bits.iter_mut().enumerate() {
         if (value >> i) & 1 == 1 {
-            bits[i] = FELT_ONE;
+            *bit = FELT_ONE;
         }
     }
 
@@ -34,8 +34,7 @@ fn decompose_to_bits(limb: Felt) -> [Felt; 32] {
 
 /// Compute a Rescue hash commitment to the witness amount
 fn compute_witness_commitment(amount_limbs: &[Felt; 8]) -> [Felt; RESCUE_STATE_WIDTH] {
-    let hash_input: Vec<Felt> = amount_limbs.iter().cloned().collect();
-    let hash_output = rescue_hash(&hash_input);
+    let hash_output = rescue_hash(amount_limbs);
 
     let mut state = [FELT_ZERO; RESCUE_STATE_WIDTH];
     state[0] = hash_output[0];
@@ -101,7 +100,9 @@ impl BatchTraceBuilder {
         let new_state_root = self.witness.compute_new_state_root();
 
         // Process events in parallel
-        let event_traces: Vec<_> = self.witness.events
+        let event_traces: Vec<_> = self
+            .witness
+            .events
             .par_iter()
             .map(|event| self.build_event_trace(event, &limit_limbs))
             .collect::<Result<Vec<_>, _>>()?;
@@ -120,13 +121,18 @@ impl BatchTraceBuilder {
                 }
 
                 // Copy base trace columns from event trace
-                for col in 0..BASE_TRACE_WIDTH {
-                    trace[col][row] = event_trace.base[col][row_in_event];
+                for (dst_col, src_col) in trace
+                    .iter_mut()
+                    .take(BASE_TRACE_WIDTH)
+                    .zip(event_trace.base.iter())
+                {
+                    dst_col[row] = src_col[row_in_event];
                 }
 
                 // Set batch-specific columns
                 trace[batch_cols::EVENT_INDEX][row] = felt_from_u64(event_idx as u64);
-                trace[batch_cols::NUM_EVENTS][row] = felt_from_u64(self.witness.num_events() as u64);
+                trace[batch_cols::NUM_EVENTS][row] =
+                    felt_from_u64(self.witness.num_events() as u64);
                 trace[batch_cols::EVENT_ROW][row] = felt_from_u64(row_in_event as u64);
                 trace[batch_cols::BATCH_PHASE][row] = BatchPhase::Event.to_felt();
 
@@ -140,7 +146,7 @@ impl BatchTraceBuilder {
                 // Update compliance accumulator at end of each event
                 if row_in_event == ROWS_PER_EVENT - 1 {
                     compliance_accumulator = felt_from_u64(
-                        compliance_accumulator.as_int() * event.compliance_felt().as_int()
+                        compliance_accumulator.as_int() * event.compliance_felt().as_int(),
                     );
                 }
                 trace[batch_cols::COMPLIANCE_ACCUMULATOR][row] = compliance_accumulator;
@@ -159,12 +165,15 @@ impl BatchTraceBuilder {
                 trace[batch_cols::STORE_ID_START + 1][row] = store_id[1];
                 trace[batch_cols::STORE_ID_START + 2][row] = store_id[2];
                 trace[batch_cols::STORE_ID_START + 3][row] = store_id[3];
-                trace[batch_cols::SEQUENCE_START][row] = felt_from_u64(self.witness.metadata.sequence_start);
-                trace[batch_cols::SEQUENCE_END][row] = felt_from_u64(self.witness.metadata.sequence_end);
+                trace[batch_cols::SEQUENCE_START][row] =
+                    felt_from_u64(self.witness.metadata.sequence_start);
+                trace[batch_cols::SEQUENCE_END][row] =
+                    felt_from_u64(self.witness.metadata.sequence_end);
                 trace[batch_cols::TIMESTAMP][row] = felt_from_u64(self.witness.metadata.timestamp);
 
                 // Control flags
-                trace[batch_cols::IS_FIRST_BATCH_ROW][row] = if row == 0 { FELT_ONE } else { FELT_ZERO };
+                trace[batch_cols::IS_FIRST_BATCH_ROW][row] =
+                    if row == 0 { FELT_ONE } else { FELT_ZERO };
                 trace[batch_cols::IS_MERKLE_ROW][row] = FELT_ZERO;
             }
 
@@ -176,7 +185,7 @@ impl BatchTraceBuilder {
             &mut trace,
             current_row,
             &event_tree,
-            &prev_state_root,
+            prev_state_root,
             &new_state_root,
             compliance_accumulator,
             &batch_id,
@@ -189,7 +198,7 @@ impl BatchTraceBuilder {
         current_row = self.fill_finalize_trace(
             &mut trace,
             current_row,
-            &prev_state_root,
+            prev_state_root,
             &new_state_root,
             &event_tree,
             compliance_accumulator,
@@ -203,7 +212,7 @@ impl BatchTraceBuilder {
         self.fill_padding_trace(
             &mut trace,
             current_row,
-            &prev_state_root,
+            prev_state_root,
             &new_state_root,
             &event_tree,
             compliance_accumulator,
@@ -280,9 +289,8 @@ impl BatchTraceBuilder {
             }
 
             // Control flags (adjusted for batch context)
-            base[base_cols::ROUND_COUNTER][row] = felt_from_u64(
-                (event.event_index * ROWS_PER_EVENT + row) as u64
-            );
+            base[base_cols::ROUND_COUNTER][row] =
+                felt_from_u64((event.event_index * ROWS_PER_EVENT + row) as u64);
             base[base_cols::FLAG_IS_FIRST][row] = if row == 0 && event.event_index == 0 {
                 FELT_ONE
             } else {
@@ -349,13 +357,18 @@ impl BatchTraceBuilder {
                     trace[batch_cols::TENANT_ID_START + i][current_row] = tenant_id[i];
                     trace[batch_cols::STORE_ID_START + i][current_row] = store_id[i];
                 }
-                trace[batch_cols::SEQUENCE_START][current_row] = felt_from_u64(self.witness.metadata.sequence_start);
-                trace[batch_cols::SEQUENCE_END][current_row] = felt_from_u64(self.witness.metadata.sequence_end);
-                trace[batch_cols::TIMESTAMP][current_row] = felt_from_u64(self.witness.metadata.timestamp);
+                trace[batch_cols::SEQUENCE_START][current_row] =
+                    felt_from_u64(self.witness.metadata.sequence_start);
+                trace[batch_cols::SEQUENCE_END][current_row] =
+                    felt_from_u64(self.witness.metadata.sequence_end);
+                trace[batch_cols::TIMESTAMP][current_row] =
+                    felt_from_u64(self.witness.metadata.timestamp);
 
                 // Event info (constant from last event)
-                trace[batch_cols::NUM_EVENTS][current_row] = felt_from_u64(self.witness.num_events() as u64);
-                trace[batch_cols::EVENT_INDEX][current_row] = felt_from_u64((self.witness.num_events() - 1) as u64);
+                trace[batch_cols::NUM_EVENTS][current_row] =
+                    felt_from_u64(self.witness.num_events() as u64);
+                trace[batch_cols::EVENT_INDEX][current_row] =
+                    felt_from_u64((self.witness.num_events() - 1) as u64);
 
                 current_row += 1;
             }
@@ -410,11 +423,16 @@ impl BatchTraceBuilder {
                 trace[batch_cols::TENANT_ID_START + i][current_row] = tenant_id[i];
                 trace[batch_cols::STORE_ID_START + i][current_row] = store_id[i];
             }
-            trace[batch_cols::SEQUENCE_START][current_row] = felt_from_u64(self.witness.metadata.sequence_start);
-            trace[batch_cols::SEQUENCE_END][current_row] = felt_from_u64(self.witness.metadata.sequence_end);
-            trace[batch_cols::TIMESTAMP][current_row] = felt_from_u64(self.witness.metadata.timestamp);
-            trace[batch_cols::NUM_EVENTS][current_row] = felt_from_u64(self.witness.num_events() as u64);
-            trace[batch_cols::EVENT_INDEX][current_row] = felt_from_u64((self.witness.num_events() - 1) as u64);
+            trace[batch_cols::SEQUENCE_START][current_row] =
+                felt_from_u64(self.witness.metadata.sequence_start);
+            trace[batch_cols::SEQUENCE_END][current_row] =
+                felt_from_u64(self.witness.metadata.sequence_end);
+            trace[batch_cols::TIMESTAMP][current_row] =
+                felt_from_u64(self.witness.metadata.timestamp);
+            trace[batch_cols::NUM_EVENTS][current_row] =
+                felt_from_u64(self.witness.num_events() as u64);
+            trace[batch_cols::EVENT_INDEX][current_row] =
+                felt_from_u64((self.witness.num_events() - 1) as u64);
 
             current_row += 1;
         }
@@ -458,7 +476,8 @@ impl BatchTraceBuilder {
 
             // Event info
             trace[batch_cols::NUM_EVENTS][row] = felt_from_u64(self.witness.num_events() as u64);
-            trace[batch_cols::EVENT_INDEX][row] = felt_from_u64((self.witness.num_events() - 1) as u64);
+            trace[batch_cols::EVENT_INDEX][row] =
+                felt_from_u64((self.witness.num_events() - 1) as u64);
         }
     }
 
@@ -479,8 +498,10 @@ mod tests {
     use super::*;
     use crate::prover::witness::BatchWitnessBuilder;
     use crate::state::BatchMetadata;
-    use ves_stark_primitives::public_inputs::{CompliancePublicInputs, PolicyParams, compute_policy_hash};
     use uuid::Uuid;
+    use ves_stark_primitives::public_inputs::{
+        compute_policy_hash, CompliancePublicInputs, PolicyParams,
+    };
     use winter_prover::Trace;
 
     fn sample_public_inputs(threshold: u64, idx: usize) -> CompliancePublicInputs {
@@ -514,13 +535,8 @@ mod tests {
     fn test_batch_trace_builder_small() {
         let threshold = 10000u64;
         let policy_hash = sample_policy_hash(threshold);
-        let metadata = BatchMetadata::with_ids(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            0,
-            7,
-        );
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 0, 7);
 
         let mut builder = BatchWitnessBuilder::new()
             .metadata(metadata)
@@ -545,13 +561,8 @@ mod tests {
     fn test_batch_trace_state_roots() {
         let threshold = 10000u64;
         let policy_hash = sample_policy_hash(threshold);
-        let metadata = BatchMetadata::with_ids(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            0,
-            3,
-        );
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 0, 3);
 
         let mut builder = BatchWitnessBuilder::new()
             .metadata(metadata)
@@ -586,13 +597,8 @@ mod tests {
     fn test_batch_trace_compliance_accumulator() {
         let threshold = 10000u64;
         let policy_hash = sample_policy_hash(threshold);
-        let metadata = BatchMetadata::with_ids(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            0,
-            3,
-        );
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 0, 3);
 
         let mut builder = BatchWitnessBuilder::new()
             .metadata(metadata)

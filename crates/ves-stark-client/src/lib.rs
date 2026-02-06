@@ -11,11 +11,14 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let client = SequencerClient::new("http://localhost:8080", "api_key_here");
+//!     let client = SequencerClient::try_new("http://localhost:8080", "api_key_here").unwrap();
 //!
 //!     // Get public inputs for an event
 //!     let event_id = Uuid::new_v4();
-//!     let inputs = client.get_public_inputs(event_id, "aml.threshold", 10000).await.unwrap();
+//!     let inputs = client
+//!         .get_public_inputs_validated(event_id, "aml.threshold", 10000)
+//!         .await
+//!         .unwrap();
 //!     println!("Public inputs: {:?}", inputs);
 //! }
 //! ```

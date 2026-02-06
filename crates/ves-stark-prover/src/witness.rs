@@ -4,11 +4,11 @@
 //! the proof. For the `aml.threshold` policy, this includes the actual
 //! amount value from the encrypted payload.
 
-use ves_stark_primitives::public_inputs::CompliancePublicInputs;
-use ves_stark_primitives::{Felt, felt_from_u64, FELT_ZERO};
-use ves_stark_air::range_check::validate_limbs;
 use crate::error::ProverError;
 use crate::policy::Policy;
+use ves_stark_air::range_check::validate_limbs;
+use ves_stark_primitives::public_inputs::CompliancePublicInputs;
+use ves_stark_primitives::{felt_from_u64, Felt, FELT_ZERO};
 
 /// Witness for compliance proofs
 #[derive(Debug, Clone)]
@@ -47,7 +47,7 @@ impl ComplianceWitness {
             .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?;
         if !policy_hash_valid {
             return Err(ProverError::InvalidPublicInputs(
-                "Policy hash mismatch".to_string()
+                "Policy hash mismatch".to_string(),
             ));
         }
         let inputs_policy = Policy::from_public_inputs(
@@ -67,7 +67,7 @@ impl ComplianceWitness {
         let amount_limbs = self.amount_limbs();
         if !validate_limbs(&amount_limbs) {
             return Err(ProverError::invalid_witness(
-                "Amount limbs contain invalid u32 values"
+                "Amount limbs contain invalid u32 values",
             ));
         }
 
@@ -117,9 +117,11 @@ impl WitnessBuilder {
 
     /// Build the witness
     pub fn build(self) -> Result<ComplianceWitness, ProverError> {
-        let amount = self.amount
+        let amount = self
+            .amount
             .ok_or_else(|| ProverError::invalid_witness("Amount is required"))?;
-        let public_inputs = self.public_inputs
+        let public_inputs = self
+            .public_inputs
             .ok_or_else(|| ProverError::invalid_witness("Public inputs are required"))?;
 
         Ok(ComplianceWitness::new(amount, public_inputs))
@@ -136,8 +138,8 @@ impl Default for WitnessBuilder {
 mod tests {
     use super::*;
     use crate::policy::Policy;
-    use ves_stark_primitives::public_inputs::{PolicyParams, compute_policy_hash};
     use uuid::Uuid;
+    use ves_stark_primitives::public_inputs::{compute_policy_hash, PolicyParams};
 
     fn sample_public_inputs(threshold: u64) -> CompliancePublicInputs {
         let policy_id = "aml.threshold";
@@ -212,18 +214,14 @@ mod tests {
         let threshold = 10000u64;
         let inputs = sample_public_inputs(threshold);
 
-        let result = WitnessBuilder::new()
-            .public_inputs(inputs)
-            .build();
+        let result = WitnessBuilder::new().public_inputs(inputs).build();
 
         assert!(result.is_err());
     }
 
     #[test]
     fn test_witness_builder_missing_public_inputs() {
-        let result = WitnessBuilder::new()
-            .amount(5000)
-            .build();
+        let result = WitnessBuilder::new().amount(5000).build();
 
         assert!(result.is_err());
     }
@@ -300,9 +298,9 @@ mod tests {
 mod proptests {
     use super::*;
     use crate::policy::Policy;
-    use ves_stark_primitives::public_inputs::{PolicyParams, compute_policy_hash};
     use proptest::prelude::*;
     use uuid::Uuid;
+    use ves_stark_primitives::public_inputs::{compute_policy_hash, PolicyParams};
 
     fn sample_public_inputs(threshold: u64) -> CompliancePublicInputs {
         let policy_id = "aml.threshold";

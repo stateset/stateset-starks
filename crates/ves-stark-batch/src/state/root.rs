@@ -4,9 +4,9 @@
 //! - Event Merkle tree root (commitment to all events)
 //! - Batch metadata hash (commitment to batch identity and sequence)
 
-use ves_stark_primitives::{Felt, FELT_ZERO, felt_from_u64};
-use super::merkle::{EventMerkleTree, rescue_hash_pair};
+use super::merkle::{rescue_hash_pair, EventMerkleTree};
 use super::metadata::BatchMetadata;
+use ves_stark_primitives::{felt_from_u64, Felt, FELT_ZERO};
 
 /// The state root for a batch of compliance events
 ///
@@ -24,10 +24,7 @@ impl BatchStateRoot {
     }
 
     /// Compute state root from event tree and metadata
-    pub fn compute(
-        event_tree: &EventMerkleTree,
-        metadata: &BatchMetadata,
-    ) -> Self {
+    pub fn compute(event_tree: &EventMerkleTree, metadata: &BatchMetadata) -> Self {
         let event_root = event_tree.root();
         let metadata_hash = metadata.to_rescue_hash();
 
@@ -37,17 +34,16 @@ impl BatchStateRoot {
     }
 
     /// Compute state root from pre-computed event root and metadata hash
-    pub fn from_components(
-        event_root: &[Felt; 4],
-        metadata_hash: &[Felt; 4],
-    ) -> Self {
+    pub fn from_components(event_root: &[Felt; 4], metadata_hash: &[Felt; 4]) -> Self {
         let state_root = rescue_hash_pair(event_root, metadata_hash);
         Self { root: state_root }
     }
 
     /// Create a zero/genesis state root
     pub fn genesis() -> Self {
-        Self { root: [FELT_ZERO; 4] }
+        Self {
+            root: [FELT_ZERO; 4],
+        }
     }
 
     /// Check if this is the genesis (zero) state root
@@ -67,7 +63,9 @@ impl BatchStateRoot {
 
     /// Convert to hex string for display
     pub fn to_hex(&self) -> String {
-        let bytes: Vec<u8> = self.root.iter()
+        let bytes: Vec<u8> = self
+            .root
+            .iter()
             .flat_map(|f| f.as_int().to_le_bytes())
             .collect();
         hex::encode(bytes)
@@ -105,8 +103,8 @@ impl std::fmt::Display for BatchStateRoot {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::merkle::EventLeaf;
+    use super::*;
     use uuid::Uuid;
 
     fn create_test_leaf(index: usize) -> EventLeaf {
@@ -170,12 +168,7 @@ mod tests {
         let leaves: Vec<EventLeaf> = (0..4).map(|i| create_test_leaf(i)).collect();
         let tree = EventMerkleTree::from_leaves(leaves).unwrap();
 
-        let metadata = BatchMetadata::with_sequence(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            0,
-            3,
-        );
+        let metadata = BatchMetadata::with_sequence(Uuid::new_v4(), Uuid::new_v4(), 0, 3);
 
         let original = BatchStateRoot::compute(&tree, &metadata);
         let hex = original.to_hex();
@@ -192,12 +185,7 @@ mod tests {
         let tree1 = EventMerkleTree::from_leaves(leaves1).unwrap();
         let tree2 = EventMerkleTree::from_leaves(leaves2).unwrap();
 
-        let metadata = BatchMetadata::with_sequence(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            0,
-            3,
-        );
+        let metadata = BatchMetadata::with_sequence(Uuid::new_v4(), Uuid::new_v4(), 0, 3);
 
         let root1 = BatchStateRoot::compute(&tree1, &metadata);
         let root2 = BatchStateRoot::compute(&tree2, &metadata);

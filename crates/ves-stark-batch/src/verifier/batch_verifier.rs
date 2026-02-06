@@ -8,7 +8,7 @@ use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
 use winter_verifier::{verify, AcceptableOptions};
 
 use ves_stark_air::options::ProofOptions;
-use ves_stark_primitives::{Felt, Hash256, felt_from_u64};
+use ves_stark_primitives::{felt_from_u64, Felt, Hash256};
 
 use crate::air::batch_air::BatchComplianceAir;
 use crate::error::BatchError;
@@ -86,9 +86,15 @@ pub fn verify_batch_proof(
 
     // Define acceptable proof options
     let acceptable_options = AcceptableOptions::OptionSet(vec![
-        ProofOptions::default().to_winterfell(),
-        ProofOptions::fast().to_winterfell(),
-        ProofOptions::secure().to_winterfell(),
+        ProofOptions::default()
+            .try_to_winterfell()
+            .map_err(|e| BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}")))?,
+        ProofOptions::fast()
+            .try_to_winterfell()
+            .map_err(|e| BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}")))?,
+        ProofOptions::secure()
+            .try_to_winterfell()
+            .map_err(|e| BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}")))?,
     ]);
 
     // Verify the proof
@@ -147,13 +153,24 @@ pub struct BatchVerifier {
 impl BatchVerifier {
     /// Create a new verifier with default options
     pub fn new() -> Self {
-        Self {
+        Self::try_new().expect("invalid proof options")
+    }
+
+    /// Create a new verifier with default options without panicking
+    pub fn try_new() -> Result<Self, BatchError> {
+        Ok(Self {
             acceptable_options: AcceptableOptions::OptionSet(vec![
-                ProofOptions::default().to_winterfell(),
-                ProofOptions::fast().to_winterfell(),
-                ProofOptions::secure().to_winterfell(),
+                ProofOptions::default().try_to_winterfell().map_err(|e| {
+                    BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}"))
+                })?,
+                ProofOptions::fast().try_to_winterfell().map_err(|e| {
+                    BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}"))
+                })?,
+                ProofOptions::secure().try_to_winterfell().map_err(|e| {
+                    BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}"))
+                })?,
             ]),
-        }
+        })
     }
 
     /// Create a verifier with custom acceptable options
@@ -213,10 +230,8 @@ impl BatchVerifier {
 
     /// Verify proof hash matches
     pub fn verify_proof_hash(proof_bytes: &[u8], expected_hash: &str) -> bool {
-        let computed = Hash256::sha256_with_domain(
-            b"STATESET_VES_BATCH_PROOF_HASH_V1",
-            proof_bytes,
-        );
+        let computed =
+            Hash256::sha256_with_domain(b"STATESET_VES_BATCH_PROOF_HASH_V1", proof_bytes);
         computed.to_hex() == expected_hash
     }
 
@@ -253,7 +268,6 @@ impl Default for BatchVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ves_stark_primitives::FELT_ZERO;
 
     #[test]
     fn test_verifier_creation() {
@@ -263,12 +277,12 @@ mod tests {
     #[test]
     fn test_proof_hash_verification() {
         let proof_bytes = b"test batch proof data";
-        let hash = Hash256::sha256_with_domain(
-            b"STATESET_VES_BATCH_PROOF_HASH_V1",
-            proof_bytes,
-        );
+        let hash = Hash256::sha256_with_domain(b"STATESET_VES_BATCH_PROOF_HASH_V1", proof_bytes);
 
-        assert!(BatchVerifier::verify_proof_hash(proof_bytes, &hash.to_hex()));
+        assert!(BatchVerifier::verify_proof_hash(
+            proof_bytes,
+            &hash.to_hex()
+        ));
         assert!(!BatchVerifier::verify_proof_hash(proof_bytes, "wrong_hash"));
     }
 

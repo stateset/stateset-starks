@@ -37,9 +37,10 @@ pub enum VerifierError {
     VerificationFailed(String),
 
     // V2 Security Hardening - New Error Types
-
     /// Policy ID mismatch between proof and expected policy
-    #[error("Policy mismatch: expected policy '{expected}', but proof was generated for '{actual}'")]
+    #[error(
+        "Policy mismatch: expected policy '{expected}', but proof was generated for '{actual}'"
+    )]
     PolicyMismatch { expected: String, actual: String },
 
     /// Limit value mismatch between proof and expected policy
@@ -55,7 +56,9 @@ pub enum VerifierError {
     UnsupportedProofVersion { version: u32, supported: u32 },
 
     /// Witness commitment mismatch
-    #[error("Witness commitment mismatch: the proof's commitment doesn't match the expected commitment")]
+    #[error(
+        "Witness commitment mismatch: the proof's commitment doesn't match the expected commitment"
+    )]
     WitnessCommitmentMismatch,
 }
 
@@ -106,7 +109,11 @@ impl VerifierError {
 /// Valid hex strings must:
 /// - Have the expected length
 /// - Contain only lowercase hex digits (0-9, a-f)
-pub fn validate_hex_string(field: &str, value: &str, expected_len: usize) -> Result<(), VerifierError> {
+pub fn validate_hex_string(
+    field: &str,
+    value: &str,
+    expected_len: usize,
+) -> Result<(), VerifierError> {
     // Check length
     if value.len() != expected_len {
         return Err(VerifierError::invalid_hex(
@@ -126,7 +133,10 @@ pub fn validate_hex_string(field: &str, value: &str, expected_len: usize) -> Res
         if c.is_ascii_uppercase() {
             return Err(VerifierError::invalid_hex(
                 field,
-                &format!("uppercase character '{}' at position {} (must be lowercase)", c, i),
+                &format!(
+                    "uppercase character '{}' at position {} (must be lowercase)",
+                    c, i
+                ),
             ));
         }
     }

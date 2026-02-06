@@ -5,11 +5,11 @@
 
 use uuid::Uuid;
 use ves_stark_primitives::public_inputs::CompliancePublicInputs;
-use ves_stark_primitives::{Felt, felt_from_u64, FELT_ZERO, FELT_ONE};
+use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
 
+use crate::air::trace_layout::MAX_BATCH_SIZE;
 use crate::error::BatchError;
 use crate::state::{BatchMetadata, BatchStateRoot, EventLeaf, EventMerkleTree};
-use crate::air::trace_layout::MAX_BATCH_SIZE;
 
 /// Witness for a single event within a batch
 #[derive(Debug, Clone)]
@@ -70,13 +70,21 @@ impl BatchEventWitness {
             event_id,
             amount_commitment,
             policy_hash: *policy_hash,
-            compliance_flag: if self.is_compliant { FELT_ONE } else { FELT_ZERO },
+            compliance_flag: if self.is_compliant {
+                FELT_ONE
+            } else {
+                FELT_ZERO
+            },
         }
     }
 
     /// Get compliance flag as field element
     pub fn compliance_felt(&self) -> Felt {
-        if self.is_compliant { FELT_ONE } else { FELT_ZERO }
+        if self.is_compliant {
+            FELT_ONE
+        } else {
+            FELT_ZERO
+        }
     }
 }
 
@@ -156,7 +164,8 @@ impl BatchWitness {
 
     /// Build the event Merkle tree from the witnesses
     pub fn build_event_tree(&self) -> EventMerkleTree {
-        let leaves: Vec<EventLeaf> = self.events
+        let leaves: Vec<EventLeaf> = self
+            .events
             .iter()
             .map(|e| e.to_event_leaf(&self.policy_hash))
             .collect();
@@ -233,35 +242,18 @@ impl BatchWitnessBuilder {
     }
 
     /// Add an event to the batch
-    pub fn add_event(
-        mut self,
-        amount: u64,
-        public_inputs: CompliancePublicInputs,
-    ) -> Self {
+    pub fn add_event(mut self, amount: u64, public_inputs: CompliancePublicInputs) -> Self {
         let threshold = self.policy_limit.unwrap_or(u64::MAX);
-        let event = BatchEventWitness::new(
-            self.events.len(),
-            amount,
-            public_inputs,
-            threshold,
-        );
+        let event = BatchEventWitness::new(self.events.len(), amount, public_inputs, threshold);
         self.events.push(event);
         self
     }
 
     /// Add multiple events to the batch
-    pub fn add_events(
-        mut self,
-        events: Vec<(u64, CompliancePublicInputs)>,
-    ) -> Self {
+    pub fn add_events(mut self, events: Vec<(u64, CompliancePublicInputs)>) -> Self {
         let threshold = self.policy_limit.unwrap_or(u64::MAX);
         for (amount, public_inputs) in events {
-            let event = BatchEventWitness::new(
-                self.events.len(),
-                amount,
-                public_inputs,
-                threshold,
-            );
+            let event = BatchEventWitness::new(self.events.len(), amount, public_inputs, threshold);
             self.events.push(event);
         }
         self
@@ -269,16 +261,18 @@ impl BatchWitnessBuilder {
 
     /// Build the batch witness
     pub fn build(self) -> Result<BatchWitness, BatchError> {
-        let metadata = self.metadata
+        let metadata = self
+            .metadata
             .ok_or_else(|| BatchError::InvalidWitness("Metadata is required".to_string()))?;
 
-        let prev_state_root = self.prev_state_root
-            .unwrap_or_else(BatchStateRoot::genesis);
+        let prev_state_root = self.prev_state_root.unwrap_or_else(BatchStateRoot::genesis);
 
-        let policy_hash = self.policy_hash
+        let policy_hash = self
+            .policy_hash
             .ok_or_else(|| BatchError::InvalidWitness("Policy hash is required".to_string()))?;
 
-        let policy_limit = self.policy_limit
+        let policy_limit = self
+            .policy_limit
             .ok_or_else(|| BatchError::InvalidWitness("Policy limit is required".to_string()))?;
 
         let witness = BatchWitness::new(
@@ -314,7 +308,7 @@ fn uuid_to_felts(uuid: &Uuid) -> [Felt; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ves_stark_primitives::public_inputs::{PolicyParams, compute_policy_hash};
+    use ves_stark_primitives::public_inputs::{compute_policy_hash, PolicyParams};
 
     fn sample_public_inputs(threshold: u64, event_index: usize) -> CompliancePublicInputs {
         let policy_id = "aml.threshold";
@@ -367,13 +361,8 @@ mod tests {
     fn test_batch_witness_builder() {
         let threshold = 10000u64;
         let policy_hash = sample_policy_hash(threshold);
-        let metadata = BatchMetadata::with_ids(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            0,
-            9,
-        );
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 0, 9);
 
         let mut builder = BatchWitnessBuilder::new()
             .metadata(metadata)
@@ -396,13 +385,8 @@ mod tests {
     fn test_batch_witness_validation_empty() {
         let threshold = 10000u64;
         let policy_hash = sample_policy_hash(threshold);
-        let metadata = BatchMetadata::with_ids(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            0,
-            0,
-        );
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 0, 0);
 
         let result = BatchWitnessBuilder::new()
             .metadata(metadata)
@@ -417,13 +401,8 @@ mod tests {
     fn test_batch_witness_compute_state_root() {
         let threshold = 10000u64;
         let policy_hash = sample_policy_hash(threshold);
-        let metadata = BatchMetadata::with_ids(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            0,
-            3,
-        );
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 0, 3);
 
         let mut builder = BatchWitnessBuilder::new()
             .metadata(metadata)

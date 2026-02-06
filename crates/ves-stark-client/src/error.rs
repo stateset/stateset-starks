@@ -31,11 +31,26 @@ pub enum ClientError {
     #[error("Public inputs mismatch")]
     PublicInputsMismatch,
 
+    #[error("Invalid public inputs: {0}")]
+    InvalidPublicInputs(String),
+
+    #[error("Public inputs event_id mismatch: expected {expected}, got {actual}")]
+    PublicInputsEventIdMismatch {
+        expected: uuid::Uuid,
+        actual: uuid::Uuid,
+    },
+
+    #[error("Public inputs hash mismatch: expected {expected}, got {actual}")]
+    PublicInputsHashMismatch { expected: String, actual: String },
+
     #[error("Proof generation failed: {0}")]
     ProofGeneration(String),
 
     #[error("Base64 decode error: {0}")]
     Base64(#[from] base64::DecodeError),
+
+    #[error("Invalid header value: {0}")]
+    InvalidHeader(String),
 
     // Set Chain specific errors
     #[error("Batch already committed on Set Chain: {0}")]

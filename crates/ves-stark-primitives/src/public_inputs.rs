@@ -3,8 +3,8 @@
 //! These structures define the public inputs for Phase 1 per-event compliance proofs.
 //! They MUST match the canonical format used by the sequencer (RFC 8785 JCS canonicalization).
 
-use crate::field::{Felt, FeltArray8, felt_from_u64};
-use crate::hash::{Hash256, hash_to_felts, u64_to_felt_pair};
+use crate::field::{felt_from_u64, Felt, FeltArray8};
+use crate::hash::{hash_to_felts, u64_to_felt_pair, Hash256};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -23,10 +23,7 @@ pub enum PublicInputsError {
     },
     /// Invalid hex format (length or casing)
     #[error("Invalid hex format in {field}: {reason}")]
-    InvalidHexFormat {
-        field: &'static str,
-        reason: String,
-    },
+    InvalidHexFormat { field: &'static str, reason: String },
     /// JSON serialization failed
     #[error("JSON serialization failed: {0}")]
     Serialization(#[from] serde_json::Error),
@@ -110,7 +107,10 @@ pub struct CompliancePublicInputs {
 
 impl CompliancePublicInputs {
     /// Compute the policy hash for a given policy ID and params
-    pub fn compute_policy_hash(policy_id: &str, policy_params: &PolicyParams) -> Result<Hash256, PublicInputsError> {
+    pub fn compute_policy_hash(
+        policy_id: &str,
+        policy_params: &PolicyParams,
+    ) -> Result<Hash256, PublicInputsError> {
         compute_policy_hash(policy_id, policy_params)
     }
 
@@ -176,24 +176,30 @@ impl CompliancePublicInputsFelts {
             store_id: uuid_to_felts(&inputs.store_id),
             sequence_number: u64_to_felt_pair(inputs.sequence_number),
             payload_kind: felt_from_u64(inputs.payload_kind as u64),
-            payload_plain_hash: hash_to_felts(&Hash256::from_hex(&inputs.payload_plain_hash).map_err(|e| {
-                PublicInputsError::InvalidHex {
-                    field: "payloadPlainHash",
-                    source: e,
-                }
-            })?),
-            payload_cipher_hash: hash_to_felts(&Hash256::from_hex(&inputs.payload_cipher_hash).map_err(|e| {
-                PublicInputsError::InvalidHex {
-                    field: "payloadCipherHash",
-                    source: e,
-                }
-            })?),
-            event_signing_hash: hash_to_felts(&Hash256::from_hex(&inputs.event_signing_hash).map_err(|e| {
-                PublicInputsError::InvalidHex {
-                    field: "eventSigningHash",
-                    source: e,
-                }
-            })?),
+            payload_plain_hash: hash_to_felts(
+                &Hash256::from_hex(&inputs.payload_plain_hash).map_err(|e| {
+                    PublicInputsError::InvalidHex {
+                        field: "payloadPlainHash",
+                        source: e,
+                    }
+                })?,
+            ),
+            payload_cipher_hash: hash_to_felts(
+                &Hash256::from_hex(&inputs.payload_cipher_hash).map_err(|e| {
+                    PublicInputsError::InvalidHex {
+                        field: "payloadCipherHash",
+                        source: e,
+                    }
+                })?,
+            ),
+            event_signing_hash: hash_to_felts(
+                &Hash256::from_hex(&inputs.event_signing_hash).map_err(|e| {
+                    PublicInputsError::InvalidHex {
+                        field: "eventSigningHash",
+                        source: e,
+                    }
+                })?,
+            ),
             policy_hash: hash_to_felts(&Hash256::from_hex(&inputs.policy_hash).map_err(|e| {
                 PublicInputsError::InvalidHex {
                     field: "policyHash",
@@ -224,7 +230,7 @@ impl CompliancePublicInputsFelts {
 fn uuid_to_felts(uuid: &Uuid) -> [Felt; 4] {
     let bytes = uuid.as_bytes();
     let mut result = [felt_from_u64(0); 4];
-    for i in 0..4 {
+    for (i, out) in result.iter_mut().enumerate() {
         let offset = i * 4;
         let limb = u32::from_le_bytes([
             bytes[offset],
@@ -232,28 +238,40 @@ fn uuid_to_felts(uuid: &Uuid) -> [Felt; 4] {
             bytes[offset + 2],
             bytes[offset + 3],
         ]);
-        result[i] = felt_from_u64(limb as u64);
+        *out = felt_from_u64(limb as u64);
     }
     result
 }
 
 /// Compute policy hash: SHA256(domain || JCS({policyId, policyParams}))
-pub fn compute_policy_hash(policy_id: &str, policy_params: &PolicyParams) -> Result<Hash256, PublicInputsError> {
+pub fn compute_policy_hash(
+    policy_id: &str,
+    policy_params: &PolicyParams,
+) -> Result<Hash256, PublicInputsError> {
     let policy_obj = serde_json::json!({
         "policyId": policy_id,
         "policyParams": policy_params.0
     });
     let canonical = canonical_json(&policy_obj)?;
-    Ok(Hash256::sha256_with_domain(DOMAIN_POLICY_HASH, canonical.as_bytes()))
+    Ok(Hash256::sha256_with_domain(
+        DOMAIN_POLICY_HASH,
+        canonical.as_bytes(),
+    ))
 }
 
 /// Compute public inputs hash: SHA256(JCS(public_inputs))
-pub fn compute_public_inputs_hash(inputs: &CompliancePublicInputs) -> Result<Hash256, PublicInputsError> {
+pub fn compute_public_inputs_hash(
+    inputs: &CompliancePublicInputs,
+) -> Result<Hash256, PublicInputsError> {
     let canonical = canonical_json(&serde_json::to_value(inputs)?)?;
     Ok(Hash256::sha256(canonical.as_bytes()))
 }
 
-fn validate_hex_string(field: &'static str, value: &str, expected_len: usize) -> Result<(), PublicInputsError> {
+fn validate_hex_string(
+    field: &'static str,
+    value: &str,
+    expected_len: usize,
+) -> Result<(), PublicInputsError> {
     if value.len() != expected_len {
         return Err(PublicInputsError::InvalidHexFormat {
             field,
@@ -271,7 +289,10 @@ fn validate_hex_string(field: &'static str, value: &str, expected_len: usize) ->
         if c.is_ascii_uppercase() {
             return Err(PublicInputsError::InvalidHexFormat {
                 field,
-                reason: format!("uppercase character '{}' at position {} (must be lowercase)", c, i),
+                reason: format!(
+                    "uppercase character '{}' at position {} (must be lowercase)",
+                    c, i
+                ),
             });
         }
     }

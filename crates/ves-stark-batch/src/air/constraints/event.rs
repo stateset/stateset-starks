@@ -3,8 +3,8 @@
 //! These constraints ensure that each event in the batch is correctly processed
 //! for compliance verification.
 
-use winter_math::FieldElement;
 use crate::air::trace_layout::batch_cols;
+use winter_math::FieldElement;
 
 /// Evaluate event processing constraints
 ///

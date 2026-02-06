@@ -4,8 +4,8 @@
 //! each injected into a field element. This provides an injective mapping
 //! from Hash256 to [Felt; 8].
 
-use crate::field::{Felt, felt_from_u64, felt_to_u64, FeltArray8, felt_array8_zero};
-use sha2::{Sha256, Digest};
+use crate::field::{felt_array8_zero, felt_from_u64, felt_to_u64, Felt, FeltArray8};
+use sha2::{Digest, Sha256};
 
 /// A 256-bit hash (32 bytes)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -97,7 +97,7 @@ impl<'de> serde::Deserialize<'de> for Hash256 {
 /// to a field element. This is injective since u32 < Goldilocks prime.
 pub fn hash_to_felts(hash: &Hash256) -> FeltArray8 {
     let mut result = felt_array8_zero();
-    for i in 0..8 {
+    for (i, out) in result.iter_mut().enumerate() {
         let offset = i * 4;
         let limb = u32::from_le_bytes([
             hash.0[offset],
@@ -105,7 +105,7 @@ pub fn hash_to_felts(hash: &Hash256) -> FeltArray8 {
             hash.0[offset + 2],
             hash.0[offset + 3],
         ]);
-        result[i] = felt_from_u64(limb as u64);
+        *out = felt_from_u64(limb as u64);
     }
     result
 }
@@ -115,8 +115,8 @@ pub fn hash_to_felts(hash: &Hash256) -> FeltArray8 {
 /// Each field element is assumed to contain a u32 value (< 2^32).
 pub fn felts_to_hash(felts: &FeltArray8) -> Hash256 {
     let mut bytes = [0u8; 32];
-    for i in 0..8 {
-        let limb = felt_to_u64(felts[i]) as u32;
+    for (i, &felt) in felts.iter().enumerate() {
+        let limb = felt_to_u64(felt) as u32;
         let offset = i * 4;
         bytes[offset..offset + 4].copy_from_slice(&limb.to_le_bytes());
     }

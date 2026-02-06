@@ -9,9 +9,7 @@ use pyo3::types::{PyBytes, PyDict};
 use uuid::Uuid;
 
 use ves_stark_air::Policy as RustPolicy;
-use ves_stark_primitives::{
-    CompliancePublicInputs as RustCompliancePublicInputs, PolicyParams,
-};
+use ves_stark_primitives::{CompliancePublicInputs as RustCompliancePublicInputs, PolicyParams};
 use ves_stark_prover::{ComplianceProver, ComplianceWitness};
 use ves_stark_verifier::verify_compliance_proof_auto;
 
@@ -144,7 +142,7 @@ impl CompliancePublicInputs {
     ) -> PyResult<Self> {
         // Convert PyDict to JSON string
         let policy_params_json = Python::with_gil(|py| {
-            let json = py.import_bound("json")?;
+            let json = py.import("json")?;
             let dumps = json.getattr("dumps")?;
             dumps.call1((policy_params,))?.extract::<String>()
         })?;
@@ -167,7 +165,7 @@ impl CompliancePublicInputs {
     /// Get policy parameters as a dict
     #[getter]
     pub fn policy_params(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let json = py.import_bound("json")?;
+        let json = py.import("json")?;
         let loads = json.getattr("loads")?;
         let result = loads.call1((&self.policy_params_json,))?;
         Ok(result.into())
@@ -177,7 +175,7 @@ impl CompliancePublicInputs {
     #[setter]
     pub fn set_policy_params(&mut self, value: &Bound<'_, PyDict>) -> PyResult<()> {
         let policy_params_json = Python::with_gil(|py| {
-            let json = py.import_bound("json")?;
+            let json = py.import("json")?;
             let dumps = json.getattr("dumps")?;
             dumps.call1((value,))?.extract::<String>()
         })?;
@@ -244,7 +242,7 @@ impl ComplianceProof {
     /// Get the raw proof bytes
     #[getter]
     pub fn proof_bytes<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new_bound(py, &self.proof_bytes_vec)
+        PyBytes::new(py, &self.proof_bytes_vec)
     }
 
     /// Get the witness commitment as a list of 4 integers
@@ -419,7 +417,7 @@ pub fn verify(
 pub fn compute_policy_hash(policy_id: &str, policy_params: &Bound<'_, PyDict>) -> PyResult<String> {
     // Convert PyDict to JSON
     let params_json = Python::with_gil(|py| {
-        let json = py.import_bound("json")?;
+        let json = py.import("json")?;
         let dumps = json.getattr("dumps")?;
         dumps.call1((policy_params,))?.extract::<String>()
     })?;

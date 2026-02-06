@@ -5,6 +5,22 @@ All notable changes to the VES STARK proving system will be documented in this f
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `scripts/rescue_constants.py`, `docs/rescue_constants.json`, and `docs/RESCUE_CONSTANTS.md` to export and audit frozen Rescue-Prime constants (digest pinned in tests/docs).
+
+### Changed
+- **Breaking**: Corrected the Rescue-Prime `MDS_INV` constant to be a true inverse of `MDS` over Goldilocks. This changes Rescue permutation/hash outputs and invalidates proofs/commitments produced with the previous constants.
+- Batch trace layout now keeps total width under Winterfell's 255-column limit by sharing only the base compliance columns needed for batch proofs.
+
+### Fixed
+- Compliance AIR now binds the final subtraction borrow at row 0 (where the comparison gadget is enforced), preventing inconsistent borrows across rows.
+- Clippy now passes with `-D warnings` across all targets (libs, tests, benches).
+
+### Security
+- Sequencer client now validates `public_inputs` by parsing canonical JSON and verifying `public_inputs_hash` and `event_id` before returning typed inputs (`SequencerClient::get_public_inputs_validated`).
+
 ## [0.2.0] - 2025-12-22
 
 ### Added
