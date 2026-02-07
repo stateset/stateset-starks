@@ -47,14 +47,16 @@ const proof = prove(5000, publicInputs, 'aml.threshold', 10000);
 console.log(`Proof generated in ${proof.provingTimeMs}ms`);
 console.log(`Proof size: ${proof.proofSize} bytes`);
 console.log(`Proof hash: ${proof.proofHash}`);
+console.log(`Witness commitment (hex): ${proof.witnessCommitmentHex}`);
 ```
 
 ### Verify a Proof
 
 ```javascript
-const { verify } = require('@stateset/ves-stark');
+const { verifyHex } = require('@stateset/ves-stark');
 
-const result = verify(proof.proofBytes, publicInputs, proof.witnessCommitment);
+// Use the hex form to avoid u64 round-trip issues in JavaScript.
+const result = verifyHex(proof.proofBytes, publicInputs, proof.witnessCommitmentHex);
 
 if (result.valid) {
   console.log('Proof is valid!');
@@ -82,7 +84,8 @@ Generate a STARK compliance proof.
 - `proofHash` (string): SHA-256 hash of proof
 - `provingTimeMs` (number): Generation time in milliseconds
 - `proofSize` (number): Size in bytes
-- `witnessCommitment` (number[]): 4-element commitment array
+- `witnessCommitment` (number[]): 4-element commitment array (legacy; not safe for JS `number`)
+- `witnessCommitmentHex` (string): 64-character lowercase hex commitment (recommended)
 
 ### `verify(proofBytes, publicInputs, witnessCommitment)`
 
@@ -99,6 +102,17 @@ Verify a STARK compliance proof.
 - `error` (string | null): Error message if invalid
 - `policyId` (string): Verified policy ID
 - `policyLimit` (number): Verified policy limit
+
+### `verifyHex(proofBytes, publicInputs, witnessCommitmentHex)`
+
+Verify a STARK compliance proof using the witness commitment hex string.
+
+**Parameters:**
+- `proofBytes` (Buffer): Raw proof bytes from `prove()`
+- `publicInputs` (JsCompliancePublicInputs): Must match proving inputs
+- `witnessCommitmentHex` (string): 64-character lowercase hex commitment (recommended)
+
+**Returns:** `JsVerificationResult`
 
 ### `computePolicyHash(policyId, policyParams)`
 

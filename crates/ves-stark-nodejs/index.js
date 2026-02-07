@@ -310,10 +310,11 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { prove, verify, computePolicyHash, createAmlThresholdParams, createOrderTotalCapParams } = nativeBinding
+const { prove, verify, verifyHex, computePolicyHash, createAmlThresholdParams, createOrderTotalCapParams } = nativeBinding
 
 module.exports.prove = prove
 module.exports.verify = verify
+module.exports.verifyHex = verifyHex
 module.exports.computePolicyHash = computePolicyHash
 module.exports.createAmlThresholdParams = createAmlThresholdParams
 module.exports.createOrderTotalCapParams = createOrderTotalCapParams

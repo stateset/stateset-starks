@@ -27,6 +27,8 @@ export interface JsCompliancePublicInputs {
   policyParams: any
   /** Policy hash (hex64, lowercase) */
   policyHash: string
+  /** Optional witness commitment (hex64, lowercase) to bind the proved witness to canonical inputs. */
+  witnessCommitment?: string
 }
 /** Result of proof generation */
 export interface JsComplianceProof {
@@ -40,6 +42,8 @@ export interface JsComplianceProof {
   proofSize: number
   /** Witness commitment (4 x u64 as field elements) */
   witnessCommitment: Array<number>
+  /** Witness commitment encoded as 32 bytes (4 x u64 big-endian) and hex-encoded (64 chars). */
+  witnessCommitmentHex: string
 }
 /** Result of proof verification */
 export interface JsVerificationResult {
@@ -73,6 +77,12 @@ export declare function prove(amount: number, publicInputs: JsCompliancePublicIn
  * @returns VerificationResult indicating if proof is valid
  */
 export declare function verify(proofBytes: Buffer, publicInputs: JsCompliancePublicInputs, witnessCommitment: Array<number>): JsVerificationResult
+/**
+ * Verify a STARK compliance proof using the witness commitment hex string.
+ *
+ * This avoids `u64` round-trip issues in JavaScript.
+ */
+export declare function verifyHex(proofBytes: Buffer, publicInputs: JsCompliancePublicInputs, witnessCommitmentHex: string): JsVerificationResult
 /**
  * Compute the policy hash for given policy ID and parameters
  *

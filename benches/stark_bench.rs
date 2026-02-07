@@ -68,6 +68,7 @@ fn sample_aml_inputs(threshold: u64) -> CompliancePublicInputs {
         policy_id: policy_id.to_string(),
         policy_params: params,
         policy_hash: hash.to_hex(),
+        witness_commitment: None,
     }
 }
 
@@ -89,6 +90,7 @@ fn sample_cap_inputs(cap: u64) -> CompliancePublicInputs {
         policy_id: policy_id.to_string(),
         policy_params: params,
         policy_hash: hash.to_hex(),
+        witness_commitment: None,
     }
 }
 

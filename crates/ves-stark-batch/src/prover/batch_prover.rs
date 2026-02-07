@@ -338,6 +338,14 @@ impl Prover for VesBatchProver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prover::witness::BatchWitnessBuilder;
+    use crate::state::BatchMetadata;
+    use crate::verifier::verify_batch_proof;
+    use uuid::Uuid;
+    use ves_stark_primitives::hash_to_felts;
+    use ves_stark_primitives::public_inputs::{
+        compute_policy_hash, CompliancePublicInputs, PolicyParams,
+    };
 
     #[test]
     fn test_prover_creation() {
@@ -352,5 +360,194 @@ mod tests {
 
         let config = BatchProverConfig::large_batch();
         assert_eq!(config.max_batch_size, 128);
+    }
+
+    fn sample_public_inputs(threshold: u64, sequence_number: u64) -> CompliancePublicInputs {
+        let policy_id = "aml.threshold";
+        let params = PolicyParams::threshold(threshold);
+        let hash = compute_policy_hash(policy_id, &params).unwrap();
+
+        CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "0".repeat(64),
+            event_signing_hash: "0".repeat(64),
+            policy_id: policy_id.to_string(),
+            policy_params: params,
+            policy_hash: hash.to_hex(),
+            witness_commitment: None,
+        }
+    }
+
+    fn sample_policy_hash(threshold: u64) -> [Felt; 8] {
+        let policy_id = "aml.threshold";
+        let params = PolicyParams::threshold(threshold);
+        let hash = compute_policy_hash(policy_id, &params).unwrap();
+        hash_to_felts(&hash)
+    }
+
+    #[test]
+    fn test_batch_prove_and_verify_all_compliant() {
+        let threshold = 10_000u64;
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 0, 1);
+
+        let witness = BatchWitnessBuilder::new()
+            .metadata(metadata)
+            .policy_hash(sample_policy_hash(threshold))
+            .policy_limit(threshold)
+            .add_event(5_000, sample_public_inputs(threshold, 0))
+            .add_event(9_999, sample_public_inputs(threshold, 1))
+            .build()
+            .unwrap();
+
+        let prover = BatchProver::with_config(
+            BatchProverConfig::default().with_options(ProofOptions::fast()),
+        );
+        let proof = prover.prove(&witness).unwrap();
+
+        let pub_inputs = BatchPublicInputs::new(
+            witness.prev_state_root.root,
+            witness.compute_new_state_root().root,
+            witness.batch_id_felts(),
+            witness.tenant_id_felts(),
+            witness.store_id_felts(),
+            witness.metadata.sequence_start,
+            witness.metadata.sequence_end,
+            witness.num_events(),
+            witness.all_compliant(),
+            witness.policy_hash,
+            witness.policy_limit,
+        );
+
+        let result = verify_batch_proof(&proof.proof_bytes, &pub_inputs).unwrap();
+        assert!(
+            result.valid,
+            "batch proof should verify: {:?}",
+            result.error
+        );
+        assert!(result.all_compliant);
+    }
+
+    #[test]
+    fn test_batch_verifier_rejects_tampered_public_inputs() {
+        let threshold = 10_000u64;
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 0, 1);
+
+        let witness = BatchWitnessBuilder::new()
+            .metadata(metadata)
+            .policy_hash(sample_policy_hash(threshold))
+            .policy_limit(threshold)
+            .add_event(5_000, sample_public_inputs(threshold, 0))
+            .add_event(9_999, sample_public_inputs(threshold, 1))
+            .build()
+            .unwrap();
+
+        let prover = BatchProver::with_config(
+            BatchProverConfig::default().with_options(ProofOptions::fast()),
+        );
+        let proof = prover.prove(&witness).unwrap();
+
+        let pub_inputs = BatchPublicInputs::new(
+            witness.prev_state_root.root,
+            witness.compute_new_state_root().root,
+            witness.batch_id_felts(),
+            witness.tenant_id_felts(),
+            witness.store_id_felts(),
+            witness.metadata.sequence_start,
+            witness.metadata.sequence_end,
+            witness.num_events(),
+            witness.all_compliant(),
+            witness.policy_hash,
+            witness.policy_limit,
+        );
+
+        // Tamper with public inputs that are bound into the AIR via boundary assertions.
+        for (label, tampered) in [
+            ("policy_limit", {
+                let mut t = pub_inputs.clone();
+                t.policy_limit =
+                    ves_stark_primitives::felt_from_u64(t.policy_limit.as_int().wrapping_add(1));
+                t
+            }),
+            ("policy_hash", {
+                let mut t = pub_inputs.clone();
+                t.policy_hash[0] =
+                    ves_stark_primitives::felt_from_u64(t.policy_hash[0].as_int().wrapping_add(1));
+                t
+            }),
+            ("batch_id", {
+                let mut t = pub_inputs.clone();
+                t.batch_id[0] =
+                    ves_stark_primitives::felt_from_u64(t.batch_id[0].as_int().wrapping_add(1));
+                t
+            }),
+            ("sequence_end", {
+                let mut t = pub_inputs.clone();
+                t.sequence_end =
+                    ves_stark_primitives::felt_from_u64(t.sequence_end.as_int().wrapping_add(1));
+                t
+            }),
+            ("num_events", {
+                let mut t = pub_inputs.clone();
+                t.num_events =
+                    ves_stark_primitives::felt_from_u64(t.num_events.as_int().wrapping_add(1));
+                t
+            }),
+        ] {
+            let result = verify_batch_proof(&proof.proof_bytes, &tampered).unwrap();
+            assert!(
+                !result.valid,
+                "batch proof must not verify under different public inputs: tampered {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_batch_prove_and_verify_not_all_compliant() {
+        let threshold = 10_000u64;
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 0, 1);
+
+        let witness = BatchWitnessBuilder::new()
+            .metadata(metadata)
+            .policy_hash(sample_policy_hash(threshold))
+            .policy_limit(threshold)
+            .add_event(5_000, sample_public_inputs(threshold, 0))
+            .add_event(15_000, sample_public_inputs(threshold, 1)) // non-compliant
+            .build()
+            .unwrap();
+
+        let prover = BatchProver::with_config(
+            BatchProverConfig::default().with_options(ProofOptions::fast()),
+        );
+        let proof = prover.prove(&witness).unwrap();
+
+        let pub_inputs = BatchPublicInputs::new(
+            witness.prev_state_root.root,
+            witness.compute_new_state_root().root,
+            witness.batch_id_felts(),
+            witness.tenant_id_felts(),
+            witness.store_id_felts(),
+            witness.metadata.sequence_start,
+            witness.metadata.sequence_end,
+            witness.num_events(),
+            witness.all_compliant(),
+            witness.policy_hash,
+            witness.policy_limit,
+        );
+
+        let result = verify_batch_proof(&proof.proof_bytes, &pub_inputs).unwrap();
+        assert!(
+            result.valid,
+            "batch proof should verify: {:?}",
+            result.error
+        );
+        assert!(!result.all_compliant);
     }
 }

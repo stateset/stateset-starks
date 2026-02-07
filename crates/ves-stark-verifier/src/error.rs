@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-/// Current proof version (V2 with full security constraints)
+/// Current proof version (internal; used for compatibility checks where applicable)
 pub const PROOF_VERSION: u32 = 2;
 
 /// Errors that can occur during proof verification

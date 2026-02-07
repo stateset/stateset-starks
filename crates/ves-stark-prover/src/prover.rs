@@ -28,6 +28,7 @@ use std::time::Instant;
 use ves_stark_air::compliance::{ComplianceAir, PublicInputs};
 use ves_stark_air::options::ProofOptions;
 use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
+use ves_stark_primitives::public_inputs::witness_commitment_u64_to_hex;
 use ves_stark_primitives::rescue::rescue_hash;
 use ves_stark_primitives::{Felt, Hash256};
 use winter_air::TraceInfo;
@@ -59,6 +60,13 @@ pub struct ComplianceProof {
     /// Witness commitment (Rescue hash of private amount)
     /// This binds the private witness to the proof
     pub witness_commitment: [u64; 4],
+
+    /// Witness commitment encoded as 32 bytes (4 x u64 big-endian) and hex-encoded (64 chars).
+    ///
+    /// This is provided to make it safe to transport commitments across JSON-based APIs where
+    /// `u64` values may not round-trip in JavaScript.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness_commitment_hex: Option<String>,
 }
 
 /// Metadata about the proof generation
@@ -152,11 +160,6 @@ impl ComplianceProver {
             )));
         }
 
-        // Build execution trace with unified policy
-        let trace = TraceBuilder::new(witness.clone(), self.policy.clone()).build()?;
-
-        let trace_length = trace.length();
-
         // Compute witness commitment using Rescue hash
         // This binds the private amount to the proof
         let amount_limbs = witness.amount_limbs();
@@ -167,6 +170,34 @@ impl ComplianceProver {
             hash_output[2],
             hash_output[3],
         ];
+
+        // Convert witness commitment to u64 array for serialization and (optionally) for public input binding.
+        let commitment_u64: [u64; 4] = [
+            witness_commitment[0].as_int(),
+            witness_commitment[1].as_int(),
+            witness_commitment[2].as_int(),
+            witness_commitment[3].as_int(),
+        ];
+
+        // Optional hardening: if the canonical public inputs include a witness commitment, enforce that
+        // it matches the witness amount we are proving about.
+        if let Some(expected) = witness
+            .public_inputs
+            .witness_commitment_u64()
+            .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?
+        {
+            if expected != commitment_u64 {
+                return Err(ProverError::InvalidPublicInputs(
+                    "witnessCommitment in public inputs does not match commitment derived from the witness amount"
+                        .to_string(),
+                ));
+            }
+        }
+
+        // Build execution trace with unified policy
+        let trace = TraceBuilder::new(witness.clone(), self.policy.clone()).build()?;
+
+        let trace_length = trace.length();
 
         // Build public inputs (use limit as threshold for AIR compatibility)
         let pub_inputs_felts = witness
@@ -199,14 +230,6 @@ impl ComplianceProver {
 
         let proving_time = start.elapsed();
 
-        // Convert witness commitment to u64 array for serialization
-        let commitment_u64: [u64; 4] = [
-            witness_commitment[0].as_int(),
-            witness_commitment[1].as_int(),
-            witness_commitment[2].as_int(),
-            witness_commitment[3].as_int(),
-        ];
-
         Ok(ComplianceProof {
             proof_bytes: proof_bytes.clone(),
             proof_hash: proof_hash.to_hex(),
@@ -218,6 +241,7 @@ impl ComplianceProver {
                 prover_version: env!("CARGO_PKG_VERSION").to_string(),
             },
             witness_commitment: commitment_u64,
+            witness_commitment_hex: Some(witness_commitment_u64_to_hex(&commitment_u64)),
         })
     }
 
@@ -304,11 +328,47 @@ impl Prover for VesComplianceProver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
+    use ves_stark_primitives::public_inputs::{
+        compute_policy_hash, CompliancePublicInputs, PolicyParams,
+    };
 
     #[test]
     fn test_prover_creation() {
         let policy = AmlThresholdPolicy::new(10000);
         let prover = ComplianceProver::new(policy);
         assert_eq!(prover.threshold(), 10000);
+    }
+
+    #[test]
+    fn test_prover_rejects_public_inputs_witness_commitment_mismatch() {
+        let threshold = 10000u64;
+        let policy = Policy::aml_threshold(threshold);
+
+        let policy_id = "aml.threshold";
+        let params = PolicyParams::threshold(threshold);
+        let policy_hash = compute_policy_hash(policy_id, &params).unwrap();
+
+        let mut inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "0".repeat(64),
+            event_signing_hash: "0".repeat(64),
+            policy_id: policy_id.to_string(),
+            policy_params: params,
+            policy_hash: policy_hash.to_hex(),
+            witness_commitment: None,
+        };
+        // Force a mismatch: this commitment does not correspond to the amount below.
+        inputs.witness_commitment = Some(witness_commitment_u64_to_hex(&[0u64; 4]));
+
+        let witness = ComplianceWitness::new(5000, inputs);
+        let prover = ComplianceProver::with_policy(policy);
+        let err = prover.prove(&witness).unwrap_err();
+        assert!(matches!(err, ProverError::InvalidPublicInputs(_)));
     }
 }

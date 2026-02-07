@@ -6,38 +6,39 @@
 //! # Example - Single Event Proofs
 //!
 //! ```no_run
-//! use ves_stark_client::{SequencerClient, ProofSubmission};
+//! use ves_stark_client::SequencerClient;
 //! use uuid::Uuid;
 //!
 //! #[tokio::main]
-//! async fn main() {
-//!     let client = SequencerClient::try_new("http://localhost:8080", "api_key_here").unwrap();
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let client = SequencerClient::try_new("http://localhost:8080", "api_key_here")?;
 //!
 //!     // Get public inputs for an event
 //!     let event_id = Uuid::new_v4();
 //!     let inputs = client
 //!         .get_public_inputs_validated(event_id, "aml.threshold", 10000)
-//!         .await
-//!         .unwrap();
+//!         .await?;
 //!     println!("Public inputs: {:?}", inputs);
+//!     Ok(())
 //! }
 //! ```
 //!
 //! # Example - Batch Proofs to Set Chain
 //!
 //! ```no_run
-//! use ves_stark_client::{SetChainClient, SetChainConfig, BatchProofSubmission};
+//! use ves_stark_client::{SetChainClient, SetChainConfig};
 //! use uuid::Uuid;
 //!
 //! #[tokio::main]
-//! async fn main() {
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let config = SetChainConfig::testnet();
-//!     let client = SetChainClient::new("http://localhost:8080", "api_key_here", config);
+//!     let client = SetChainClient::try_new("http://localhost:8080", "api_key_here", config)?;
 //!
 //!     // Check if a batch has a proof anchored
 //!     let batch_id = Uuid::new_v4();
-//!     let has_proof = client.has_stark_proof(batch_id).await.unwrap();
+//!     let has_proof = client.has_stark_proof(batch_id).await?;
 //!     println!("Has proof: {}", has_proof);
+//!     Ok(())
 //! }
 //! ```
 //!

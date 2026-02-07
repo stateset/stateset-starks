@@ -10,7 +10,7 @@
 //! - `compliance`: Main compliance AIR that orchestrates sub-AIRs
 //! - `policies/aml_threshold`: AML threshold policy constraints
 //! - `policies/order_total_cap`: Order total cap policy constraints
-//! - `rescue_air`: Rescue-Prime hash constraints (for public input binding)
+//! - `rescue_air`: Rescue-Prime hash constraints (for witness commitment binding)
 //! - `range_check`: Range proof constraints for u32 limbs
 //! - `trace`: Trace layout and column definitions
 

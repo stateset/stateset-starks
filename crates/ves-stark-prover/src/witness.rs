@@ -2,7 +2,7 @@
 //!
 //! The witness contains the private data that the prover uses to generate
 //! the proof. For the `aml.threshold` policy, this includes the actual
-//! amount value from the encrypted payload.
+//! amount value (typically derived from an encrypted payload by the VES pipeline).
 
 use crate::error::ProverError;
 use crate::policy::Policy;
@@ -158,6 +158,7 @@ mod tests {
             policy_id: policy_id.to_string(),
             policy_params: params,
             policy_hash: hash.to_hex(),
+            witness_commitment: None,
         }
     }
 
@@ -319,6 +320,7 @@ mod proptests {
             policy_id: policy_id.to_string(),
             policy_params: params,
             policy_hash: hash.to_hex(),
+            witness_commitment: None,
         }
     }
 

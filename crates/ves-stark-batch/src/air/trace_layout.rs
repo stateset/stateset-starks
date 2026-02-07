@@ -18,11 +18,11 @@ use ves_stark_primitives::Felt;
 /// to stay under Winterfell's 255-column trace limit.
 pub const BASE_TRACE_WIDTH: usize = base_cols::RESCUE_COMMIT_FLAG + 1;
 
-/// Number of batch-specific columns added after the base compliance trace.
-pub const BATCH_EXTENSION_WIDTH: usize = 55;
-
 /// Total width of the batch execution trace
-pub const BATCH_TRACE_WIDTH: usize = BASE_TRACE_WIDTH + BATCH_EXTENSION_WIDTH;
+pub const BATCH_TRACE_WIDTH: usize = batch_cols::RESERVED + 1;
+
+/// Number of batch-specific columns added after the base compliance trace.
+pub const BATCH_EXTENSION_WIDTH: usize = BATCH_TRACE_WIDTH - BASE_TRACE_WIDTH;
 
 /// Minimum trace length for batch proofs
 pub const MIN_BATCH_TRACE_LENGTH: usize = 256;
@@ -32,6 +32,12 @@ pub const MAX_BATCH_SIZE: usize = 128;
 
 /// Rows needed per event for compliance verification
 pub const ROWS_PER_EVENT: usize = 4;
+
+/// Multiplicative factor used in the batch compliance accumulator update.
+///
+/// See `BatchComplianceAir` for how this is used to keep the accumulator non-constant in the
+/// all-compliant case without changing the final boolean output.
+pub const COMPLIANCE_ACC_GAMMA: u64 = 7;
 
 /// Column indices for the batch trace
 pub mod batch_cols {
@@ -96,10 +102,17 @@ pub mod batch_cols {
     // Compliance accumulator
     // =========================================================================
     /// Running AND of all compliance flags
-    /// Starts at 1, multiplied by each event's compliance flag
+    ///
+    /// Internally, the trace scales updates by `COMPLIANCE_ACC_GAMMA` and initializes the column
+    /// to `GAMMA^{-num_events}` so that:
+    /// - the accumulator is non-constant even when all events are compliant
+    /// - the final value is still a boolean: `1` if all flags are 1, else `0`
     pub const COMPLIANCE_ACCUMULATOR: usize = NEW_STATE_ROOT_END;
 
-    /// Current event's compliance flag (copied from comparison result)
+    /// Per-event compliance flag consumed by the AIR on a specific row within each event.
+    ///
+    /// On other rows (where the flag is not read by constraints), the trace may contain arbitrary
+    /// binary filler values.
     pub const EVENT_COMPLIANCE_FLAG: usize = COMPLIANCE_ACCUMULATOR + 1;
 
     // =========================================================================
@@ -146,9 +159,30 @@ pub mod batch_cols {
     pub const METADATA_HASH_END: usize = METADATA_HASH_START + 4;
 
     // =========================================================================
-    // Reserved (last column)
+    // Policy fields (bound to public inputs)
     // =========================================================================
-    pub const RESERVED: usize = METADATA_HASH_END;
+    /// Policy hash (8 elements)
+    pub const POLICY_HASH_START: usize = METADATA_HASH_END;
+    pub const POLICY_HASH_END: usize = POLICY_HASH_START + 8;
+
+    /// Policy limit (threshold/cap, in the base field)
+    pub const POLICY_LIMIT: usize = POLICY_HASH_END;
+
+    // =========================================================================
+    // Events Done (last column)
+    // =========================================================================
+    /// Flag indicating the end of the event-processing segment of the trace.
+    ///
+    /// This is set to:
+    /// - `0` for all rows corresponding to real events
+    /// - `1` starting immediately after the last event, and must remain `1` for the remainder
+    ///
+    /// The AIR uses this to ensure the compliance accumulator is updated exactly once per event
+    /// (and never during Merkle/finalize/padding rows).
+    pub const EVENTS_DONE: usize = POLICY_LIMIT + 1;
+
+    /// Reserved (last column) - alias for backward compatibility.
+    pub const RESERVED: usize = EVENTS_DONE;
 
     // =========================================================================
     // Helper functions

@@ -14,7 +14,7 @@ pub mod rescue;
 pub use field::{felt_from_u64, felt_to_u64, Felt, FELT_ONE, FELT_ZERO};
 pub use hash::{felts_to_hash, hash_to_felts, Hash256};
 pub use public_inputs::{
-    canonical_json, compute_policy_hash, compute_public_inputs_hash, CompliancePublicInputs,
-    PolicyParams, PublicInputsError,
+    canonical_json, compute_policy_hash, compute_public_inputs_hash, witness_commitment_hex_to_u64,
+    witness_commitment_u64_to_hex, CompliancePublicInputs, PolicyParams, PublicInputsError,
 };
 pub use rescue::{rescue_hash, rescue_hash_pair, RescueState};

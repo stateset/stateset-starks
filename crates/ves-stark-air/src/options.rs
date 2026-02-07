@@ -13,6 +13,8 @@ pub enum OptionsError {
     InvalidNumQueries,
     #[error("blowup_factor must be a power of two >= 2, got {0}")]
     InvalidBlowupFactor(usize),
+    #[error("blowup_factor too small for current AIR: need >= {min_required}, got {actual}")]
+    BlowupFactorTooSmall { min_required: usize, actual: usize },
     #[error("fri_folding_factor must be a power of two >= 2, got {0}")]
     InvalidFriFoldingFactor(usize),
 }
@@ -61,7 +63,9 @@ impl ProofOptions {
     pub fn fast() -> Self {
         Self {
             num_queries: 20,
-            blowup_factor: 4,
+            // The current AIR uses degree-7/9 constraints (Rescue x^7), so Winterfell requires
+            // a minimum blowup factor of 8 for soundness.
+            blowup_factor: 8,
             grinding_factor: 8,
             field_extension: FieldExtension::None,
             fri_folding_factor: 8,
@@ -86,6 +90,16 @@ impl ProofOptions {
         }
         if self.blowup_factor < 2 || !self.blowup_factor.is_power_of_two() {
             return Err(OptionsError::InvalidBlowupFactor(self.blowup_factor));
+        }
+        // Our current AIR includes Rescue x^7 constraints (degree-7/9 numerators), which require a
+        // minimum blowup factor of 8 in Winterfell. Smaller values can lead to invalid proofs or
+        // runtime assertions.
+        const MIN_REQUIRED_BLOWUP: usize = 8;
+        if self.blowup_factor < MIN_REQUIRED_BLOWUP {
+            return Err(OptionsError::BlowupFactorTooSmall {
+                min_required: MIN_REQUIRED_BLOWUP,
+                actual: self.blowup_factor,
+            });
         }
         if self.fri_folding_factor < 2 || !self.fri_folding_factor.is_power_of_two() {
             return Err(OptionsError::InvalidFriFoldingFactor(

@@ -23,9 +23,9 @@
 //! 3. **Recomposition Correctness**: The constraint `limb = Σ(bit[i] × 2^i)`
 //!    ensures the bit representation matches the limb value.
 //!
-//! 4. **Comparison Integrity**: The comparison result is computed honestly
-//!    from the limb difference, and the final result is bound via
-//!    boundary constraints.
+//! 4. **Inequality Integrity**: A 2-limb (u64) subtraction gadget enforces
+//!    `amount <= effective_limit`, and the final borrow is bound via a
+//!    boundary assertion.
 //!
 //! ## Formal Constraint Specification
 //!
@@ -45,18 +45,32 @@
 //! 2. T[FLAG_IS_LAST][last] = 1
 //!    Purpose: Mark last row for finalization checks
 //!
-//! 3. T[THRESHOLD_START][0] = threshold_low
-//!    T[THRESHOLD_START+1][0] = threshold_high
-//!    Purpose: Bind public threshold to trace
+//! 3. T[ROUND_COUNTER][0] = 0
+//!    T[ROUND_COUNTER][last] = last
+//!    Purpose: Bind the round counter to row index (and thus trace length).
 //!
-//! 4. T[COMPARISON_END-1][last] = 1
-//!    Purpose: Assert final comparison result is TRUE (amount < threshold)
+//! 4. T[THRESHOLD_START][0] = limit_low
+//!    T[THRESHOLD_START+1][0] = limit_high
+//!    Purpose: Bind public threshold to trace
 //!
 //! 5. T[AMOUNT_START+i][0] = 0  for i in 2..8
 //!    Purpose: Upper limbs zero (amount fits in 64 bits)
 //!
-//! 6. T[RESCUE_STATE_START+i][0] = witness_commitment[i]  for i in 0..4
-//!    Purpose: Bind witness commitment hash to trace
+//! 6. T[THRESHOLD_START+i][0] = 0  for i in 2..8
+//!    Purpose: Upper limbs zero (limit fits in 64 bits)
+//!
+//! 7. T[DIFF_START+i][0] = 0  for i in 2..8
+//!    Purpose: Upper limbs zero (diff fits in 64 bits)
+//!
+//! 8. T[BORROW_START+1][0] = 0
+//!    Purpose: Final borrow is zero, enforcing amount <= limit.
+//!
+//! 9. T[RESCUE_STATE_START+8][0] = 8
+//!    T[RESCUE_STATE_START+9..12][0] = 0
+//!    Purpose: Rescue sponge domain separator and capacity padding.
+//!
+//! 10. T[RESCUE_STATE_START+i][14] = witness_commitment[i]  for i in 0..4
+//!     Purpose: Bind witness commitment hash to the Rescue output row.
 //! ```
 //!
 //! ### Transition Constraints (Adjacent Rows)
@@ -65,7 +79,7 @@
 //! Constraint 0: Round Counter Increment
 //!   counter[next] - counter[curr] - 1 ≡ 0
 //!   Degree: 1
-//!   Purpose: Ensure trace has correct length
+//!   Purpose: Together with boundary assertions, binds counter to row index.
 //!
 //! Comparison constraints are gated by the periodic column `rescue_init`
 //! (1 only on row 0). This enforces correctness at row 0 while allowing
@@ -119,12 +133,9 @@
 //!
 //! ## Security Level
 //!
-//! With the Winterfell STARK backend:
-//! - Field: Goldilocks (64-bit prime)
-//! - Hash: Blake3 for Merkle commitments
-//! - FRI: 128-bit security with appropriate parameters
-//!
-//! The overall proof provides ~128-bit security against forging.
+//! Security depends on the chosen `ProofOptions` (FRI queries, blowup factor, grinding factor,
+//! field extension degree, etc.). This crate exposes `ProofOptions::{default, fast, secure}` as
+//! convenient presets, but callers should treat the included security estimate as approximate.
 
 use crate::policies::aml_threshold::AmlThresholdPolicy;
 use crate::rescue_air::{MDS, MDS_INV, ROUND_CONSTANTS};
@@ -280,6 +291,23 @@ impl Air for ComplianceAir {
     type GkrVerifier = ();
 
     fn new(trace_info: TraceInfo, pub_inputs: Self::PublicInputs, options: ProofOptions) -> Self {
+        // We assert against the Rescue output row, so the trace must be long enough.
+        assert!(
+            trace_info.length() > RESCUE_OUTPUT_ROW,
+            "trace length {} too short; must be > {}",
+            trace_info.length(),
+            RESCUE_OUTPUT_ROW
+        );
+        // Never allow constructing an AIR instance with missing public inputs. If this invariant is
+        // violated, `get_assertions()` could silently bind fewer public inputs in release builds.
+        assert_eq!(
+            pub_inputs.elements.len(),
+            cols::PUBLIC_INPUTS_LEN,
+            "public input element length mismatch: expected {}, got {}",
+            cols::PUBLIC_INPUTS_LEN,
+            pub_inputs.elements.len()
+        );
+
         // Build transition constraint degrees
         let mut degrees = Vec::with_capacity(NUM_CONSTRAINTS);
 
@@ -330,8 +358,8 @@ impl Air for ComplianceAir {
             degrees.push(TransitionConstraintDegree::new(2));
         }
 
-        // Number of boundary assertions: 78 (see get_assertions)
-        let context = AirContext::new(trace_info, degrees, 78, options);
+        // Number of boundary assertions: 80 (see get_assertions)
+        let context = AirContext::new(trace_info, degrees, 80, options);
 
         Self {
             context,
@@ -354,6 +382,14 @@ impl Air for ComplianceAir {
         // Boundary constraint: last row flag = 1
         let last_row = self.trace_length() - 1;
         assertions.push(Assertion::single(cols::FLAG_IS_LAST, last_row, FELT_ONE));
+
+        // Bind the round counter to row index.
+        assertions.push(Assertion::single(cols::ROUND_COUNTER, 0, FELT_ZERO));
+        assertions.push(Assertion::single(
+            cols::ROUND_COUNTER,
+            last_row,
+            felt_from_u64(last_row as u64),
+        ));
 
         // Boundary constraint: policy limit values match public input
         let threshold_low = felt_from_u64(self.policy_limit & 0xFFFFFFFF);
@@ -410,7 +446,7 @@ impl Air for ComplianceAir {
         }
 
         // Boundary constraint: bind public input elements into trace columns
-        debug_assert_eq!(
+        assert_eq!(
             self.public_inputs.len(),
             cols::PUBLIC_INPUTS_LEN,
             "public input element length mismatch"
@@ -727,6 +763,7 @@ mod tests {
             policy_id: "aml.threshold".to_string(),
             policy_params: PolicyParams::threshold(10000),
             policy_hash: "0".repeat(64),
+            witness_commitment: None,
         }
     }
 
@@ -758,7 +795,7 @@ mod tests {
             .unwrap();
 
         let assertions = air.get_assertions();
-        assert!(!assertions.is_empty());
+        assert_eq!(assertions.len(), 80);
     }
 
     #[test]

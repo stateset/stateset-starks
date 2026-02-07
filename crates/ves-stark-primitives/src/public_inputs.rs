@@ -103,6 +103,13 @@ pub struct CompliancePublicInputs {
 
     /// Policy hash (hex32, lowercase, no 0x)
     pub policy_hash: String,
+
+    /// Witness commitment to the private witness amount, encoded as 32 bytes hex (lowercase, no 0x).
+    ///
+    /// When present, verifiers SHOULD require the proof's witness commitment matches this value
+    /// to bind the proven witness to the canonical public inputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness_commitment: Option<String>,
 }
 
 impl CompliancePublicInputs {
@@ -128,6 +135,16 @@ impl CompliancePublicInputs {
     pub fn validate_policy_hash(&self) -> Result<bool, PublicInputsError> {
         let computed = Self::compute_policy_hash(&self.policy_id, &self.policy_params)?;
         Ok(computed.to_hex() == self.policy_hash)
+    }
+
+    /// Parse the optional `witnessCommitment` field into the u64 array form used by the prover/verifier.
+    ///
+    /// Encoding: 32 bytes represented as 64 lowercase hex characters, interpreted as 4 big-endian u64s.
+    pub fn witness_commitment_u64(&self) -> Result<Option<[u64; 4]>, PublicInputsError> {
+        let Some(hex_str) = self.witness_commitment.as_deref() else {
+            return Ok(None);
+        };
+        Ok(Some(witness_commitment_hex_to_u64(hex_str)?))
     }
 }
 
@@ -169,6 +186,9 @@ impl CompliancePublicInputsFelts {
         validate_hex_string("payloadCipherHash", &inputs.payload_cipher_hash, 64)?;
         validate_hex_string("eventSigningHash", &inputs.event_signing_hash, 64)?;
         validate_hex_string("policyHash", &inputs.policy_hash, 64)?;
+        if let Some(commitment) = inputs.witness_commitment.as_deref() {
+            validate_hex_string("witnessCommitment", commitment, 64)?;
+        }
 
         Ok(Self {
             event_id: uuid_to_felts(&inputs.event_id),
@@ -224,6 +244,43 @@ impl CompliancePublicInputsFelts {
         result.extend_from_slice(&self.policy_hash);
         result
     }
+}
+
+/// Encode a witness commitment (4 u64s) as a 32-byte big-endian hex string.
+pub fn witness_commitment_u64_to_hex(commitment: &[u64; 4]) -> String {
+    let mut bytes = [0u8; 32];
+    for (i, v) in commitment.iter().enumerate() {
+        let offset = i * 8;
+        bytes[offset..offset + 8].copy_from_slice(&v.to_be_bytes());
+    }
+    hex::encode(bytes)
+}
+
+/// Decode a witness commitment from a 32-byte big-endian hex string into 4 u64 limbs.
+pub fn witness_commitment_hex_to_u64(hex_str: &str) -> Result<[u64; 4], PublicInputsError> {
+    validate_hex_string("witnessCommitment", hex_str, 64)?;
+
+    let bytes = hex::decode(hex_str).map_err(|e| PublicInputsError::InvalidHex {
+        field: "witnessCommitment",
+        source: e,
+    })?;
+
+    if bytes.len() != 32 {
+        return Err(PublicInputsError::InvalidHexFormat {
+            field: "witnessCommitment",
+            reason: format!("expected 32 bytes, got {}", bytes.len()),
+        });
+    }
+
+    let mut out = [0u64; 4];
+    for (i, v) in out.iter_mut().enumerate() {
+        let offset = i * 8;
+        let mut limb = [0u8; 8];
+        limb.copy_from_slice(&bytes[offset..offset + 8]);
+        *v = u64::from_be_bytes(limb);
+    }
+
+    Ok(out)
 }
 
 /// Convert a UUID to 4 field elements (each u32 limb)
@@ -360,6 +417,7 @@ mod tests {
             policy_id: "aml.threshold".to_string(),
             policy_params: PolicyParams::threshold(10000),
             policy_hash: "d".repeat(64),
+            witness_commitment: None,
         };
 
         let felts = inputs.to_field_elements().unwrap();
@@ -389,6 +447,7 @@ mod tests {
             policy_id: policy_id.to_string(),
             policy_params: params,
             policy_hash: hash.to_hex(),
+            witness_commitment: None,
         };
 
         assert!(inputs.validate_policy_hash().unwrap());
@@ -408,9 +467,61 @@ mod tests {
             policy_id: "aml.threshold".to_string(),
             policy_params: PolicyParams::threshold(10000),
             policy_hash: "d".repeat(64),
+            witness_commitment: None,
         };
 
         let result = inputs.to_field_elements();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_witness_commitment_hex_roundtrip() {
+        let commitment = [1u64, 2, 3, 4];
+        let commitment_hex = witness_commitment_u64_to_hex(&commitment);
+
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "0".repeat(64),
+            event_signing_hash: "0".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10000),
+            policy_hash: "0".repeat(64),
+            witness_commitment: Some(commitment_hex),
+        };
+
+        let recovered = inputs.witness_commitment_u64().unwrap().unwrap();
+        assert_eq!(recovered, commitment);
+    }
+
+    #[test]
+    fn test_witness_commitment_hex_uppercase_rejected() {
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "0".repeat(64),
+            event_signing_hash: "0".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10000),
+            policy_hash: "0".repeat(64),
+            witness_commitment: Some("A".repeat(64)),
+        };
+
+        let err = inputs.witness_commitment_u64().unwrap_err();
+        assert!(matches!(
+            err,
+            PublicInputsError::InvalidHexFormat {
+                field: "witnessCommitment",
+                ..
+            }
+        ));
     }
 }

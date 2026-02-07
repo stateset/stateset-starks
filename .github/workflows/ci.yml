@@ -6,9 +6,17 @@ on:
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  RUST_TOOLCHAIN: 1.90.0
 
 jobs:
   check:
@@ -18,8 +26,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy, rustfmt
 
       - name: Cache cargo registry
@@ -37,10 +46,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       - name: Build
-        run: cargo build --all-targets
+        run: cargo build --locked --workspace --all-targets --all-features
 
   test:
     name: Test Suite
@@ -49,7 +58,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -62,20 +73,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Run unit tests
-        run: cargo test --all
-
-      - name: Run integration tests
-        run: cargo test --test integration_test
-
-      - name: Run adversarial tests
-        run: cargo test --test adversarial_test
-
-      - name: Run property tests
-        run: cargo test --test property_test
-
-      - name: Run batch tests
-        run: cargo test --test batch_integration_test
+      - name: Run tests
+        run: cargo test --locked --workspace --all-features
 
   security:
     name: Security Audit
@@ -84,10 +83,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
 
       - name: Security audit
         run: cargo audit
@@ -99,7 +100,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -113,7 +116,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Check benchmarks compile
-        run: cargo bench --no-run
+        run: cargo bench --locked --workspace --all-features --no-run
 
   docs:
     name: Documentation
@@ -122,7 +125,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -136,7 +141,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build documentation
-        run: cargo doc --no-deps --all-features
+        run: cargo doc --locked --workspace --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -147,18 +152,111 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: llvm-tools-preview
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate coverage report
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov --locked --all-features --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
           files: lcov.info
           fail_ci_if_error: false
+
+  nodejs:
+    name: Node.js Bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: crates/ves-stark-nodejs/package-lock.json
+
+      - name: Install dependencies
+        working-directory: crates/ves-stark-nodejs
+        run: npm ci
+
+      - name: Build native addon
+        working-directory: crates/ves-stark-nodejs
+        run: npm run build
+
+      - name: Run tests
+        working-directory: crates/ves-stark-nodejs
+        run: npm test
+
+  python:
+    name: Python Bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: crates/ves-stark-python/pyproject.toml
+
+      - name: Create venv
+        working-directory: crates/ves-stark-python
+        run: python -m venv .venv
+
+      - name: Install Python tooling
+        working-directory: crates/ves-stark-python
+        run: |
+          source .venv/bin/activate
+          python -m pip install --upgrade pip maturin pytest
+
+      - name: Build and install extension
+        working-directory: crates/ves-stark-python
+        run: |
+          source .venv/bin/activate
+          maturin develop --release
+
+      - name: Run tests
+        working-directory: crates/ves-stark-python
+        run: |
+          source .venv/bin/activate
+          pytest -q

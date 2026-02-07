@@ -1,23 +1,19 @@
 //! AML Threshold Policy Constraints
 //!
-//! This policy proves that an amount (from the encrypted payload) is strictly
-//! less than a given threshold, without revealing the actual amount.
+//! Semantic statement: a private `amount` must satisfy `amount < threshold`.
 //!
-//! # Constraint Strategy
+//! ## How This Is Enforced In The AIR
 //!
-//! To prove `amount < threshold` we use a comparison gadget that works on
-//! u32 limbs (8 limbs = 256 bits, though we typically only use lower limbs).
+//! The current compliance AIR enforces strict inequality by reducing it to a non-strict check:
+//! - define `effective_limit = threshold - 1` (threshold must be > 0)
+//! - prove `amount <= effective_limit` via a 2-limb (u64) subtraction gadget
 //!
-//! The comparison is done lexicographically from high limb to low limb:
-//! - If high limbs are equal, compare next lower limbs
-//! - If high limb of amount < high limb of threshold, amount < threshold
-//! - We track a "less than" flag and an "equal" flag through the comparison
+//! Range validity for the active limbs is enforced in-AIR via 32-bit decomposition of limbs 0-1.
 //!
-//! # Range Check
+//! ## Note On Legacy Comparison Helpers
 //!
-//! We also need to prove that each limb is a valid u32 (< 2^32).
-//! This is done by decomposing each limb into bits and constraining
-//! the bit decomposition.
+//! This module also contains limb-wise comparison helpers used by some trace builders to populate
+//! legacy columns. The main compliance AIR does not rely on those legacy comparison columns.
 
 use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
 

@@ -327,6 +327,7 @@ mod tests {
             policy_id: policy_id.to_string(),
             policy_params: params,
             policy_hash: hash.to_hex(),
+            witness_commitment: None,
         }
     }
 

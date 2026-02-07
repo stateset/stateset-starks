@@ -8,7 +8,7 @@ use napi_derive::napi;
 use uuid::Uuid;
 
 use ves_stark_air::Policy;
-use ves_stark_primitives::{CompliancePublicInputs, PolicyParams};
+use ves_stark_primitives::{witness_commitment_hex_to_u64, CompliancePublicInputs, PolicyParams};
 use ves_stark_prover::{ComplianceProver, ComplianceWitness};
 use ves_stark_verifier::verify_compliance_proof_auto;
 
@@ -37,6 +37,8 @@ pub struct JsCompliancePublicInputs {
     pub policy_params: serde_json::Value,
     /// Policy hash (hex64, lowercase)
     pub policy_hash: String,
+    /// Optional witness commitment (hex64, lowercase) to bind the proved witness to canonical inputs.
+    pub witness_commitment: Option<String>,
 }
 
 /// Result of proof generation
@@ -52,6 +54,8 @@ pub struct JsComplianceProof {
     pub proof_size: i64,
     /// Witness commitment (4 x u64 as field elements)
     pub witness_commitment: Vec<i64>,
+    /// Witness commitment encoded as 32 bytes (4 x u64 big-endian) and hex-encoded (64 chars).
+    pub witness_commitment_hex: String,
 }
 
 /// Result of proof verification
@@ -90,6 +94,7 @@ fn convert_public_inputs(js: &JsCompliancePublicInputs) -> Result<CompliancePubl
         policy_id: js.policy_id.clone(),
         policy_params: PolicyParams(js.policy_params.clone()),
         policy_hash: js.policy_hash.clone(),
+        witness_commitment: js.witness_commitment.clone(),
     })
 }
 
@@ -153,6 +158,12 @@ pub fn prove(
 
     // Convert witness commitment to i64 vec (JS doesn't have native u64)
     let witness_commitment: Vec<i64> = proof.witness_commitment.iter().map(|&v| v as i64).collect();
+    let witness_commitment_hex = proof.witness_commitment_hex.clone().ok_or_else(|| {
+        Error::new(
+            Status::GenericFailure,
+            "Missing witness_commitment_hex in proof".to_string(),
+        )
+    })?;
 
     Ok(JsComplianceProof {
         proof_bytes: Buffer::from(proof.proof_bytes),
@@ -160,6 +171,7 @@ pub fn prove(
         proving_time_ms: proof.metadata.proving_time_ms as i64,
         proof_size: proof.metadata.proof_size as i64,
         witness_commitment,
+        witness_commitment_hex,
     })
 }
 
@@ -194,6 +206,46 @@ pub fn verify(
         witness_commitment[2] as u64,
         witness_commitment[3] as u64,
     ];
+
+    // Verify proof
+    let result = verify_compliance_proof_auto(&proof_bytes, &rust_inputs, &commitment);
+
+    match result {
+        Ok(verification) => Ok(JsVerificationResult {
+            valid: verification.valid,
+            verification_time_ms: verification.verification_time_ms as i64,
+            error: verification.error,
+            policy_id: verification.policy_id,
+            policy_limit: verification.policy_limit as i64,
+        }),
+        Err(e) => Ok(JsVerificationResult {
+            valid: false,
+            verification_time_ms: 0,
+            error: Some(format!("Verification error: {}", e)),
+            policy_id: public_inputs.policy_id,
+            policy_limit: 0,
+        }),
+    }
+}
+
+/// Verify a STARK compliance proof using the witness commitment hex string.
+///
+/// This avoids `u64` round-trip issues in JavaScript.
+#[napi]
+pub fn verify_hex(
+    proof_bytes: Buffer,
+    public_inputs: JsCompliancePublicInputs,
+    witness_commitment_hex: String,
+) -> Result<JsVerificationResult> {
+    // Convert public inputs
+    let rust_inputs = convert_public_inputs(&public_inputs)?;
+
+    let commitment = witness_commitment_hex_to_u64(&witness_commitment_hex).map_err(|e| {
+        Error::new(
+            Status::InvalidArg,
+            format!("Invalid witnessCommitmentHex: {}", e),
+        )
+    })?;
 
     // Verify proof
     let result = verify_compliance_proof_auto(&proof_bytes, &rust_inputs, &commitment);

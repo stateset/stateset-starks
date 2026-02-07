@@ -1,165 +1,149 @@
 # VES-STARK Threat Model
 
-This document defines the threat model for the VES (Verifiable Encrypted State) STARK proof system used for compliance verification.
+This document defines a concrete threat model for the current VES-STARK proof system.
 
-## System Overview
+## Scope
 
-VES-STARK enables zero-knowledge proofs of policy compliance for encrypted transaction data. The system proves statements like "the encrypted amount is less than threshold X" without revealing the actual amount.
+This threat model covers:
+- Per-event compliance proofs (`ves-stark-air`, `ves-stark-prover`, `ves-stark-verifier`)
 
-### Components
+It explicitly does not cover:
+- Batch proofs (`ves-stark-batch`) which are experimental and incomplete
+- Payload encryption/decryption correctness
+- Merkle/state-transition correctness outside the single-event AIR
 
-1. **Prover**: Generates STARK proofs from private witness data
-2. **Verifier**: Validates proofs against public inputs
-3. **Public Inputs**: Policy parameters, event metadata, hashes
-4. **Private Witness**: The actual amount being proven compliant
+## Statement Proven (Per-Event Compliance)
+
+Given:
+- Public inputs (event metadata, payload hashes, policy id/params/hash)
+- A public witness commitment `C`
+
+A valid proof attests that there exists a private witness `amount` (a u64) such that:
+- The policy inequality holds:
+  - `aml.threshold`: `amount < threshold` (implemented as `amount <= threshold - 1`)
+  - `order_total.cap`: `amount <= cap`
+- `C` is the Rescue commitment to the witness amount (first 4 elements of the constrained Rescue
+  state after permutation).
+- The provided public inputs are bound to the proof instance via boundary assertions into trace
+  columns (row 0).
+
+Optional hardening: the canonical public inputs may include `witnessCommitment` (the same `C`,
+hex-encoded). If present, verifiers should require it matches the proof's witness commitment to
+bind the proved witness to the canonical public inputs.
+
+Important: the current AIR does **not** prove that `amount` is derived from, equal to, or otherwise
+consistent with the payload hashes in the public inputs. That linkage must be enforced by the
+surrounding protocol/pipeline (or by extending the AIR).
 
 ## Adversary Model
 
 ### Threat Actors
 
-| Actor | Capability | Goal |
-|-------|------------|------|
-| Malicious Prover | Full control over witness and trace generation | Forge proof for non-compliant amount |
-| External Attacker | Can observe and modify proofs in transit | Tamper with proofs or public inputs |
-| Malicious Verifier | Can choose verification parameters | Accept invalid proofs |
+- Malicious prover: controls witness and trace generation and attempts to produce a verifying proof
+  for a false statement.
+- Network attacker: can replay or tamper with proof/public-input bytes in transit.
+- Malicious verifier: can choose verification parameters; mitigations rely on verifiers enforcing
+  acceptable proof options.
 
 ### Adversary Goals
 
-1. **Proof Forgery**: Create a valid proof for an amount that violates the policy (amount >= threshold)
+- Forge a proof for a non-compliant amount.
+- Mismatch the policy (prove under one policy, verify under another).
+- Tamper with public inputs (event metadata / payload hashes) while keeping the proof valid.
 
-2. **Witness Manipulation**: Change the committed amount after proof generation while maintaining proof validity
+## Security Properties (Expected To Hold)
 
-3. **Policy Bypass**: Generate a proof against one policy but have it verify against a different policy
+### Soundness (Inequality)
 
-4. **Public Input Tampering**: Modify public inputs (threshold, event metadata) to make an invalid proof verify
+If the verifier accepts, then with overwhelming probability there exists a witness `amount` that
+satisfies the enforced inequality (under standard STARK assumptions and the configured proof
+options).
 
-5. **Replay Attacks**: Reuse a proof for a different transaction/event
+### Witness Binding
 
-## Security Properties
+The proof includes constraints for the Rescue permutation, and boundary-asserts the Rescue output
+row to match the public commitment `C`. This binds the witness `amount` (limbs) to `C`.
 
-### Required Properties (Must Hold)
+### Range Validity (u64)
 
-| Property | Definition | Enforcement |
-|----------|------------|-------------|
-| **Soundness** | If verifier accepts, prover knows valid witness (amount < threshold) | AIR constraints, FRI protocol |
-| **Knowledge Binding** | Witness commitment cryptographically binds the private amount | Rescue-Prime hash commitment |
-| **Policy Binding** | Proof is bound to specific policy ID and parameters | Policy hash in public inputs |
-| **Range Validity** | All limbs are provably valid u32 values (< 2^32) | Binary decomposition constraints |
-| **Comparison Integrity** | Comparison result is correctly computed from limbs | Subtraction constraints with borrows |
+The AIR range-checks the active limbs:
+- Amount limbs 0-1 and diff limbs 0-1 are constrained via 32-bit bit decomposition.
+- Upper limbs 2-7 are boundary-asserted to 0.
 
-### Desired Properties
+### Policy Binding
 
-| Property | Definition | Status |
-|----------|------------|--------|
-| **Zero Knowledge** | Proof reveals nothing about amount beyond compliance | Provided by STARK protocol |
-| **Non-Malleability** | Cannot modify proof without detection | Merkle commitments in FRI |
-| **Replay Protection** | Proof bound to specific event | Event ID in public inputs |
+The verifier checks the policy hash and policy parameters and the AIR binds the effective policy
+limit into the trace via boundary assertions.
 
-## Attack Vectors and Mitigations
+## Out Of Scope / Assumptions
+
+### Amount-to-Payload Binding
+
+The AIR does not bind `amount` to payload hashes. Applications must not interpret a valid proof as
+meaning "the encrypted payload's amount is compliant" unless the surrounding protocol enforces the
+link (e.g., decryption/parsing + signed statement that binds `amount` to the payload hashes).
+
+### Replay Protection
+
+Replay protection is an application-level property. The public inputs include event identifiers,
+but verifiers/services must still enforce uniqueness and correct sequencing.
+
+## Attack Vectors And Mitigations
 
 ### 1. Non-Binary Bit Manipulation
 
-**Attack**: Malicious prover sets "bit" columns to non-binary values (e.g., 0.5) that sum to correct limb but represent different actual values.
+Attack: set "bit" columns to non-binary values to fake a range proof.
 
-**Mitigation**: Binary constraints `b * (1 - b) = 0` for every bit column in AIR.
+Mitigation: AIR enforces `b * (1 - b) = 0` for every bit column (gated to row 0).
 
-### 2. Fake Limb Values
+### 2. Subtraction Gadget Manipulation
 
-**Attack**: Prover uses field elements >= 2^32 as "limb" values to bypass subtraction.
+Attack: provide incorrect diff/borrow values to claim `amount <= limit` when `amount > limit`.
 
-**Mitigation**: Binary decomposition of all 8 limbs (256 bits total) ensures each limb is a valid u32.
+Mitigation: limb-wise subtraction constraints plus borrow binary constraints, and a boundary
+assertion that the final borrow is 0.
 
-### 3. Subtraction Gadget Manipulation
+### 3. Commitment Forgery
 
-**Attack**: Prover provides incorrect diff/borrow values to claim amount <= limit when amount > limit.
+Attack: provide a commitment `C` unrelated to the actual witness.
 
-**Mitigation**: Full subtraction gadget constraints:
-- `diff[i]` range proofs for each limb
-- `borrow[i]` binary constraints
-- Limb-wise subtraction constraints with borrows
-- Final boundary assertion that `borrow[1] = 0`
+Mitigation: Rescue permutation constraints + boundary assertion on the Rescue output row.
 
-### 4. Hash Commitment Forgery
+### 4. Policy Mismatch
 
-**Attack**: Prover provides arbitrary commitment value unrelated to actual amount.
+Attack: generate a proof under one policy but have it verify under a different policy.
 
-**Mitigation**: Full Rescue-Prime permutation constraints verify:
-- Initial state is amount_limbs + domain separator
-- All 7 rounds are correctly computed
-- Final state matches commitment
+Mitigation: verifier recomputes and checks `policy_hash`, and also checks the policy id/params match
+the expected policy; the AIR binds the effective limit into the trace.
 
-### 5. Policy Mismatch
+### 5. Public Input Substitution
 
-**Attack**: Generate proof with threshold=1000000, verify with threshold=1000.
+Attack: swap event metadata or payload hashes while reusing a proof.
 
-**Mitigation**:
-- Policy hash binds policy_id + parameters
-- Verifier validates policy hash
-- Threshold embedded in boundary assertions
+Mitigation: the AIR binds public inputs into dedicated trace columns via boundary assertions.
 
-### 6. Public Input Substitution
-
-**Attack**: Use public inputs from different event with same threshold.
-
-**Mitigation**:
-- Event ID, tenant ID, store ID in public inputs
-- Payload hashes bind to specific encrypted data
-- All public inputs contribute to proof verification
-
-## Trust Assumptions
-
-### Trusted
-
-1. **Winterfell Library**: Correct implementation of STARK protocol
-2. **Rescue-Prime Parameters**: Cryptographically secure (standard parameters)
-3. **Goldilocks Field**: p = 2^64 - 2^32 + 1 provides ~64-bit security
-4. **Verifier Implementation**: Correctly validates all constraints
-
-### Untrusted
-
-1. **Prover**: May attempt to forge proofs
-2. **Witness Data**: Must be verified through constraints
-3. **Network**: Proofs may be tampered in transit (integrity via proof hash)
-4. **Public Input Sources**: Must be validated by verifier
+Important caveat: because public inputs are not linked to `amount` inside the AIR, a malicious
+prover could generate a valid proof for a chosen `amount` and arbitrary payload hashes. Preventing
+this requires amount-to-payload binding in the surrounding protocol (or in the AIR).
 
 ## Security Parameters
 
-| Parameter | Value | Security Implication |
-|-----------|-------|---------------------|
-| Field size | 64 bits (Goldilocks) | ~64-bit algebraic security |
-| FRI security | 128 bits | Computational soundness |
-| Rescue capacity | 256 bits | ~128-bit collision resistance |
-| Trace blowup | 8x | Trade-off: size vs security |
-| Query count | 80 | Statistical soundness |
+Proof soundness and performance are determined by `ves_stark_air::options::ProofOptions`. As of
+this repository version:
 
-## Proof Version Compatibility
+- `default`: `num_queries=28`, `blowup_factor=8`, `grinding_factor=16`, `field_extension=None`,
+  `fri_folding_factor=8`
+- `fast`: `num_queries=20`, `blowup_factor=8`, `grinding_factor=8`, `field_extension=None`,
+  `fri_folding_factor=8`
+- `secure`: `num_queries=40`, `blowup_factor=16`, `grinding_factor=20`,
+  `field_extension=Quadratic`, `fri_folding_factor=8`
 
-| Version | AIR Structure | Status |
-|---------|---------------|--------|
-| V1 | Legacy (167 constraints, partial range proofs) | Deprecated |
-| V2 | Full security (350 constraints, full permutation, u64 subtraction gadget) | Current |
-
-**Migration**: V1 proofs are rejected. All clients must regenerate proofs.
-
-## Incident Response
-
-### If Soundness Vulnerability Discovered
-
-1. Immediately notify all verifier deployments
-2. Reject all proofs until patch deployed
-3. Require proof regeneration from all provers
-4. Conduct security audit of similar constraint patterns
-
-### If Side-Channel Leak Discovered
-
-1. Assess information leakage severity
-2. If amount revealed: treat as privacy breach
-3. Update prover to constant-time operations
-4. Regenerate affected proofs if necessary
+The helper `ProofOptions::try_security_level()` provides an internal rough estimate; it is not a
+formal security proof.
 
 ## References
 
-- [STARK Protocol](https://eprint.iacr.org/2018/046)
-- [Rescue-Prime](https://eprint.iacr.org/2020/1143)
-- [Winterfell Library](https://github.com/facebook/winterfell)
-- [Goldilocks Field](https://cr.yp.to/papers.html#goldilocks)
+- Ben-Sasson et al., "Scalable, transparent, and post-quantum secure computational integrity"
+  (STARKs)
+- Grassi et al., "Rescue-Prime"
+- Winterfell library documentation

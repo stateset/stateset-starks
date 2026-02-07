@@ -3,6 +3,7 @@ name = "ves-stark-air"
 description = "AIR constraint definitions for VES STARK proofs"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

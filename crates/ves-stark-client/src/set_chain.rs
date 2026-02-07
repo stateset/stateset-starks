@@ -183,40 +183,47 @@ impl SetChainClient {
     /// * `api_key` - The API key for authentication
     /// * `config` - Set Chain configuration
     pub fn new(base_url: &str, api_key: &str, config: SetChainConfig) -> Self {
+        Self::try_new(base_url, api_key, config).expect("Failed to build HTTP client")
+    }
+
+    /// Create a new Set Chain client without panicking.
+    pub fn try_new(base_url: &str, api_key: &str, config: SetChainConfig) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
-        );
+        let auth_value = HeaderValue::from_str(&format!("Bearer {}", api_key))
+            .map_err(|e| ClientError::InvalidHeader(e.to_string()))?;
+        headers.insert(AUTHORIZATION, auth_value);
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
-            .build()
-            .expect("Failed to build HTTP client");
+            .build()?;
 
-        Self {
+        Ok(Self {
             client,
             base_url: base_url.trim_end_matches('/').to_string(),
             config,
-        }
+        })
     }
 
     /// Create a client without authentication (for local development)
     pub fn unauthenticated(base_url: &str, config: SetChainConfig) -> Self {
+        Self::try_unauthenticated(base_url, config).expect("Failed to build HTTP client")
+    }
+
+    /// Create a client without authentication (for local development) without panicking.
+    pub fn try_unauthenticated(base_url: &str, config: SetChainConfig) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
-            .build()
-            .expect("Failed to build HTTP client");
+            .build()?;
 
-        Self {
+        Ok(Self {
             client,
             base_url: base_url.trim_end_matches('/').to_string(),
             config,
-        }
+        })
     }
 
     /// Get the Set Chain configuration
@@ -493,13 +500,13 @@ mod tests {
     #[test]
     fn test_client_creation() {
         let config = SetChainConfig::local();
-        let _client = SetChainClient::new("http://localhost:8080", "test_key", config);
+        let _client = SetChainClient::try_new("http://localhost:8080", "test_key", config).unwrap();
     }
 
     #[test]
     fn test_unauthenticated_client() {
         let config = SetChainConfig::local();
-        let _client = SetChainClient::unauthenticated("http://localhost:8080", config);
+        let _client = SetChainClient::try_unauthenticated("http://localhost:8080", config).unwrap();
     }
 
     #[test]

@@ -10,11 +10,18 @@ STARK proving system for VES (Verifiable Event Sync) compliance proofs.
 
 Phase 1 implements per-event compliance proofs for:
 
-- **Policy**: Proves that an encrypted order amount is strictly less than a threshold
+- **Policy**: Proves that a private order amount is strictly less than a threshold
   - `aml.threshold`: amount < threshold (strict)
   - `order_total.cap`: amount <= cap (non-strict)
 - **Use Case**: AML compliance (e.g., "order total < $10,000") without data exposure
 - **Integration**: Works with `stateset-sequencer` proof registry
+
+Note: The current AIR does **not** prove that the private `amount` equals a value decrypted or
+parsed from the payload hashes in the public inputs. It proves a relationship about a private
+`amount` witness (bound via a Rescue commitment) under the assumption that the surrounding VES
+pipeline derived that witness correctly. If your sequencer/pipeline can derive a Rescue witness
+commitment from the payload, include it in the canonical public inputs as `witnessCommitment` and
+require it during verification to bind the proved witness to the canonical inputs.
 
 ## Architecture
 
@@ -52,9 +59,10 @@ let proof = prover.prove(&witness)?;
 ### Verify a Proof
 
 ```rust
-use ves_stark_verifier::verify_compliance_proof_auto;
+use ves_stark_verifier::verify_compliance_proof_auto_bound;
 
-let result = verify_compliance_proof_auto(&proof.proof_bytes, &public_inputs, &proof.witness_commitment)?;
+// Requires `public_inputs.witnessCommitment` to be present to bind the proof to canonical inputs.
+let result = verify_compliance_proof_auto_bound(&proof.proof_bytes, &public_inputs)?;
 assert!(result.valid);
 ```
 
@@ -96,12 +104,13 @@ Canonical public inputs (RFC 8785 JCS canonicalized):
   "storeId": "uuid",
   "sequenceNumber": 123,
   "payloadKind": 1,
-  "payloadPlainHash": "hex32",
-  "payloadCipherHash": "hex32",
-  "eventSigningHash": "hex32",
+  "payloadPlainHash": "hex64",
+  "payloadCipherHash": "hex64",
+  "eventSigningHash": "hex64",
   "policyId": "aml.threshold",
   "policyParams": {"threshold": 10000},
-  "policyHash": "hex32"
+  "policyHash": "hex64",
+  "witnessCommitment": "hex64"
 }
 ```
 
@@ -109,7 +118,7 @@ Canonical public inputs (RFC 8785 JCS canonicalized):
 
 - **Field**: Goldilocks (64-bit prime: p = 2^64 - 2^32 + 1)
 - **Hash**: Rescue-Prime (STARK-friendly, algebraic S-box)
-- **Security**: ~100 bits with default options
+- **Security**: target ~100-bit security with default `ProofOptions` (estimate; see `crates/ves-stark-air/src/options.rs`)
 - **Proof Size**: ~100-200 KB typical
 
 ## Docs
@@ -119,6 +128,8 @@ Canonical public inputs (RFC 8785 JCS canonicalized):
 - Rescue constants (frozen + hashed): `docs/RESCUE_CONSTANTS.md`
 
 ## Building
+
+Requires Rust `1.90.0` (pinned in `rust-toolchain.toml`).
 
 ```bash
 cargo build --release

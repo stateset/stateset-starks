@@ -107,6 +107,9 @@ pub struct CompliancePublicInputs {
     /// Policy hash (hex64, lowercase)
     #[pyo3(get, set)]
     pub policy_hash: String,
+    /// Optional witness commitment (hex64, lowercase) to bind the proved witness to canonical inputs.
+    #[pyo3(get, set)]
+    pub witness_commitment: Option<String>,
 }
 
 #[pymethods]
@@ -125,8 +128,9 @@ impl CompliancePublicInputs {
     ///     policy_id: Policy identifier (e.g., "aml.threshold")
     ///     policy_params: Policy parameters as dict
     ///     policy_hash: Policy hash (hex64, lowercase)
+    ///     witness_commitment: Optional witness commitment (hex64, lowercase)
     #[new]
-    #[pyo3(signature = (event_id, tenant_id, store_id, sequence_number, payload_kind, payload_plain_hash, payload_cipher_hash, event_signing_hash, policy_id, policy_params, policy_hash))]
+    #[pyo3(signature = (event_id, tenant_id, store_id, sequence_number, payload_kind, payload_plain_hash, payload_cipher_hash, event_signing_hash, policy_id, policy_params, policy_hash, witness_commitment=None))]
     pub fn new(
         event_id: String,
         tenant_id: String,
@@ -139,6 +143,7 @@ impl CompliancePublicInputs {
         policy_id: String,
         policy_params: &Bound<'_, PyDict>,
         policy_hash: String,
+        witness_commitment: Option<String>,
     ) -> PyResult<Self> {
         // Convert PyDict to JSON string
         let policy_params_json = Python::with_gil(|py| {
@@ -159,6 +164,7 @@ impl CompliancePublicInputs {
             policy_id,
             policy_params_json,
             policy_hash,
+            witness_commitment,
         })
     }
 
@@ -215,6 +221,7 @@ impl CompliancePublicInputs {
             policy_id: self.policy_id.clone(),
             policy_params: PolicyParams(policy_params),
             policy_hash: self.policy_hash.clone(),
+            witness_commitment: self.witness_commitment.clone(),
         })
     }
 }
@@ -235,6 +242,9 @@ pub struct ComplianceProof {
     pub proof_size: usize,
     /// Witness commitment (4 x u64)
     witness_commitment_vec: Vec<u64>,
+    /// Witness commitment encoded as 32 bytes (4 x u64 big-endian) and hex-encoded (64 chars).
+    #[pyo3(get)]
+    pub witness_commitment_hex: String,
 }
 
 #[pymethods]
@@ -335,6 +345,7 @@ pub fn prove(
         proving_time_ms: proof.metadata.proving_time_ms,
         proof_size: proof.metadata.proof_size,
         witness_commitment_vec: proof.witness_commitment.to_vec(),
+        witness_commitment_hex: proof.witness_commitment_hex.unwrap_or_default(),
     })
 }
 

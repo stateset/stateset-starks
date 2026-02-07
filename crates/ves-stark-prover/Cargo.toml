@@ -3,6 +3,7 @@ name = "ves-stark-prover"
 description = "STARK proof generation for VES compliance proofs"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

@@ -1,214 +1,113 @@
-# VES-STARK Soundness Analysis
+# VES-STARK Soundness Notes
 
-This document provides a formal soundness analysis of the VES-STARK constraint system.
+This document summarizes what the current per-event compliance proof proves, and the key algebraic
+checks that make the statement sound.
 
-## Soundness Definition
+## Proven Statement (Per-Event Compliance)
 
-A proof system is **sound** if:
+Given:
+- Public inputs `P` (event metadata, payload hashes, policy id/params/hash)
+- A public effective policy limit `L`
+- A public witness commitment `C` (4 field elements)
 
-> For any computationally bounded adversary A, the probability that A produces a proof that verifies but the claimed statement is false is negligible.
+A valid proof attests that there exists a private witness `amount` (a u64) such that:
+- `amount <= L`
+- `C == Rescue(amount_limbs)` (a Rescue commitment to the witness amount limbs, constrained in-AIR)
+- `P` is bound to the proof instance via boundary assertions into trace columns at row 0
 
-In our context: If the verifier accepts a proof, then with overwhelming probability:
-- The prover knows an amount value
-- That amount satisfies `amount < threshold` (or `amount <= cap`)
+Optional hardening: the canonical public inputs may include `witnessCommitment` (the same `C`,
+hex-encoded). If present, verifiers should require it matches the proof's witness commitment to
+bind the proved witness to the canonical public inputs.
 
-## Constraint System Overview (Current)
+For `aml.threshold`, the verifier uses `L = threshold - 1` (and requires `threshold > 0`), so
+`amount <= L` is equivalent to `amount < threshold`.
 
-### Constraint Categories
+Non-statement: the AIR does **not** prove that `amount` is derived from or consistent with the
+payload hashes contained in `P`. That linkage must be enforced by the surrounding protocol/pipeline
+or by extending the AIR.
 
-| Category | Count | Degree | Purpose |
-|----------|-------|--------|---------|
-| Round counter | 1 | 1 | Trace length enforcement |
-| Amount bit binary (limbs 0-1, gated) | 64 | 3 | `b * (1-b) = 0` at row 0 |
-| Amount recomposition (limbs 0-1, gated) | 2 | 2 | `limb = sum(bit[i] * 2^i)` at row 0 |
-| Diff bit binary (limbs 0-1, gated) | 64 | 3 | `b * (1-b) = 0` at row 0 |
-| Diff recomposition (limbs 0-1, gated) | 2 | 2 | `diff = sum(bit[i] * 2^i)` at row 0 |
-| Borrow binary (limbs 0-1, gated) | 2 | 3 | `b * (1-b) = 0` at row 0 |
-| Subtraction constraints (limbs 0-1, gated) | 2 | 2 | Enforce `threshold - amount = diff + borrow` |
-| Rescue permutation transitions | 12 | 9 | Rescue-Prime rounds |
-| Rescue init binding | 8 | 2 | Bind amount limbs to Rescue state |
-| **Total** | **157** | max 9 | |
+## Constraint System Overview
 
-**Note**: Comparison constraints are gated by the `rescue_init` selector (1 only at row 0). Padding
-rows may contain arbitrary values; only row 0 is required to satisfy the comparison gadget.
+The per-event AIR (`ComplianceAir`) is built over a power-of-two trace (minimum 128 rows).
 
-### Boundary Assertions
+High-level structure:
+- The comparison/range gadget is enforced only at row 0 via a periodic selector `rescue_init`.
+- The Rescue permutation is enforced for the first 14 transitions; after that, the Rescue state is
+  constrained to remain constant.
 
-| Assertion | Row | Column | Value | Purpose |
-|-----------|-----|--------|-------|---------|
-| is_first | 0 | FLAG_IS_FIRST | 1 | Mark first row |
-| is_last | last | FLAG_IS_LAST | 1 | Mark last row |
-| limit_low | 0 | THRESHOLD_START | limit & 0xFFFFFFFF | Bind effective policy limit |
-| limit_high | 0 | THRESHOLD_START+1 | limit >> 32 | Bind effective policy limit |
-| upper_amount_limbs | 0 | AMOUNT_START+2..8 | 0 | Amount fits in u64 |
-| upper_limit_limbs | 0 | THRESHOLD_START+2..8 | 0 | Limit fits in u64 |
-| upper_diff_limbs | 0 | DIFF_START+2..8 | 0 | Diff fits in u64 |
-| final_borrow | 0 | BORROW_START+1 | 0 | Enforce amount <= limit |
-| rescue_domain | 0 | RESCUE_STATE+8..12 | 8, 0...0 | Domain separator + padding |
-| rescue_init | 0 | RESCUE_STATE+0..7 | amount_limbs | Initialize hash |
-| rescue_output | 14 | RESCUE_STATE+0..3 | commitment | Hash output matches |
-| public_inputs | 0 | PUBLIC_INPUTS_* | value | Bind public inputs to trace |
+### Transition Constraints (157 total)
 
-## Soundness Arguments
+- 1: round counter increment.
+- 64: amount bits are binary (limbs 0-1, 32 bits each), gated to row 0.
+- 2: amount limb recomposition (limbs 0-1), gated to row 0.
+- 64: diff bits are binary (limbs 0-1), gated to row 0.
+- 2: diff limb recomposition (limbs 0-1), gated to row 0.
+- 2: borrow bits are binary (borrow0/borrow1), gated to row 0.
+- 2: subtraction gadget (u64, 2 limbs), gated to row 0.
+- 12: Rescue half-round transition constraints.
+- 8: Rescue init binding: `state[0..7] == amount_limbs[0..7]` at row 0.
 
-### 1. Range Validity
+### Boundary Assertions (80 total)
 
-**Claim**: Amount limbs 0-1 and diff limbs 0-1 are valid u32 (value < 2^32); limbs 2-7 are boundary-asserted to 0.
+The AIR binds:
+- Trace framing:
+  - `FLAG_IS_FIRST[0] = 1`
+  - `FLAG_IS_LAST[last] = 1`
+  - `ROUND_COUNTER[0] = 0`
+  - `ROUND_COUNTER[last] = last`
+- Effective limit limbs (u64) at row 0, plus `THRESHOLD[2..7] = 0`.
+- Amount upper limbs at row 0: `AMOUNT[2..7] = 0`.
+- Diff upper limbs at row 0: `DIFF[2..7] = 0`.
+- Final borrow at row 0: `BORROW[1] = 0`.
+- Rescue sponge domain separator / padding at row 0.
+- Rescue output row (row 14): `RESCUE_STATE[0..3] == C`.
+- Public input binding at row 0: `PUBLIC_INPUTS[*] == P[*]`.
 
-**Proof**:
-1. For limbs 0-1, there exist 32 trace columns `b[i][0..31]`
-2. Binary constraints enforce: `rescue_init * b[i][j] * (1 - b[i][j]) = 0` for all j
-3. This means each `b[i][j]` is exactly 0 or 1 in the field
-4. Recomposition constraint (gated): `rescue_init * (L[i] - sum(b[i][j] * 2^j)) = 0`
-5. If all bits are 0 or 1, the sum is at most `2^32 - 1`
-6. Therefore `L[i] < 2^32` for i in {0,1}
-7. Limbs 2-7 are boundary-asserted to 0, which is a valid u32
+## Why `amount <= limit` Holds
 
-These constraints are enforced at row 0 via the `rescue_init` selector.
+The AIR enforces a 2-limb subtraction witness for `limit - amount` using:
+- u32 range checks (bit decomposition) for the active limbs of `amount` and `diff`,
+- binary constraints for `borrow0` and `borrow1`,
+- two limb-wise subtraction equations (for limbs 0 and 1),
+- and a boundary assertion that `borrow1 == 0`.
 
-**Security**: Breaking requires finding non-binary field element satisfying `x * (1-x) = 0`, which has only solutions {0, 1} in any field.
+Intuitively:
+- The subtraction equations enforce that `limit - amount` can be represented without underflow.
+- The final borrow being 0 rules out `amount > limit`.
 
-### 2. Subtraction Correctness
+## Why The Witness Commitment Binds `amount`
 
-**Claim**: The subtraction gadget correctly enforces `amount <= limit` (where `limit` is the policy's effective limit).
+The trace includes a Rescue state column and the AIR enforces Rescue half-round transitions for a
+fixed number of steps, plus initialization constraints that bind `state[0..7]` to the witness
+amount limbs at row 0.
 
-**Proof** (Two-limb subtraction with borrows):
+The verifier also supplies a public commitment `C`, and the AIR boundary-asserts the Rescue output
+row to match `C`. Producing a valid proof for a different `amount` would require finding another
+`amount'` with the same Rescue commitment (i.e., breaking the relevant Rescue security property for
+the chosen parameters/output).
 
-For limbs 0-1 (u64 amounts), the prover supplies `diff[0..1]` and `borrow[0..1]` such that:
+## Proof Options And Degrees
 
-1. **Limb 0** (gated):
-   ```
-   rescue_init * (amount0 + diff0 - limit0 - borrow0 * 2^32) = 0
-   ```
-2. **Limb 1** (gated):
-   ```
-   rescue_init * (amount1 + diff1 + borrow0 - limit1 - borrow1 * 2^32) = 0
-   ```
-3. **Range and binary checks** (gated):
-   - `diff0` and `diff1` are range-checked via bit decomposition
-   - `borrow0` and `borrow1` are constrained to {0,1}
-4. **Final borrow must be zero**:
-   - Boundary assertion enforces `borrow1 = 0` at row 0
+The Rescue constraints include an `x^7` S-box, so transition constraints include degree-7/9 terms.
+This requires a minimum LDE blowup factor of 8 for soundness in Winterfell (see
+`ves_stark_air::options::ProofOptions`).
 
-If `borrow1 = 0`, the subtraction does not underflow, which implies `amount <= limit`.
-For strict policies (AML threshold), the AIR uses `limit = threshold - 1`, so `amount <= limit`
-is equivalent to `amount < threshold`.
+Proof security/size/performance are parameterized by `ProofOptions`:
+- `default`: `num_queries=28`, `blowup_factor=8`, `grinding_factor=16`, `field_extension=None`,
+  `fri_folding_factor=8`
+- `fast`: `num_queries=20`, `blowup_factor=8`, `grinding_factor=8`, `field_extension=None`,
+  `fri_folding_factor=8`
+- `secure`: `num_queries=40`, `blowup_factor=16`, `grinding_factor=20`,
+  `field_extension=Quadratic`, `fri_folding_factor=8`
 
-### 3. Witness Commitment Binding
+The helper `ProofOptions::try_security_level()` provides an internal rough estimate; it is not a
+formal security proof.
 
-**Claim**: The witness commitment cryptographically binds the amount to the proof.
+## Known Limitations
 
-**Proof**:
-
-1. **Initialization**: Row 0 boundary assertion sets:
-   ```
-   rescue_state[0..8] = amount_limbs[0..8]  (rate portion)
-   rescue_state[8] = 8  (domain separator: input length)
-   rescue_state[9..12] = 0  (capacity padding)
-   ```
-
-2. **Permutation**: Rows 0-13 constrain 7 rounds of Rescue-Prime:
-   - Forward half-round: `S-box(x) = x^7`, then MDS, then add constants
-   - Backward half-round: `MDS^{-1}`, then `S-box^{-1}`, then add constants
-   - Constraints verify each transformation
-
-3. **Output**: Row 14 boundary assertion sets:
-   ```
-   rescue_state[0..4] = witness_commitment[0..4]
-   ```
-
-4. **Soundness**: For adversary to produce valid proof with wrong commitment:
-   - Must find `amount_limbs'` such that `Rescue(amount_limbs') = commitment` where `commitment = Rescue(amount_limbs)` for true amount
-   - This is a preimage attack on Rescue-Prime
-   - Rescue capacity (256 bits) provides ~128-bit preimage resistance
-
-**Conclusion**: Commitment binding has ~128-bit security.
-
-### 4. Policy Binding
-
-**Claim**: Proof is bound to the specific policy parameters.
-
-**Proof**:
-
-1. **Policy hash**: Public inputs include `policy_hash = SHA256(domain || JCS(policy_id, params))`
-
-2. **Threshold in boundary assertions**: The actual threshold value is asserted:
-   ```
-   T[THRESHOLD_START][0] = threshold_low
-   T[THRESHOLD_START+1][0] = threshold_high
-   ```
-
-3. **Verification**: Verifier checks:
-   - `policy_hash` matches recomputed hash from policy_id and params
-   - Threshold in policy matches threshold in assertions
-
-4. **Binding**: Changing policy parameters would:
-   - Change `policy_hash` (hash collision required)
-   - Or change boundary assertion values (would fail verification)
-
-**Conclusion**: Policy binding has ~128-bit security (SHA256 collision resistance).
-
-## Security Levels
-
-### Computational Soundness
-
-The STARK protocol provides computational soundness:
-
-| Parameter | Value | Security |
-|-----------|-------|----------|
-| Field size | 2^64 | ~64-bit algebraic |
-| FRI proximity | 1/8 | |
-| Query count | 80 | 2^-80 soundness error |
-| Combined | | ~80-bit computational |
-
-### Statistical Soundness
-
-For a verifier accepting an invalid proof:
-
-```
-Pr[accept invalid] <= 2^(-80) + negl(lambda)
-```
-
-Where `lambda` is the security parameter and `negl` is negligible.
-
-## Attack Complexity Summary
-
-| Attack | Complexity | Mitigation |
-|--------|------------|------------|
-| Forge range proof | Find non-binary solution to `x(1-x)=0` | Impossible in field |
-| Forge subtraction | Find valid diff/borrow for wrong amount <= limit | 2^64 field operations |
-| Forge commitment | Rescue preimage attack | 2^128 operations |
-| Policy substitution | SHA256 collision | 2^128 operations |
-| Proof forgery | Break FRI soundness | 2^80 operations |
-
-## Formal Security Statement
-
-**Theorem** (Soundness): The VES-STARK proof system is computationally sound with soundness error at most `2^(-80)` against adversaries running in time `T < 2^80`.
-
-**Proof sketch**:
-1. AIR constraints form a correct encoding of the compliance statement
-2. Binary decomposition ensures valid range (unconditional soundness)
-3. Subtraction gadget correctly enforces `amount <= limit`
-4. Rescue permutation constraints bind commitment (128-bit security)
-5. STARK protocol provides 80-bit computational soundness
-6. Combined: proof accepted implies valid witness with overwhelming probability
-
-## Constraint Verification Checklist
-
-For each constraint category, verify:
-
-- [ ] **Binary constraints**: `b * (1-b) = 0` for amount bits, diff bits, and borrows
-- [ ] **Recomposition**: `limb = sum(bit * 2^i)` for amount/diff limbs 0-1
-- [ ] **Subtraction gadget**: Enforce limb-wise subtraction with borrows and `borrow1 = 0`
-- [ ] **Rescue initialization**: State correctly initialized from amount
-- [ ] **Rescue rounds**: All 14 half-rounds constrained
-- [ ] **Rescue output**: Output matches commitment
-- [ ] **Boundary assertions**: All public inputs bound
-- [ ] **Row-0 gating**: Comparison gadget enforced only when `rescue_init = 1`
-
-## References
-
-1. Ben-Sasson et al., "Scalable, transparent, and post-quantum secure computational integrity" (STARK paper)
-2. StarkWare, "ethSTARK Documentation"
-3. Grassi et al., "Rescue-Prime: A Standard Specification"
-4. Winterfell library security documentation
+- Amount-to-payload binding is not enforced in the AIR today.
+- Public inputs are bound to the proof instance, but are not used in constraints to derive or
+  constrain the private witness.
+- Batch proofs (`ves-stark-batch`) are prototype-grade: they bind batch public inputs and enforce a
+  well-formed scaled-AND accumulator over per-event compliance flags, but they do not yet verify
+  Merkle transitions or per-event proof correctness.

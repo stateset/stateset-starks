@@ -27,18 +27,17 @@
 //!
 //! Winterfell supports this via the LogUp protocol.
 //!
-//! ## 3. Boundary Assertions (Current Implementation)
+//! ## 3. Hybrid (Current Implementation)
 //!
-//! For Phase 1, we use boundary assertions combined with witness validation:
-//! - The prover validates limbs during witness construction
-//! - Boundary constraints check expected range at specific rows
-//! - The verifier can check public threshold limbs directly
+//! For Phase 1, the AIR enforces range validity for the active u64 limbs:
+//! - Amount limbs 0-1 are bit-decomposed into 32 bits each in the trace and constrained in-AIR
+//! - Diff limbs 0-1 (subtraction witness) are bit-decomposed similarly
+//! - Limbs 2-7 are boundary-asserted to 0 (so the value is a u64)
 //!
 //! # Security Note
 //!
-//! The current Phase 1 implementation relies on honest witness construction.
-//! For production use, full binary decomposition or lookup arguments should
-//! be implemented to prevent malicious witness attacks.
+//! Witness-time limb validation is still performed for early error reporting, but the verifier
+//! does not rely on honest witness construction for the enforced u64 range.
 
 use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
 

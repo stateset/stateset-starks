@@ -8,15 +8,37 @@ use ves_stark_air::policies::aml_threshold::compute_comparison_values;
 use ves_stark_air::trace::cols as base_cols;
 use ves_stark_primitives::rescue::{rescue_hash, STATE_WIDTH as RESCUE_STATE_WIDTH};
 use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
+use winter_math::FieldElement;
 use winter_prover::TraceTable;
 
 use crate::air::trace_layout::{
     batch_cols, calculate_trace_length, BatchPhase, BASE_TRACE_WIDTH, BATCH_TRACE_WIDTH,
-    MIN_BATCH_TRACE_LENGTH, ROWS_PER_EVENT,
+    COMPLIANCE_ACC_GAMMA, ROWS_PER_EVENT,
 };
 use crate::error::BatchError;
 use crate::prover::witness::{BatchEventWitness, BatchWitness};
 use crate::state::{BatchStateRoot, EventMerkleTree};
+
+fn splitmix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9E3779B97F4A7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
+    x ^ (x >> 31)
+}
+
+/// Deterministic "filler" bit used for binary columns that would otherwise be constant in
+/// some executions (e.g. when all events are compliant).
+///
+/// The AIR only reads `EVENT_COMPLIANCE_FLAG` on a specific row within each event (where the
+/// accumulator update is enforced). On other rows, any binary value is valid, and we fill
+/// with a pseudo-random pattern to avoid degenerate trace polynomials in debug builds.
+fn filler_bit(seed: u64) -> Felt {
+    if splitmix64(seed) & 1 == 1 {
+        FELT_ONE
+    } else {
+        FELT_ZERO
+    }
+}
 
 /// Decompose a field element (representing a u32 limb) into 32 bits
 fn decompose_to_bits(limb: Felt) -> [Felt; 32] {
@@ -75,7 +97,10 @@ impl BatchTraceBuilder {
 
     /// Set a custom trace length (must be power of 2)
     pub fn with_trace_length(mut self, length: usize) -> Self {
-        self.trace_length = length.next_power_of_two().max(MIN_BATCH_TRACE_LENGTH);
+        // Never allow a custom length that would truncate required rows for the configured witness.
+        self.trace_length = length
+            .next_power_of_two()
+            .max(calculate_trace_length(self.witness.num_events()));
         self
     }
 
@@ -109,7 +134,9 @@ impl BatchTraceBuilder {
 
         // Fill trace with event data
         let mut current_row = 0;
-        let mut compliance_accumulator = FELT_ONE;
+        let gamma = Felt::new(COMPLIANCE_ACC_GAMMA);
+        let gamma_inv_pow_n = gamma.exp(self.witness.num_events() as u64).inv();
+        let mut compliance_accumulator = gamma_inv_pow_n;
 
         for (event_idx, event_trace) in event_traces.iter().enumerate() {
             let event = &self.witness.events[event_idx];
@@ -145,12 +172,16 @@ impl BatchTraceBuilder {
 
                 // Update compliance accumulator at end of each event
                 if row_in_event == ROWS_PER_EVENT - 1 {
-                    compliance_accumulator = felt_from_u64(
-                        compliance_accumulator.as_int() * event.compliance_felt().as_int(),
-                    );
+                    compliance_accumulator *= gamma * event.compliance_felt();
                 }
                 trace[batch_cols::COMPLIANCE_ACCUMULATOR][row] = compliance_accumulator;
-                trace[batch_cols::EVENT_COMPLIANCE_FLAG][row] = event.compliance_felt();
+                trace[batch_cols::EVENT_COMPLIANCE_FLAG][row] =
+                    if row_in_event == ROWS_PER_EVENT - 2 {
+                        // Flag is consumed by the AIR on the transition into the last row of the event.
+                        event.compliance_felt()
+                    } else {
+                        filler_bit(row as u64)
+                    };
 
                 // Metadata (constant)
                 for i in 0..4 {
@@ -171,10 +202,17 @@ impl BatchTraceBuilder {
                     felt_from_u64(self.witness.metadata.sequence_end);
                 trace[batch_cols::TIMESTAMP][row] = felt_from_u64(self.witness.metadata.timestamp);
 
+                // Policy (constant)
+                for i in 0..8 {
+                    trace[batch_cols::POLICY_HASH_START + i][row] = self.witness.policy_hash[i];
+                }
+                trace[batch_cols::POLICY_LIMIT][row] = felt_from_u64(self.witness.policy_limit);
+
                 // Control flags
                 trace[batch_cols::IS_FIRST_BATCH_ROW][row] =
                     if row == 0 { FELT_ONE } else { FELT_ZERO };
                 trace[batch_cols::IS_MERKLE_ROW][row] = FELT_ZERO;
+                trace[batch_cols::EVENTS_DONE][row] = FELT_ZERO;
             }
 
             current_row += ROWS_PER_EVENT;
@@ -346,7 +384,8 @@ impl BatchTraceBuilder {
 
                 // Accumulator and compliance
                 trace[batch_cols::COMPLIANCE_ACCUMULATOR][current_row] = compliance_accumulator;
-                trace[batch_cols::EVENT_COMPLIANCE_FLAG][current_row] = compliance_accumulator;
+                trace[batch_cols::EVENT_COMPLIANCE_FLAG][current_row] =
+                    filler_bit(current_row as u64);
 
                 // Metadata
                 for i in 0..4 {
@@ -364,11 +403,21 @@ impl BatchTraceBuilder {
                 trace[batch_cols::TIMESTAMP][current_row] =
                     felt_from_u64(self.witness.metadata.timestamp);
 
+                // Policy (constant)
+                for i in 0..8 {
+                    trace[batch_cols::POLICY_HASH_START + i][current_row] =
+                        self.witness.policy_hash[i];
+                }
+                trace[batch_cols::POLICY_LIMIT][current_row] =
+                    felt_from_u64(self.witness.policy_limit);
+
                 // Event info (constant from last event)
                 trace[batch_cols::NUM_EVENTS][current_row] =
                     felt_from_u64(self.witness.num_events() as u64);
                 trace[batch_cols::EVENT_INDEX][current_row] =
-                    felt_from_u64((self.witness.num_events() - 1) as u64);
+                    felt_from_u64(self.witness.num_events() as u64);
+                trace[batch_cols::EVENT_ROW][current_row] = FELT_ZERO;
+                trace[batch_cols::EVENTS_DONE][current_row] = FELT_ONE;
 
                 current_row += 1;
             }
@@ -412,7 +461,7 @@ impl BatchTraceBuilder {
 
             // Compliance
             trace[batch_cols::COMPLIANCE_ACCUMULATOR][current_row] = compliance_accumulator;
-            trace[batch_cols::EVENT_COMPLIANCE_FLAG][current_row] = compliance_accumulator;
+            trace[batch_cols::EVENT_COMPLIANCE_FLAG][current_row] = filler_bit(current_row as u64);
 
             // Metadata
             for i in 0..4 {
@@ -432,7 +481,15 @@ impl BatchTraceBuilder {
             trace[batch_cols::NUM_EVENTS][current_row] =
                 felt_from_u64(self.witness.num_events() as u64);
             trace[batch_cols::EVENT_INDEX][current_row] =
-                felt_from_u64((self.witness.num_events() - 1) as u64);
+                felt_from_u64(self.witness.num_events() as u64);
+            trace[batch_cols::EVENT_ROW][current_row] = FELT_ZERO;
+
+            // Policy (constant)
+            for i in 0..8 {
+                trace[batch_cols::POLICY_HASH_START + i][current_row] = self.witness.policy_hash[i];
+            }
+            trace[batch_cols::POLICY_LIMIT][current_row] = felt_from_u64(self.witness.policy_limit);
+            trace[batch_cols::EVENTS_DONE][current_row] = FELT_ONE;
 
             current_row += 1;
         }
@@ -453,6 +510,9 @@ impl BatchTraceBuilder {
         batch_id: &[Felt; 4],
         metadata_hash: &[Felt; 4],
     ) {
+        let tenant_id = self.witness.tenant_id_felts();
+        let store_id = self.witness.store_id_felts();
+
         for row in start_row..self.trace_length {
             trace[batch_cols::BATCH_PHASE][row] = BatchPhase::Padding.to_felt();
             trace[batch_cols::IS_MERKLE_ROW][row] = FELT_ZERO;
@@ -466,7 +526,7 @@ impl BatchTraceBuilder {
 
             // Compliance (constant)
             trace[batch_cols::COMPLIANCE_ACCUMULATOR][row] = compliance_accumulator;
-            trace[batch_cols::EVENT_COMPLIANCE_FLAG][row] = compliance_accumulator;
+            trace[batch_cols::EVENT_COMPLIANCE_FLAG][row] = filler_bit(row as u64);
 
             // Metadata (constant)
             for i in 0..4 {
@@ -474,10 +534,27 @@ impl BatchTraceBuilder {
                 trace[batch_cols::metadata_hash(i)][row] = metadata_hash[i];
             }
 
+            for i in 0..4 {
+                trace[batch_cols::TENANT_ID_START + i][row] = tenant_id[i];
+                trace[batch_cols::STORE_ID_START + i][row] = store_id[i];
+            }
+            trace[batch_cols::SEQUENCE_START][row] =
+                felt_from_u64(self.witness.metadata.sequence_start);
+            trace[batch_cols::SEQUENCE_END][row] =
+                felt_from_u64(self.witness.metadata.sequence_end);
+            trace[batch_cols::TIMESTAMP][row] = felt_from_u64(self.witness.metadata.timestamp);
+
+            // Policy (constant)
+            for i in 0..8 {
+                trace[batch_cols::POLICY_HASH_START + i][row] = self.witness.policy_hash[i];
+            }
+            trace[batch_cols::POLICY_LIMIT][row] = felt_from_u64(self.witness.policy_limit);
+
             // Event info
             trace[batch_cols::NUM_EVENTS][row] = felt_from_u64(self.witness.num_events() as u64);
-            trace[batch_cols::EVENT_INDEX][row] =
-                felt_from_u64((self.witness.num_events() - 1) as u64);
+            trace[batch_cols::EVENT_INDEX][row] = felt_from_u64(self.witness.num_events() as u64);
+            trace[batch_cols::EVENTS_DONE][row] = FELT_ONE;
+            trace[batch_cols::EVENT_ROW][row] = FELT_ZERO;
         }
     }
 
@@ -521,6 +598,7 @@ mod tests {
             policy_id: policy_id.to_string(),
             policy_params: params,
             policy_hash: hash.to_hex(),
+            witness_commitment: None,
         }
     }
 
@@ -554,7 +632,7 @@ mod tests {
         let trace = trace_builder.build().unwrap();
 
         assert_eq!(trace.width(), BATCH_TRACE_WIDTH);
-        assert!(trace.length() >= MIN_BATCH_TRACE_LENGTH);
+        assert!(trace.length() >= crate::air::trace_layout::MIN_BATCH_TRACE_LENGTH);
     }
 
     #[test]

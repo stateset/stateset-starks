@@ -47,6 +47,7 @@ proof = ves_stark.prove(5000, public_inputs, policy)
 print(f"Proof generated in {proof.proving_time_ms}ms")
 print(f"Proof size: {proof.proof_size} bytes")
 print(f"Proof hash: {proof.proof_hash}")
+print(f"Witness commitment (hex): {proof.witness_commitment_hex}")
 ```
 
 ### Verify a Proof
@@ -104,7 +105,8 @@ public_inputs = ves_stark.CompliancePublicInputs(
     event_signing_hash="...",
     policy_id="aml.threshold",
     policy_params={"threshold": 10000},  # dict
-    policy_hash="..."         # 64-char lowercase hex
+    policy_hash="...",        # 64-char lowercase hex
+    witness_commitment=None,  # optional 64-char lowercase hex (witnessCommitment)
 )
 
 # All fields are readable and writable
@@ -121,6 +123,7 @@ proof.proof_hash          # str - SHA-256 hash of proof
 proof.proving_time_ms     # int - generation time in ms
 proof.proof_size          # int - size in bytes
 proof.witness_commitment  # list[int] - 4-element commitment
+proof.witness_commitment_hex  # str - 64-char lowercase hex commitment
 ```
 
 #### `VerificationResult`
@@ -212,12 +215,16 @@ hash = ves_stark.compute_policy_hash("aml.threshold", {"threshold": 10000})
 Requires [maturin](https://github.com/PyO3/maturin):
 
 ```bash
+# Create & activate a virtualenv (required for `maturin develop`)
+python -m venv .venv
+source .venv/bin/activate
+
 # Install maturin
-pip install maturin
+python -m pip install --upgrade pip maturin
 
 # Build and install in development mode
 cd crates/ves-stark-python
-maturin develop
+maturin develop --release
 
 # Build release wheel
 maturin build --release

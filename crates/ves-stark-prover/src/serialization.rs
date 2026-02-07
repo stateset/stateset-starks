@@ -34,6 +34,9 @@ pub struct ProofJson {
     pub metadata: ProofMetadata,
     /// Witness commitment (4 field elements as u64)
     pub witness_commitment: [u64; 4],
+    /// Witness commitment encoded as 32 bytes (4 x u64 big-endian) and hex-encoded (64 chars).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness_commitment_hex: Option<String>,
     /// Policy information (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub policy: Option<PolicyInfo>,
@@ -66,6 +69,7 @@ impl ProofJson {
             proof_hash: proof.proof_hash.clone(),
             metadata: proof.metadata.clone(),
             witness_commitment: proof.witness_commitment,
+            witness_commitment_hex: proof.witness_commitment_hex.clone(),
             policy: None,
         }
     }
@@ -77,6 +81,7 @@ impl ProofJson {
             proof_hash: proof.proof_hash.clone(),
             metadata: proof.metadata.clone(),
             witness_commitment: proof.witness_commitment,
+            witness_commitment_hex: proof.witness_commitment_hex.clone(),
             policy: Some(PolicyInfo::from(policy)),
         }
     }
@@ -260,6 +265,7 @@ mod tests {
     use crate::prover::ProofMetadata;
 
     fn sample_proof() -> ComplianceProof {
+        let witness_commitment = [1234567890, 9876543210, 1111111111, 2222222222];
         ComplianceProof {
             proof_bytes: vec![1, 2, 3, 4, 5, 6, 7, 8],
             proof_hash: "abcd1234".to_string(),
@@ -270,7 +276,13 @@ mod tests {
                 proof_size: 8,
                 prover_version: "0.1.0".to_string(),
             },
-            witness_commitment: [1234567890, 9876543210, 1111111111, 2222222222],
+            witness_commitment,
+            witness_commitment_hex: Some(hex::encode(
+                witness_commitment
+                    .iter()
+                    .flat_map(|v| v.to_be_bytes())
+                    .collect::<Vec<u8>>(),
+            )),
         }
     }
 
@@ -297,6 +309,7 @@ mod tests {
         assert_eq!(json.proof_hash, "abcd1234");
         assert_eq!(json.metadata.num_constraints, 167);
         assert_eq!(json.witness_commitment, proof.witness_commitment);
+        assert_eq!(json.witness_commitment_hex, proof.witness_commitment_hex);
     }
 
     #[test]
@@ -342,6 +355,7 @@ mod tests {
         assert_eq!(policy_info.policy_type, "aml.threshold");
         assert_eq!(policy_info.limit, 10000);
         assert_eq!(json.witness_commitment, proof.witness_commitment);
+        assert_eq!(json.witness_commitment_hex, proof.witness_commitment_hex);
     }
 
     #[test]

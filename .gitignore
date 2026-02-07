@@ -1,6 +1,6 @@
 # Rust build artifacts
 /target/
-/target-cargo/debug/
+/target-cargo/
 
 # IDE/Editor files
 .idea/
@@ -19,5 +19,19 @@ Thumbs.db
 
 # Node.js
 node_modules/
-package-lock.json
+/package-lock.json
 *.node
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Coverage
+lcov.info

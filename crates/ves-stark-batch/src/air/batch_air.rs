@@ -3,8 +3,8 @@
 //! This module implements a **prototype** AIR for batch state transition proofs.
 //! It currently enforces **consistency only**:
 //! - State roots remain constant across the trace
-//! - Compliance accumulator is an AND over per-event flags
-//! - Metadata fields remain constant
+//! - Compliance accumulator is a scaled AND over per-event flags (updated exactly once per event)
+//! - Batch public inputs are bound to trace columns via boundary assertions
 //!
 //! It does **not** yet verify Merkle transitions or per-event proof correctness.
 
@@ -15,14 +15,14 @@ use winter_air::{
 };
 use winter_math::FieldElement;
 
-use crate::air::trace_layout::batch_cols;
+use crate::air::trace_layout::{batch_cols, BatchPhase, COMPLIANCE_ACC_GAMMA};
 use crate::public_inputs::BatchPublicInputs;
 
 /// Number of transition constraints in simplified batch AIR
-pub const NUM_BATCH_CONSTRAINTS: usize = 32;
+pub const NUM_BATCH_CONSTRAINTS: usize = 54;
 
 /// Number of boundary assertions
-pub const NUM_BATCH_ASSERTIONS: usize = 14;
+pub const NUM_BATCH_ASSERTIONS: usize = 44;
 
 /// The batch compliance AIR
 pub struct BatchComplianceAir {
@@ -37,31 +37,44 @@ impl BatchComplianceAir {
         pub_inputs: BatchPublicInputs,
         options: ProofOptions,
     ) -> Self {
-        // Define constraint degrees
+        // Define constraint degrees (must match evaluate_transition order).
         let mut degrees = Vec::with_capacity(NUM_BATCH_CONSTRAINTS);
 
-        // State root consistency (8 constraints, degree 1)
-        for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
+        // State roots remain constant (8 constraints, degree 1).
+        degrees.extend(std::iter::repeat_n(TransitionConstraintDegree::new(1), 8));
 
-        // Metadata consistency (8 constraints, degree 1)
-        for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
+        // Bound metadata / policy columns remain constant (28 constraints, degree 1).
+        degrees.extend(std::iter::repeat_n(TransitionConstraintDegree::new(1), 28));
 
-        // Compliance accumulator (2 constraints, degree 2)
-        degrees.push(TransitionConstraintDegree::new(2));
-        degrees.push(TransitionConstraintDegree::new(2));
+        // EVENTS_DONE flag constraints.
+        degrees.push(TransitionConstraintDegree::new(2)); // done binary
+        degrees.push(TransitionConstraintDegree::new(2)); // done monotonic
+        degrees.push(TransitionConstraintDegree::new(2)); // flip only at EVENT_ROW == 3
+        degrees.push(TransitionConstraintDegree::new(2)); // flip only at EVENT_INDEX == num_events - 1
+        degrees.push(TransitionConstraintDegree::new(2)); // done => EVENT_ROW == 0
+        degrees.push(TransitionConstraintDegree::new(2)); // done => EVENT_INDEX == num_events
 
-        // Phase constraints (2 constraints)
+        // Event row / index progression while not done.
+        degrees.push(TransitionConstraintDegree::new(3)); // EVENT_ROW increments when != 3
+        degrees.push(TransitionConstraintDegree::new(5)); // EVENT_ROW wraps 3 -> 0
+        degrees.push(TransitionConstraintDegree::new(3)); // EVENT_INDEX constant when EVENT_ROW != 3
+        degrees.push(TransitionConstraintDegree::new(5)); // EVENT_INDEX increments on wrap
+
+        // EVENT_ROW must be one of {0,1,2,3}.
+        degrees.push(TransitionConstraintDegree::new(4));
+
+        // Compliance accumulator constraints.
+        degrees.push(TransitionConstraintDegree::new(2)); // acc constant except update row
+        degrees.push(TransitionConstraintDegree::new(5)); // acc update on EVENT_ROW == 2
+        degrees.push(TransitionConstraintDegree::new(2)); // flag binary
+
+        // Phase constraints.
         degrees.push(TransitionConstraintDegree::new(2)); // phase transition
-        degrees.push(TransitionConstraintDegree::new(4)); // phase validity (degree 4)
+        degrees.push(TransitionConstraintDegree::new(4)); // phase validity
+        degrees.push(TransitionConstraintDegree::new(2)); // not done => phase == Event
+        degrees.push(TransitionConstraintDegree::new(4)); // done => phase != Event
 
-        // Padding constraints (12 constraints, degree 1)
-        while degrees.len() < NUM_BATCH_CONSTRAINTS {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
+        debug_assert_eq!(degrees.len(), NUM_BATCH_CONSTRAINTS);
 
         let context = AirContext::new(trace_info, degrees, NUM_BATCH_ASSERTIONS, options);
 
@@ -96,7 +109,7 @@ impl Air for BatchComplianceAir {
         let last_row = self.trace_length() - 1;
 
         // =========================================================================
-        // First row assertions (7 assertions)
+        // First row assertions
         // =========================================================================
 
         // Previous state root must match public input
@@ -108,15 +121,85 @@ impl Air for BatchComplianceAir {
             ));
         }
 
-        // Compliance accumulator starts at 1
+        // Batch metadata must match public inputs (row 0)
+        for i in 0..4 {
+            assertions.push(Assertion::single(
+                batch_cols::batch_id(i),
+                0,
+                self.pub_inputs.batch_id[i],
+            ));
+            assertions.push(Assertion::single(
+                batch_cols::TENANT_ID_START + i,
+                0,
+                self.pub_inputs.tenant_id[i],
+            ));
+            assertions.push(Assertion::single(
+                batch_cols::STORE_ID_START + i,
+                0,
+                self.pub_inputs.store_id[i],
+            ));
+        }
+        assertions.push(Assertion::single(
+            batch_cols::SEQUENCE_START,
+            0,
+            self.pub_inputs.sequence_start,
+        ));
+        assertions.push(Assertion::single(
+            batch_cols::SEQUENCE_END,
+            0,
+            self.pub_inputs.sequence_end,
+        ));
+
+        // Policy fields must match public inputs (row 0)
+        for i in 0..8 {
+            assertions.push(Assertion::single(
+                batch_cols::POLICY_HASH_START + i,
+                0,
+                self.pub_inputs.policy_hash[i],
+            ));
+        }
+        assertions.push(Assertion::single(
+            batch_cols::POLICY_LIMIT,
+            0,
+            self.pub_inputs.policy_limit,
+        ));
+
+        // Compliance accumulator starts at GAMMA^{-num_events}.
+        //
+        // This keeps the final value as a boolean (0/1) while ensuring the accumulator is
+        // non-constant even when all flags are 1.
+        let num_events_u64 = self.pub_inputs.num_events.as_int();
+        let gamma = Felt::new(COMPLIANCE_ACC_GAMMA);
+        let gamma_inv_pow_n = gamma.exp(num_events_u64).inv();
         assertions.push(Assertion::single(
             batch_cols::COMPLIANCE_ACCUMULATOR,
             0,
-            FELT_ONE,
+            gamma_inv_pow_n,
         ));
 
         // Event index starts at 0
         assertions.push(Assertion::single(batch_cols::EVENT_INDEX, 0, FELT_ZERO));
+
+        // EVENT_ROW starts at 0 (first row of first event).
+        assertions.push(Assertion::single(batch_cols::EVENT_ROW, 0, FELT_ZERO));
+
+        // Phase starts in Event (0) while events are being processed.
+        assertions.push(Assertion::single(batch_cols::BATCH_PHASE, 0, FELT_ZERO));
+
+        // EVENTS_DONE starts at 0 and must be 1 by the end of the trace.
+        assertions.push(Assertion::single(batch_cols::EVENTS_DONE, 0, FELT_ZERO));
+        assertions.push(Assertion::single(
+            batch_cols::EVENTS_DONE,
+            last_row,
+            FELT_ONE,
+        ));
+
+        // EVENT_INDEX must equal num_events at the end of the trace.
+        assertions.push(Assertion::single(
+            batch_cols::EVENT_INDEX,
+            last_row,
+            self.pub_inputs.num_events,
+        ));
 
         // First row flag
         assertions.push(Assertion::single(
@@ -126,7 +209,7 @@ impl Air for BatchComplianceAir {
         ));
 
         // =========================================================================
-        // Last row assertions (6 assertions)
+        // Last row assertions
         // =========================================================================
 
         // New state root must match public input
@@ -152,8 +235,20 @@ impl Air for BatchComplianceAir {
             FELT_ONE,
         ));
 
+        // Ensure the last row is in a well-defined terminal state.
+        assertions.push(Assertion::single(
+            batch_cols::EVENT_ROW,
+            last_row,
+            FELT_ZERO,
+        ));
+        assertions.push(Assertion::single(
+            batch_cols::BATCH_PHASE,
+            last_row,
+            BatchPhase::Padding.to_felt(),
+        ));
+
         // =========================================================================
-        // Metadata assertion (1 assertion)
+        // Metadata assertion
         // =========================================================================
 
         // Number of events at row 0
@@ -178,18 +273,14 @@ impl Air for BatchComplianceAir {
         let mut idx = 0;
 
         // =========================================================================
-        // State root consistency constraints (8)
-        // State roots must remain constant throughout the trace
+        // State roots remain constant (8)
         // =========================================================================
 
-        // Previous state root stays constant
         for i in 0..4 {
             let col = batch_cols::prev_state_root(i);
             result[idx] = next[col] - current[col];
             idx += 1;
         }
-
-        // New state root stays constant
         for i in 0..4 {
             let col = batch_cols::new_state_root(i);
             result[idx] = next[col] - current[col];
@@ -197,17 +288,37 @@ impl Air for BatchComplianceAir {
         }
 
         // =========================================================================
-        // Metadata consistency constraints (8)
+        // Public-input bound metadata remains constant (28)
         // =========================================================================
 
-        // Batch ID stays constant
         for i in 0..4 {
             let col = batch_cols::batch_id(i);
             result[idx] = next[col] - current[col];
             idx += 1;
         }
-
-        // Metadata hash stays constant
+        for i in 0..4 {
+            let col = batch_cols::TENANT_ID_START + i;
+            result[idx] = next[col] - current[col];
+            idx += 1;
+        }
+        for i in 0..4 {
+            let col = batch_cols::STORE_ID_START + i;
+            result[idx] = next[col] - current[col];
+            idx += 1;
+        }
+        result[idx] = next[batch_cols::SEQUENCE_START] - current[batch_cols::SEQUENCE_START];
+        idx += 1;
+        result[idx] = next[batch_cols::SEQUENCE_END] - current[batch_cols::SEQUENCE_END];
+        idx += 1;
+        result[idx] = next[batch_cols::NUM_EVENTS] - current[batch_cols::NUM_EVENTS];
+        idx += 1;
+        for i in 0..8 {
+            let col = batch_cols::POLICY_HASH_START + i;
+            result[idx] = next[col] - current[col];
+            idx += 1;
+        }
+        result[idx] = next[batch_cols::POLICY_LIMIT] - current[batch_cols::POLICY_LIMIT];
+        idx += 1;
         for i in 0..4 {
             let col = batch_cols::metadata_hash(i);
             result[idx] = next[col] - current[col];
@@ -215,52 +326,126 @@ impl Air for BatchComplianceAir {
         }
 
         // =========================================================================
-        // Compliance accumulator constraints (2)
+        // EVENTS_DONE semantics (6)
         // =========================================================================
 
-        // Accumulator update: next = current * compliance_flag
+        let done = current[batch_cols::EVENTS_DONE];
+        let done_next = next[batch_cols::EVENTS_DONE];
+
+        // done is binary.
+        result[idx] = done * (E::ONE - done);
+        idx += 1;
+
+        // done is monotonic: once 1, it stays 1.
+        result[idx] = done * (E::ONE - done_next);
+        idx += 1;
+
+        let event_row = current[batch_cols::EVENT_ROW];
+        let event_row_next = next[batch_cols::EVENT_ROW];
+        let event_index = current[batch_cols::EVENT_INDEX];
+        let event_index_next = next[batch_cols::EVENT_INDEX];
+
+        let two = E::from(felt_from_u64(2));
+        let three = E::from(felt_from_u64(3));
+
+        let n = E::from(self.pub_inputs.num_events);
+        let n_minus_one = n - E::ONE;
+
+        // done can only flip on the end-of-last-event row.
+        let done_delta = done_next - done;
+        result[idx] = done_delta * (event_row - three);
+        idx += 1;
+        result[idx] = done_delta * (event_index - n_minus_one);
+        idx += 1;
+
+        // done => EVENT_ROW == 0 and EVENT_INDEX == num_events.
+        result[idx] = done * event_row;
+        idx += 1;
+        result[idx] = done * (event_index - n);
+        idx += 1;
+
+        // =========================================================================
+        // Event row/index progression while not done (4)
+        // =========================================================================
+
+        let not_done = E::ONE - done;
+
+        // EVENT_ROW cycles 0 -> 1 -> 2 -> 3 -> 0 while not_done.
+        result[idx] = not_done * (event_row - three) * (event_row_next - event_row - E::ONE);
+        idx += 1;
+        result[idx] =
+            not_done * event_row * (event_row - E::ONE) * (event_row - two) * event_row_next;
+        idx += 1;
+
+        // EVENT_INDEX increments exactly once per event while not_done.
+        result[idx] = not_done * (event_row - three) * (event_index_next - event_index);
+        idx += 1;
+        result[idx] = not_done
+            * event_row
+            * (event_row - E::ONE)
+            * (event_row - two)
+            * (event_index_next - event_index - E::ONE);
+        idx += 1;
+
+        // =========================================================================
+        // EVENT_ROW validity (1)
+        // =========================================================================
+
+        result[idx] = event_row * (event_row - E::ONE) * (event_row - two) * (event_row - three);
+        idx += 1;
+
+        // =========================================================================
+        // Compliance accumulator constraints (3)
+        // =========================================================================
+
+        // The accumulator is updated exactly once per event, on the transition into the last row
+        // of the event (when EVENT_ROW == 2 on the current row).
         let acc_curr = current[batch_cols::COMPLIANCE_ACCUMULATOR];
         let acc_next = next[batch_cols::COMPLIANCE_ACCUMULATOR];
         let flag = current[batch_cols::EVENT_COMPLIANCE_FLAG];
 
-        // Enforce AND accumulation
-        result[idx] = acc_next - acc_curr * flag;
+        // When EVENT_ROW != 2, enforce acc_next == acc_curr.
+        result[idx] = (event_row - two) * (acc_next - acc_curr);
         idx += 1;
 
-        // Compliance flag is binary
+        // When EVENT_ROW == 2, enforce acc_next == acc_curr * flag * gamma.
+        let gamma = E::from(felt_from_u64(COMPLIANCE_ACC_GAMMA));
+        result[idx] = event_row
+            * (event_row - E::ONE)
+            * (event_row - three)
+            * (acc_next - acc_curr * flag * gamma);
+        idx += 1;
+
+        // Compliance flag is binary.
         result[idx] = flag * (E::ONE - flag);
         idx += 1;
 
         // =========================================================================
-        // Phase constraints (2)
+        // Phase constraints (4)
         // =========================================================================
 
         let phase_curr = current[batch_cols::BATCH_PHASE];
         let phase_next = next[batch_cols::BATCH_PHASE];
 
-        // Phase can only stay same or increment by 1
-        // (next - curr) * (next - curr - 1) = 0
-        result[idx] = (phase_next - phase_curr) * (phase_next - phase_curr - E::ONE);
+        // Phase can only stay same or increment by 1: (delta) * (delta - 1) = 0.
+        let phase_delta = phase_next - phase_curr;
+        result[idx] = phase_delta * (phase_delta - E::ONE);
         idx += 1;
 
-        // Phase is in valid range (0, 1, 2, or 3)
-        // phase * (phase - 1) * (phase - 2) * (phase - 3) = 0
-        // Simplified: we just check it doesn't exceed 3
-        let three = E::from(felt_from_u64(3));
-        result[idx] = phase_curr
-            * (phase_curr - E::ONE)
-            * (phase_curr - E::from(felt_from_u64(2)))
-            * (phase_curr - three);
+        // Phase is in {0,1,2,3}.
+        result[idx] =
+            phase_curr * (phase_curr - E::ONE) * (phase_curr - two) * (phase_curr - three);
         idx += 1;
 
-        // =========================================================================
-        // Padding constraints (fill remaining with zeros)
-        // =========================================================================
+        // While not_done, phase must be Event (0).
+        result[idx] = not_done * phase_curr;
+        idx += 1;
 
-        while idx < NUM_BATCH_CONSTRAINTS {
-            result[idx] = E::ZERO;
-            idx += 1;
-        }
+        // When done, phase must not be Event (i.e. it must be in {1,2,3}).
+        result[idx] = done * (phase_curr - E::ONE) * (phase_curr - two) * (phase_curr - three);
+        idx += 1;
+
+        debug_assert_eq!(idx, NUM_BATCH_CONSTRAINTS);
     }
 
     fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {

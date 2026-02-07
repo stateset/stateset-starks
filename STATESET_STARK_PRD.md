@@ -19,7 +19,7 @@ The remainder of this file is the earlier v1.0 draft (batch-validity oriented) a
 
 `stateset-stark` is the STARK proving/verifying layer for VES (Verifiable Event Sync).
 
-**Phase 1** is **per-event compliance STARK proofs** for **encrypted VES events** (VES-ENC-1). These proofs let third parties verify **policy claims** about event payloads without learning the payload.
+**Phase 1** is **per-event compliance STARK proofs** for **encrypted VES events** (VES-ENC-1). These proofs let third parties verify **policy claims** about a private witness value derived from an event payload, without revealing the witness.
 
 Batch/state-transition validity proofs remain Phase 2+.
 
@@ -35,6 +35,11 @@ Examples:
 - “Order total < $10,000”
 - “Refund <= original total”
 - “Inventory delta does not drive stock negative”
+
+Important: in the current Phase 1 implementation, the STARK proof is over a private witness value
+(`amount`) which is **assumed** to be derived from the encrypted payload by the surrounding VES
+pipeline. The proof does **not** algebraically verify decryption/parsing or bind the witness to the
+payload hashes inside the AIR.
 
 ### 1.3 Phase Summary
 
@@ -118,6 +123,14 @@ Canonical public inputs are JSON (RFC 8785 JCS canonicalizable) with this shape:
 Notes:
 - `hex32` values are lowercase hex of 32 bytes, no `0x`.
 - `policyParams` defaults to `{}` when omitted.
+
+Statement scope note:
+- The public inputs include payload hashes and event metadata, and the AIR binds these into the
+  trace (row 0). However, the current AIR does not prove any relationship between those hashes and
+  the private witness amount. If the system requires "encrypted payload amount is compliant" as an
+  end-to-end claim, the payload-to-witness binding must be enforced at the protocol layer (e.g.,
+  through a trusted decryption pipeline, attestation, or by extending the AIR to verify the
+  relevant cryptographic relation).
 
 #### 4.1.1 `policyHash`
 

@@ -1,32 +1,36 @@
 //! Execution Trace Layout for VES Compliance AIR
 //!
 //! The trace is organized to prove:
-//! 1. Public inputs are correctly bound (via Rescue hash)
-//! 2. Policy-specific compliance constraints are satisfied
-//! 3. Range proofs via binary decomposition
+//! 1. Public inputs are bound to the trace via boundary assertions (row 0)
+//! 2. A private `amount` value satisfies the selected policy inequality
+//! 3. The witness amount is bound to the proof via an in-AIR Rescue commitment
+//! 4. Range validity for u32 limbs via bit decomposition (limbs 0-1 only; limbs 2-7 are
+//!    boundary-asserted to 0 to represent a u64)
 //!
-//! For the `aml.threshold` policy, the trace proves:
-//! - The committed amount (from payload) is less than the threshold
-//! - The Rescue hash of the witness matches public input commitments
-//! - Each limb is a valid u32 (via bit decomposition)
+//! For the `aml.threshold` policy, the AIR enforces `amount < threshold` by proving
+//! `amount <= threshold - 1` (effective limit) via a 2-limb (u64) subtraction gadget.
+//!
+//! Note: Public inputs include payload hashes and event metadata, but the current AIR does **not**
+//! algebraically link those hashes to the private amount. That linkage is handled by the
+//! surrounding protocol/pipeline, not by this AIR.
 
 use ves_stark_primitives::Felt;
 
 /// Total width of the execution trace (number of columns)
 ///
-/// Layout (V2 - Full Security):
+/// Layout (current):
 /// - Columns 0-11: Rescue state (12 elements for permutation)
-/// - Columns 12-19: Witness data (amount as 8 u32 limbs for range proof)
+/// - Columns 12-19: Witness data (amount as 8 u32 limbs; only limbs 0-1 are range-checked)
 /// - Columns 20-27: Threshold data (8 u32 limbs)
-/// - Columns 28-35: Comparison flags and intermediate values (legacy)
+/// - Columns 28-35: Legacy comparison flags / intermediates (unused by current AIR)
 /// - Columns 36-39: Control flags (is_first, is_last, round_counter, phase)
 /// - Columns 40-71: Amount limb 0 bit decomposition (32 bits)
 /// - Columns 72-103: Amount limb 1 bit decomposition (32 bits)
-/// - Column 104: Rescue hash output commitment flag
-/// - Columns 105-112: diff[i] (threshold[i] - amount[i] - 1 when amount < threshold)
-/// - Columns 113-120: borrow[i] (1 if we need to borrow at limb i)
-/// - Columns 121-128: is_less[i] (1 if determined amount < threshold at limb i)
-/// - Columns 129-136: is_equal[i] (1 if still equal through limb i)
+/// - Column 104: Legacy commitment flag (unused by current AIR)
+/// - Columns 105-112: diff[i] (subtraction witness; limbs 2-7 are asserted to 0)
+/// - Columns 113-120: borrow[i] (subtraction witness; limbs 2-7 are unused)
+/// - Columns 121-128: Legacy is_less[i] (unused by current AIR)
+/// - Columns 129-136: Legacy is_equal[i] (unused by current AIR)
 ///
 /// Note: Limbs 2-7 are boundary-asserted to zero (for u64 amounts), so no binary
 /// decomposition is needed. The value 0 is trivially a valid u32.
@@ -79,7 +83,7 @@ pub mod cols {
     pub const RESCUE_COMMIT_FLAG: usize = 104;
 
     // =========================================================================
-    // V2 Extended Columns: Comparison Gadget
+    // Legacy Columns: Comparison Gadget (unused by current AIR)
     // =========================================================================
 
     // diff[i] = threshold[i] - amount[i] - 1 when amount[i] < threshold[i] (105-112)
@@ -99,7 +103,7 @@ pub mod cols {
     pub const IS_EQUAL_END: usize = 137;
 
     // =========================================================================
-    // V3 Extended Columns: diff bit decomposition (u32 for limbs 0-1)
+    // Diff Bit Decomposition (u32 for limbs 0-1)
     // =========================================================================
 
     // diff limb 0 bits (137-168)

@@ -55,7 +55,7 @@ pub fn verify_compliance_proof(
 ) -> Result<VerificationResult, VerifierError> {
     let start = Instant::now();
 
-    // V2 Security: Validate hex string formats in public inputs
+    // Input hardening: validate hex string formats in public inputs
     validate_hex_string("payload_plain_hash", &public_inputs.payload_plain_hash, 64)?;
     validate_hex_string(
         "payload_cipher_hash",
@@ -64,6 +64,17 @@ pub fn verify_compliance_proof(
     )?;
     validate_hex_string("event_signing_hash", &public_inputs.event_signing_hash, 64)?;
     validate_hex_string("policy_hash", &public_inputs.policy_hash, 64)?;
+
+    // Optional hardening: if the canonical public inputs include a witness commitment, enforce
+    // that the caller-provided commitment matches it.
+    if let Some(expected) = public_inputs
+        .witness_commitment_u64()
+        .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?
+    {
+        if &expected != witness_commitment {
+            return Err(VerifierError::WitnessCommitmentMismatch);
+        }
+    }
 
     // Validate policy hash
     let policy_hash_valid = public_inputs
@@ -186,6 +197,24 @@ pub fn verify_compliance_proof_auto(
     verify_compliance_proof(proof_bytes, public_inputs, &policy, witness_commitment)
 }
 
+/// Verify a compliance proof using policy parameters and witness commitment from the public inputs.
+///
+/// This requires `public_inputs.witnessCommitment` to be present.
+pub fn verify_compliance_proof_auto_bound(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+) -> Result<VerificationResult, VerifierError> {
+    let witness_commitment = public_inputs
+        .witness_commitment_u64()
+        .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?
+        .ok_or_else(|| {
+            VerifierError::PublicInputMismatch(
+                "missing witnessCommitment in public inputs".to_string(),
+            )
+        })?;
+    verify_compliance_proof_auto(proof_bytes, public_inputs, &witness_commitment)
+}
+
 /// Stateless compliance proof verifier
 pub struct ComplianceVerifier {
     /// Acceptable proof options
@@ -250,6 +279,15 @@ impl ComplianceVerifier {
         verify_compliance_proof_auto(proof_bytes, public_inputs, witness_commitment)
     }
 
+    /// Verify a proof using policy parameters and witness commitment from the public inputs.
+    pub fn verify_auto_bound(
+        &self,
+        proof_bytes: &[u8],
+        public_inputs: &CompliancePublicInputs,
+    ) -> Result<VerificationResult, VerifierError> {
+        verify_compliance_proof_auto_bound(proof_bytes, public_inputs)
+    }
+
     /// Verify proof hash matches
     pub fn verify_proof_hash(proof_bytes: &[u8], expected_hash: &str) -> bool {
         let computed =
@@ -287,6 +325,7 @@ mod tests {
             policy_id: policy_id.to_string(),
             policy_params: params,
             policy_hash: hash.to_hex(),
+            witness_commitment: None,
         }
     }
 
@@ -633,9 +672,33 @@ mod tests {
                 policy_id: policy_id.to_string(),
                 policy_params: params.clone(),
                 policy_hash: hash.to_hex(),
+                witness_commitment: None,
             };
             assert!(inputs.validate_policy_hash().unwrap());
         }
+    }
+
+    #[test]
+    fn test_public_inputs_witness_commitment_mismatch_fails_fast() {
+        let threshold = 10000u64;
+        let mut inputs = sample_inputs(threshold);
+        let expected = [1u64, 2, 3, 4];
+        inputs.witness_commitment = Some(ves_stark_primitives::witness_commitment_u64_to_hex(
+            &expected,
+        ));
+
+        let policy = Policy::aml_threshold(threshold);
+        let wrong = [0u64; 4];
+        let err = verify_compliance_proof(&[], &inputs, &policy, &wrong).unwrap_err();
+        assert!(matches!(err, VerifierError::WitnessCommitmentMismatch));
+    }
+
+    #[test]
+    fn test_verify_auto_bound_requires_witness_commitment() {
+        let threshold = 10000u64;
+        let inputs = sample_inputs(threshold);
+        let err = verify_compliance_proof_auto_bound(&[], &inputs).unwrap_err();
+        assert!(matches!(err, VerifierError::PublicInputMismatch(_)));
     }
 
     // =========================================================================

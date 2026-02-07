@@ -245,15 +245,11 @@ impl TraceBuilder {
 
             // Set subtraction witness columns (row 0 = real, other rows = junk)
             let row_diff = if use_real_witness { diff } else { junk_limbs };
-            let mut row_borrow = if use_real_witness {
+            let row_borrow = if use_real_witness {
                 borrow
             } else {
                 junk_borrow
             };
-            if row == self.trace_length - 1 {
-                // Satisfy boundary assertion: final borrow must be zero at last row.
-                row_borrow[1] = FELT_ZERO;
-            }
             for i in 0..8 {
                 trace[cols::diff(i)][row] = row_diff[i];
                 trace[cols::borrow(i)][row] = row_borrow[i];
@@ -350,6 +346,7 @@ mod tests {
             policy_id: policy_id.to_string(),
             policy_params: params,
             policy_hash: hash.to_hex(),
+            witness_commitment: None,
         }
     }
 
@@ -370,6 +367,7 @@ mod tests {
             policy_id: policy_id.to_string(),
             policy_params: params,
             policy_hash: hash.to_hex(),
+            witness_commitment: None,
         }
     }
 

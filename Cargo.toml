@@ -16,6 +16,7 @@ members = [
 name = "ves-stark"
 version = "0.2.0"
 edition = "2021"
+rust-version = "1.90"
 publish = false
 
 [dependencies]
@@ -39,6 +40,7 @@ harness = false
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
+rust-version = "1.90"
 license = "MIT"
 authors = ["StateSet Engineering"]
 repository = "https://github.com/stateset/stateset-stark"

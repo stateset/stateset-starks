@@ -583,6 +583,7 @@ fn generate_random_public_inputs(
         policy_id: policy_id.to_string(),
         policy_params: params,
         policy_hash: hash.to_hex(),
+        witness_commitment: None,
     })
 }
 
@@ -933,6 +934,7 @@ fn generate_batch_public_inputs(
         policy_id: policy_id.to_string(),
         policy_params: params,
         policy_hash: hash.to_hex(),
+        witness_commitment: None,
     })
 }
 

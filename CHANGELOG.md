@@ -9,10 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `scripts/rescue_constants.py`, `docs/rescue_constants.json`, and `docs/RESCUE_CONSTANTS.md` to export and audit frozen Rescue-Prime constants (digest pinned in tests/docs).
+- `rust-toolchain.toml` and workspace-wide `rust-version` (MSRV) pinning to make CI/builds reproducible.
+- Optional `witnessCommitment` field in canonical public inputs (hex64, representing 32 bytes) plus helpers to parse/encode it.
+- Bound verification entrypoint `verify_compliance_proof_auto_bound` (and `ComplianceVerifier::verify_auto_bound`) which requires `witnessCommitment` in public inputs.
+- `SetChainClient::{try_new, try_unauthenticated}` constructors to avoid panics on invalid inputs.
+- Proof JSON now includes `witness_commitment_hex` for JS-safe transport.
+- Node.js bindings now expose `witnessCommitmentHex` on proofs and a `verifyHex` API to avoid `u64` round-trip issues.
+- `SECURITY.md` and `.github/dependabot.yml` for basic security reporting and dependency update automation.
+- CI now uses the pinned Rust toolchain and includes smoke tests for Node.js and Python bindings.
 
 ### Changed
 - **Breaking**: Corrected the Rescue-Prime `MDS_INV` constant to be a true inverse of `MDS` over Goldilocks. This changes Rescue permutation/hash outputs and invalidates proofs/commitments produced with the previous constants.
 - Batch trace layout now keeps total width under Winterfell's 255-column limit by sharing only the base compliance columns needed for batch proofs.
+- Updated docs to clarify witness binding and recommended verification flow when `witnessCommitment` is available.
 
 ### Fixed
 - Compliance AIR now binds the final subtraction borrow at row 0 (where the comparison gadget is enforced), preventing inconsistent borrows across rows.

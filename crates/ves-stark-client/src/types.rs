@@ -73,6 +73,8 @@ pub struct CompliancePublicInputs {
     pub policy_id: String,
     pub policy_params: serde_json::Value,
     pub policy_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness_commitment: Option<String>,
 }
 
 /// Request to submit a compliance proof
@@ -239,6 +241,7 @@ mod tests {
             policy_id: policy_id.to_string(),
             policy_params: params,
             policy_hash: hash.to_hex(),
+            witness_commitment: None,
         }
     }
 
