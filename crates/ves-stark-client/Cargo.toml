@@ -16,7 +16,7 @@ ves-stark-prover = { path = "../ves-stark-prover" }
 ves-stark-verifier = { path = "../ves-stark-verifier" }
 ves-stark-air = { path = "../ves-stark-air" }
 ves-stark-batch = { path = "../ves-stark-batch", optional = true }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
