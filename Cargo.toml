@@ -53,7 +53,7 @@ winter-prover = "0.10"
 winter-verifier = "0.10"
 winter-math = "0.10"
 winter-crypto = "0.10"
-winter-utils = "0.10"
+winter-utils = "0.13"
 
 # Cryptography
 sha2 = "0.10"
