@@ -23,23 +23,13 @@ impl SequencerClient {
             .unwrap_or_else(|e| format!("<failed to read response body: {e}>"))
     }
 
-    /// Create a new sequencer client
+    /// Create a new sequencer client.
     ///
     /// # Arguments
     ///
     /// * `base_url` - The base URL of the sequencer (e.g., "http://localhost:8080")
     /// * `api_key` - The API key for authentication
-    pub fn new(base_url: &str, api_key: &str) -> Self {
-        Self::try_new(base_url, api_key).unwrap_or_else(|e| {
-            panic!("Failed to construct SequencerClient: {e}");
-        })
-    }
-
-    /// Create a new sequencer client without panicking.
-    ///
-    /// The API key is wrapped in `Zeroizing` and will be zeroed from memory
-    /// after the Authorization header has been built.
-    pub fn try_new(base_url: &str, api_key: &str) -> Result<Self> {
+    pub fn new(base_url: &str, api_key: &str) -> Result<Self> {
         let base_url = base_url.trim();
         if base_url.is_empty() {
             return Err(ClientError::InvalidBaseUrl(
@@ -50,9 +40,7 @@ impl SequencerClient {
 
         let api_key = api_key.trim();
         if api_key.is_empty() {
-            return Err(ClientError::InvalidHeader(
-                "api_key must not be empty".to_string(),
-            ));
+            return Err(ClientError::InvalidHeader("api_key must not be empty".to_string()));
         }
 
         let key = Zeroizing::new(format!("ApiKey {}", api_key));
@@ -74,14 +62,20 @@ impl SequencerClient {
         })
     }
 
+    /// Create a new sequencer client.
+    ///
+    /// The API key is wrapped in `Zeroizing` and will be zeroed from memory
+    /// after the Authorization header has been built.
+    pub fn try_new(base_url: &str, api_key: &str) -> Result<Self> {
+        Self::new(base_url, api_key)
+    }
+
     /// Create a client without authentication (for local development).
     ///
     /// Only available when the `dev` feature is enabled.
     #[cfg(feature = "dev")]
-    pub fn unauthenticated(base_url: &str) -> Self {
-        Self::try_unauthenticated(base_url).unwrap_or_else(|e| {
-            panic!("Failed to construct SequencerClient: {e}");
-        })
+    pub fn unauthenticated(base_url: &str) -> Result<Self> {
+        Self::try_unauthenticated(base_url)
     }
 
     /// Create a client without authentication (for local development) without panicking.
@@ -367,6 +361,18 @@ mod tests {
     #[test]
     fn test_client_creation() {
         let _client = SequencerClient::try_new("http://localhost:8080", "test_key").unwrap();
+    }
+
+    #[test]
+    fn test_client_creation_rejects_invalid_base_url() {
+        assert!(SequencerClient::new("", "test_key").is_err());
+        assert!(SequencerClient::new("::::", "test_key").is_err());
+    }
+
+    #[test]
+    fn test_client_creation_rejects_empty_api_key() {
+        assert!(SequencerClient::new("http://localhost:8080", "").is_err());
+        assert!(SequencerClient::new("http://localhost:8080", "   ").is_err());
     }
 
     #[cfg(feature = "dev")]

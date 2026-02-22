@@ -235,17 +235,7 @@ impl SetChainClient {
     /// * `base_url` - The base URL of the sequencer (e.g., "http://localhost:8080")
     /// * `api_key` - The API key for authentication
     /// * `config` - Set Chain configuration
-    pub fn new(base_url: &str, api_key: &str, config: SetChainConfig) -> Self {
-        Self::try_new(base_url, api_key, config).unwrap_or_else(|e| {
-            panic!("Failed to construct SetChainClient: {e}");
-        })
-    }
-
-    /// Create a new Set Chain client without panicking.
-    ///
-    /// The API key is wrapped in `Zeroizing` and will be zeroed from memory
-    /// after the Authorization header has been built.
-    pub fn try_new(base_url: &str, api_key: &str, config: SetChainConfig) -> Result<Self> {
+    pub fn new(base_url: &str, api_key: &str, config: SetChainConfig) -> Result<Self> {
         config.validate()?;
 
         let base_url = base_url.trim();
@@ -283,14 +273,20 @@ impl SetChainClient {
         })
     }
 
+    /// Create a new Set Chain client.
+    ///
+    /// The API key is wrapped in `Zeroizing` and will be zeroed from memory
+    /// after the Authorization header has been built.
+    pub fn try_new(base_url: &str, api_key: &str, config: SetChainConfig) -> Result<Self> {
+        Self::new(base_url, api_key, config)
+    }
+
     /// Create a client without authentication (for local development).
     ///
     /// Only available when the `dev` feature is enabled.
     #[cfg(feature = "dev")]
-    pub fn unauthenticated(base_url: &str, config: SetChainConfig) -> Self {
-        Self::try_unauthenticated(base_url, config).unwrap_or_else(|e| {
-            panic!("Failed to construct SetChainClient: {e}");
-        })
+    pub fn unauthenticated(base_url: &str, config: SetChainConfig) -> Result<Self> {
+        Self::try_unauthenticated(base_url, config)
     }
 
     /// Create a client without authentication (for local development) without panicking.
@@ -591,6 +587,20 @@ mod tests {
     fn test_set_chain_config_zero_registry_is_rejected() {
         let config = SetChainConfig::testnet();
         assert!(SetChainClient::try_new("http://localhost:8080", "test_key", config).is_err());
+    }
+
+    #[test]
+    fn test_set_chain_client_rejects_invalid_base_url() {
+        let config = SetChainConfig::local();
+        assert!(SetChainClient::new("", "test_key", config.clone()).is_err());
+        assert!(SetChainClient::new("::::", "test_key", config.clone()).is_err());
+    }
+
+    #[test]
+    fn test_set_chain_client_rejects_empty_api_key() {
+        let config = SetChainConfig::local();
+        assert!(SetChainClient::new("http://localhost:8080", "", config.clone()).is_err());
+        assert!(SetChainClient::new("http://localhost:8080", "   ", config).is_err());
     }
 
     #[test]

@@ -143,7 +143,10 @@ impl BatchMetadata {
 
     /// Number of events in this batch
     pub fn num_events(&self) -> u64 {
-        self.sequence_end - self.sequence_start + 1
+        match self.sequence_end.checked_sub(self.sequence_start) {
+            Some(span) => span + 1,
+            None => 0,
+        }
     }
 }
 
@@ -185,5 +188,19 @@ mod tests {
         let hash2 = metadata.to_rescue_hash();
 
         assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_num_events_invalid_range_returns_zero() {
+        let metadata = BatchMetadata::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            10,
+            2,
+            0,
+        );
+
+        assert_eq!(metadata.num_events(), 0);
     }
 }

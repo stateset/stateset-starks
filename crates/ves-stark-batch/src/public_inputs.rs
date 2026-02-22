@@ -83,6 +83,7 @@ impl BatchPublicInputs {
         policy_hash: [Felt; 8],
         policy_limit: u64,
     ) -> Self {
+        let sequence_end = num_events.saturating_sub(1) as u64;
         Self::new(
             [FELT_ZERO; 4], // Genesis has zero prev_state_root
             new_state_root,
@@ -90,7 +91,7 @@ impl BatchPublicInputs {
             tenant_id,
             store_id,
             0,
-            (num_events - 1) as u64,
+            sequence_end,
             num_events,
             true,
             policy_hash,
@@ -196,5 +197,21 @@ mod tests {
         assert_eq!(inputs.prev_state_root, [FELT_ZERO; 4]);
         assert_eq!(inputs.num_events_usize(), 10);
         assert!(inputs.is_all_compliant());
+    }
+
+    #[test]
+    fn test_genesis_inputs_zero_events() {
+        let inputs = BatchPublicInputs::genesis(
+            [felt_from_u64(1); 4],
+            [felt_from_u64(2); 4],
+            [felt_from_u64(3); 4],
+            [felt_from_u64(4); 4],
+            0,
+            [felt_from_u64(5); 8],
+            10000,
+        );
+
+        assert_eq!(inputs.num_events_usize(), 0);
+        assert_eq!(inputs.sequence_end.as_int(), 0);
     }
 }
