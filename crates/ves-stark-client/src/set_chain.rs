@@ -221,7 +221,7 @@ pub struct SetChainClient {
 }
 
 impl SetChainClient {
-    async fn response_body_or_debug_message(mut response: reqwest::Response) -> String {
+    async fn response_body_or_debug_message(response: reqwest::Response) -> String {
         response
             .text()
             .await

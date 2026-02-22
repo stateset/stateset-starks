@@ -292,21 +292,25 @@ impl SerializableBatchProof {
             BatchError::DeserializationFailed("num_events is too large for this platform".to_string())
         })?;
 
-        let batch_id = batch_id_to_uuid_string(batch_id)?;
+        let batch_id_uuid = batch_id_to_uuid_string(batch_id)?;
+
+        // Compute hash and size before moving proof_bytes
+        let proof_hash = BatchProof::compute_hash(&proof_bytes).to_hex();
+        let proof_size = proof_bytes.len();
 
         // Construct the proof struct (partial - hash will be recomputed on verification)
         let proof = BatchProof {
             proof_bytes,
-            proof_hash: BatchProof::compute_hash(&proof_bytes).to_hex(),
+            proof_hash,
             prev_state_root,
             new_state_root,
             metadata: crate::prover::BatchProofMetadata {
-                batch_id,
+                batch_id: batch_id_uuid,
                 num_events: num_events_usize,
                 all_compliant: all_compliant == 1,
                 proving_time_ms: 0,
                 trace_length: 0,
-                proof_size: proof_bytes.len(),
+                proof_size,
                 prover_version: String::new(),
             },
         };
@@ -470,7 +474,7 @@ mod tests {
             bytes[index * 4..index * 4 + 4].copy_from_slice(&limb.to_le_bytes()[..4]);
         }
 
-        Uuid::from_bytes(bytes).unwrap()
+        Uuid::from_bytes(bytes)
     }
 
     fn sample_proof() -> BatchProof {

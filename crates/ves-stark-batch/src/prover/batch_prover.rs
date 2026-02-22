@@ -545,11 +545,15 @@ mod tests {
                 t
             }),
         ] {
-            let result = verify_batch_proof(&proof.proof_bytes, &tampered).unwrap();
-            assert!(
-                !result.valid,
-                "batch proof must not verify under different public inputs: tampered {label}"
-            );
+            // Tampered inputs may be caught by pre-verification validation (Err) or
+            // by the STARK verifier itself (Ok with valid == false). Either is correct rejection.
+            match verify_batch_proof(&proof.proof_bytes, &tampered) {
+                Err(_) => {} // pre-validation correctly caught the inconsistency
+                Ok(result) => assert!(
+                    !result.valid,
+                    "batch proof must not verify under different public inputs: tampered {label}"
+                ),
+            }
         }
     }
 

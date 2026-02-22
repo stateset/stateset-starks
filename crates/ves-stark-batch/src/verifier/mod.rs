@@ -4,4 +4,4 @@
 
 mod batch_verifier;
 
-pub use batch_verifier::{verify_batch_proof, BatchVerificationResult, BatchVerifier};
+pub use batch_verifier::{verify_batch_proof, BatchVerificationResult, BatchVerifier, MAX_BATCH_PROOF_SIZE};

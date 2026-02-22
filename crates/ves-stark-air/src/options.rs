@@ -50,7 +50,7 @@ impl Default for ProofOptions {
     fn default() -> Self {
         Self {
             num_queries: 28,
-            blowup_factor: 8,
+            blowup_factor: 16,
             grinding_factor: 16,
             field_extension: FieldExtension::None,
             fri_folding_factor: 8,
@@ -63,9 +63,9 @@ impl ProofOptions {
     pub fn fast() -> Self {
         Self {
             num_queries: 20,
-            // The current AIR uses degree-7/9 constraints (Rescue x^7), so Winterfell requires
-            // a minimum blowup factor of 8 for soundness.
-            blowup_factor: 8,
+            // The batch AIR uses degree-10 constraints (Rescue pow7 × selectors with
+            // full-trace periodic columns), requiring a minimum blowup factor of 16.
+            blowup_factor: 16,
             grinding_factor: 8,
             field_extension: FieldExtension::None,
             fri_folding_factor: 8,
@@ -91,10 +91,10 @@ impl ProofOptions {
         if self.blowup_factor < 2 || !self.blowup_factor.is_power_of_two() {
             return Err(OptionsError::InvalidBlowupFactor(self.blowup_factor));
         }
-        // Our current AIR includes Rescue x^7 constraints (degree-7/9 numerators), which require a
-        // minimum blowup factor of 8 in Winterfell. Smaller values can lead to invalid proofs or
-        // runtime assertions.
-        const MIN_REQUIRED_BLOWUP: usize = 8;
+        // The batch AIR includes degree-10 constraints (Rescue pow7 × selectors with full-trace
+        // periodic columns), requiring a minimum blowup factor of 16 in Winterfell. Smaller values
+        // cause assertion failures in the prover.
+        const MIN_REQUIRED_BLOWUP: usize = 16;
         if self.blowup_factor < MIN_REQUIRED_BLOWUP {
             return Err(OptionsError::BlowupFactorTooSmall {
                 min_required: MIN_REQUIRED_BLOWUP,

@@ -8,7 +8,7 @@
 use crate::air::trace_layout::batch_cols;
 use ves_stark_primitives::{
     felt_from_u64,
-    rescue::{ALPHA_INV, MDS, MDS_INV, ROUND_CONSTANTS, STATE_WIDTH as RESCUE_STATE_WIDTH},
+    rescue::{MDS, MDS_INV, STATE_WIDTH as RESCUE_STATE_WIDTH},
     Felt,
 };
 use winter_math::FieldElement;
@@ -16,13 +16,13 @@ use winter_math::FieldElement;
 /// Number of constraints produced by `evaluate_merkle_constraints`.
 ///
 /// Layout:
-/// - 10 structural constraints
+/// - 11 structural constraints (phase, binary, row-zero, after-events, activity, init)
 /// - 12 Rescue transition constraints (12 state words)
-/// - 12 hash-input binding constraints (1..4 are Merkle/finalize-specific)
-/// - 12 output/state-binding constraints (Merkle root row + finalize output rows + output rows)
+/// - 12 hash-input binding constraints (Merkle/finalize-specific)
+/// - 12 output/state-binding constraints (final Merkle root + finalize output + active output)
 ///
-/// Total: 46
-pub const NUM_MERKLE_CONSTRAINTS: usize = 46;
+/// Total: 47
+pub const NUM_MERKLE_CONSTRAINTS: usize = 47;
 
 /// Index in periodic columns for Rescue activity selector.
 pub const PERIODIC_RESCUE_ACTIVE_IDX: usize = 0;
@@ -47,10 +47,6 @@ fn pow7<E: FieldElement<BaseField = Felt>>(x: E) -> E {
     x6 * x
 }
 
-#[inline]
-fn pow7_inv<E: FieldElement<BaseField = Felt>>(x: E) -> E {
-    x.exp(ALPHA_INV)
-}
 
 fn apply_mds<E: FieldElement<BaseField = Felt>>(
     state: &[E; RESCUE_STATE_WIDTH],
@@ -154,6 +150,13 @@ pub fn evaluate_merkle_constraints<E: FieldElement<BaseField = Felt>>(
     next_state.copy_from_slice(&next[rescue_state_start..rescue_state_end]);
 
     // 11-22) Rescue permutation transitions on active hash rows.
+    //
+    // Forward half-round:  next = MDS * sbox(curr) + constants
+    //   Constraint: next - MDS * sbox(curr) - constants = 0  (degree 7 in trace)
+    //
+    // Backward half-round: next = sbox_inv(MDS_inv * curr) + constants
+    //   Rewritten as: sbox(next - constants) = MDS_inv * curr  (degree 7 in trace)
+    //   Using sbox instead of sbox_inv avoids a degree-alpha_inv (~10^19) constraint.
     let mut sbox_state = [E::ZERO; RESCUE_STATE_WIDTH];
     for i in 0..RESCUE_STATE_WIDTH {
         sbox_state[i] = pow7(curr_state[i]);
@@ -164,7 +167,7 @@ pub fn evaluate_merkle_constraints<E: FieldElement<BaseField = Felt>>(
 
     for i in 0..RESCUE_STATE_WIDTH {
         let forward_constraint = next_state[i] - (forward_state[i] + round_const[i]);
-        let backward_constraint = pow7_inv(next_state[i] - round_const[i]) - backward_state[i];
+        let backward_constraint = pow7(next_state[i] - round_const[i]) - backward_state[i];
         let transition = rescue_is_forward * forward_constraint
             + (E::ONE - rescue_is_forward) * backward_constraint;
         result[idx] = is_hash_row_active * transition;
@@ -241,6 +244,6 @@ mod tests {
 
     #[test]
     fn test_constraint_count() {
-        assert_eq!(NUM_MERKLE_CONSTRAINTS, 46);
+        assert_eq!(NUM_MERKLE_CONSTRAINTS, 47);
     }
 }

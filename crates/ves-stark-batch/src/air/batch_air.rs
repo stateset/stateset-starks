@@ -1,5 +1,5 @@
 //! Batch Compliance AIR
-///
+//!
 //! This module implements the batch AIR used for production-like Merkle + finalization
 //! hash verification with witness binding and compliance checks.
 
@@ -16,8 +16,7 @@ use winter_math::FieldElement;
 
 use crate::air::constraints::{
     evaluate_compliance_binding_constraints,
-    evaluate_merkle_constraints, PERIODIC_COLUMN_COUNT, PERIODIC_RESCUE_ACTIVE_IDX,
-    PERIODIC_RESCUE_CONST_START_IDX, PERIODIC_RESCUE_INIT_IDX, PERIODIC_RESCUE_IS_FORWARD_IDX,
+    evaluate_merkle_constraints, PERIODIC_COLUMN_COUNT,
     NUM_COMPLIANCE_BINDING_CONSTRAINTS, NUM_MERKLE_CONSTRAINTS,
 };
 use crate::air::trace_layout::{
@@ -28,7 +27,7 @@ use crate::public_inputs::BatchPublicInputs;
 
 /// Number of transition constraints in batch AIR.
 ///
-/// 54 base + 46 Merkle/finalize constraints + 1 compliance binding = 101
+/// 54 base + 47 Merkle/finalize constraints + 1 compliance binding = 102
 pub const NUM_BATCH_CONSTRAINTS: usize =
     54 + NUM_MERKLE_CONSTRAINTS + NUM_COMPLIANCE_BINDING_CONSTRAINTS;
 
@@ -86,9 +85,23 @@ impl BatchComplianceAir {
         degrees.push(TransitionConstraintDegree::new(4)); // done => phase != Event
 
         // Merkle/finalization constraints.
-        for _ in 0..NUM_MERKLE_CONSTRAINTS {
-            degrees.push(TransitionConstraintDegree::new(14));
-        }
+        // 11 structural constraints: degree 2 (products of 2 trace columns)
+        degrees.extend(std::iter::repeat_n(TransitionConstraintDegree::new(2), 11));
+        // 12 Rescue transition constraints: degree 10
+        //   (pow7 trace-degree 7 × selectors + periodic column polynomial contributions)
+        degrees.extend(std::iter::repeat_n(TransitionConstraintDegree::new(10), 12));
+        // 12 hash-input binding constraints:
+        //   For i < 8: rescue_init × (state - selector × trace_col) → degree 3
+        //   For i >= 8: inputs are zero, so rescue_init × state → degree 2
+        degrees.extend(std::iter::repeat_n(TransitionConstraintDegree::new(3), 8));
+        degrees.extend(std::iter::repeat_n(TransitionConstraintDegree::new(2), 4));
+        // 4 final-Merkle-root binding constraints: degree 3
+        degrees.extend(std::iter::repeat_n(TransitionConstraintDegree::new(3), 4));
+        // 4 finalize-output binding constraints: degree 4
+        //   (is_output_row uses periodic rescue_active, × is_finalize × trace diff)
+        degrees.extend(std::iter::repeat_n(TransitionConstraintDegree::new(4), 4));
+        // 4 active-output binding constraints: degree 4
+        degrees.extend(std::iter::repeat_n(TransitionConstraintDegree::new(4), 4));
 
         // Compliance binding constraint (§2): 1 constraint
         for _ in 0..NUM_COMPLIANCE_BINDING_CONSTRAINTS {
@@ -282,7 +295,7 @@ impl Air for BatchComplianceAir {
     fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
         &self,
         frame: &EvaluationFrame<E>,
-        _periodic_values: &[E],
+        periodic_values: &[E],
         result: &mut [E],
     ) {
         let current = frame.current();

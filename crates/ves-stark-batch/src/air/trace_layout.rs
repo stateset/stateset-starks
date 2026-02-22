@@ -370,8 +370,8 @@ mod tests {
         // 8 events: 8*4 + 7*15 + 15 = 152 -> 256 (min)
         assert_eq!(calculate_trace_length(8), 256);
 
-        // 16 events: 16*4 + 15*15 + 15 = 304 -> 256 (min)
-        assert_eq!(calculate_trace_length(16), 256);
+        // 16 events: 16*4 + 15*15 + 15 = 304 -> 512
+        assert_eq!(calculate_trace_length(16), 512);
 
         // 64 events: 64*4 + 63*15 + 15 = 1216 -> 2048
         assert_eq!(calculate_trace_length(64), 2048);
