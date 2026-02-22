@@ -8,7 +8,7 @@ use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
 use winter_verifier::{verify, AcceptableOptions};
 
 use ves_stark_air::options::ProofOptions;
-use ves_stark_primitives::{felt_from_u64, Felt, Hash256};
+use ves_stark_primitives::{felt_from_u64, Felt, Hash256, FELT_ONE, FELT_ZERO};
 
 use crate::air::batch_air::BatchComplianceAir;
 use crate::error::BatchError;
@@ -91,6 +91,38 @@ pub fn verify_batch_proof(
         });
     }
 
+    if public_inputs.all_compliant != FELT_ZERO && public_inputs.all_compliant != FELT_ONE {
+        return Err(BatchError::InvalidPublicInputs(
+            "all_compliant must be 0 or 1".to_string(),
+        ));
+    }
+
+    let sequence_start = public_inputs.sequence_start.as_int();
+    let sequence_end = public_inputs.sequence_end.as_int();
+    if sequence_start > sequence_end {
+        return Err(BatchError::InvalidPublicInputs(
+            "sequence_start must be <= sequence_end".to_string(),
+        ));
+    }
+
+    let expected_num_events = sequence_end
+        .checked_sub(sequence_start)
+        .and_then(|span| span.checked_add(1))
+        .ok_or_else(|| {
+            BatchError::InvalidPublicInputs("sequence span overflows u64".to_string())
+        })?;
+    let num_events_u64 = public_inputs.num_events.as_int();
+    if expected_num_events != num_events_u64 {
+        return Err(BatchError::InvalidPublicInputs(format!(
+            "inconsistent public inputs: expected {} events from sequence range, got {}",
+            expected_num_events, num_events_u64
+        )));
+    }
+
+    let num_events = usize::try_from(num_events_u64).map_err(|_| {
+        BatchError::InvalidPublicInputs("num_events does not fit in platform usize".to_string())
+    })?;
+
     // Deserialize proof
     let proof = winter_verifier::Proof::from_bytes(proof_bytes)
         .map_err(|e| BatchError::DeserializationFailed(format!("{e}")))?;
@@ -139,7 +171,7 @@ pub fn verify_batch_proof(
             error: None,
             prev_state_root,
             new_state_root,
-            num_events: public_inputs.num_events_usize(),
+            num_events,
             all_compliant: public_inputs.is_all_compliant(),
         }),
         Err(e) => Ok(BatchVerificationResult {
@@ -148,7 +180,7 @@ pub fn verify_batch_proof(
             error: Some(format!("{e}")),
             prev_state_root,
             new_state_root,
-            num_events: public_inputs.num_events_usize(),
+            num_events,
             all_compliant: public_inputs.is_all_compliant(),
         }),
     }

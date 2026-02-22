@@ -28,13 +28,14 @@ use ves_stark_primitives::public_inputs::{
 };
 use ves_stark_primitives::{hash_to_felts, Felt};
 use ves_stark_prover::{ComplianceProof, ComplianceProver, ComplianceWitness, Policy};
-use ves_stark_verifier::verify_compliance_proof;
+use ves_stark_verifier::{verify_compliance_proof, MAX_PROOF_SIZE};
 
 // Batch proving imports
 use ves_stark_batch::{
     BatchMetadata, BatchProver, BatchPublicInputs, BatchStateRoot, BatchVerifier, BatchWitnessBuilder,
     SerializableBatchProof,
 };
+use ves_stark_batch::verifier::MAX_BATCH_PROOF_SIZE;
 
 /// Policy type for CLI
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -595,9 +596,17 @@ fn verify(
             };
 
         (bytes, commitment)
-    } else {
-        anyhow::bail!("Raw base64 proofs no longer supported - please use JSON format with witness_commitment");
-    };
+        } else {
+            anyhow::bail!("Raw base64 proofs no longer supported - please use JSON format with witness_commitment");
+        };
+
+    if proof_bytes.len() > MAX_PROOF_SIZE {
+        anyhow::bail!(
+            "Proof file is too large: {} bytes (max {})",
+            proof_bytes.len(),
+            MAX_PROOF_SIZE
+        );
+    }
 
     eprintln!("Verifying proof...");
     eprintln!("  Policy: {}", policy_type.policy_id());
@@ -1042,9 +1051,24 @@ fn batch_verify(proof_path: PathBuf) -> Result<()> {
     let proof_bytes = proof.proof_bytes;
     let proof_hash = proof.proof_hash.clone();
 
+    if proof_bytes.len() > MAX_BATCH_PROOF_SIZE {
+        anyhow::bail!(
+            "Batch proof payload is too large: {} bytes (max {})",
+            proof_bytes.len(),
+            MAX_BATCH_PROOF_SIZE
+        );
+    }
+
+    let expected_hash = ves_stark_batch::BatchProof::compute_hash(&proof_bytes).to_hex();
+    if expected_hash != proof_hash {
+        println!("Warning: embedded proof hash does not match computed hash");
+        println!("  embedded: {}", proof_hash);
+        println!("  computed: {}", expected_hash);
+    }
+
     println!("Loaded proof:");
     println!("  Size: {} bytes", proof_bytes.len());
-    println!("  Hash: {}...", &proof_hash[..16]);
+    println!("  Hash: {}...", proof_hash.chars().take(16).collect::<String>());
     println!("  Prev root: {:?}", proof.prev_state_root);
     println!("  New root:  {:?}", proof.new_state_root);
     println!();
@@ -1060,13 +1084,6 @@ fn batch_verify(proof_path: PathBuf) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
 
     let elapsed = start.elapsed();
-
-    let expected_hash = ves_stark_batch::BatchProof::compute_hash(&proof_bytes).to_hex();
-    if expected_hash != proof_hash {
-        println!("  Warning: embedded proof hash does not match computed hash");
-        println!("    embedded: {}", proof_hash);
-        println!("    computed: {}", expected_hash);
-    }
 
     if result.valid {
         println!();

@@ -31,29 +31,7 @@ impl SequencerClient {
     /// * `api_key` - The API key for authentication
     pub fn new(base_url: &str, api_key: &str) -> Self {
         Self::try_new(base_url, api_key).unwrap_or_else(|e| {
-            debug_assert!(false, "Failed to build HTTP client: {e}");
-
-            let mut headers = HeaderMap::new();
-            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
-            let auth_key = format!("ApiKey {}", api_key.trim());
-            if let Ok(auth_value) = HeaderValue::from_str(&auth_key) {
-                headers.insert(AUTHORIZATION, auth_value);
-            }
-
-            let client = reqwest::Client::builder()
-                .default_headers(headers)
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new());
-
-            Self {
-                client,
-                base_url: match reqwest::Url::parse(base_url.trim()) {
-                    Ok(_) => base_url.trim().trim_end_matches('/').to_string(),
-                    Err(_) => "http://localhost:8080".to_string(),
-                },
-            }
+            panic!("Failed to construct SequencerClient: {e}");
         })
     }
 
@@ -102,24 +80,7 @@ impl SequencerClient {
     #[cfg(feature = "dev")]
     pub fn unauthenticated(base_url: &str) -> Self {
         Self::try_unauthenticated(base_url).unwrap_or_else(|e| {
-            debug_assert!(false, "Failed to build HTTP client: {e}");
-
-            let mut headers = HeaderMap::new();
-            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
-            let client = reqwest::Client::builder()
-                .default_headers(headers)
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new());
-
-            Self {
-                client,
-                base_url: match reqwest::Url::parse(base_url.trim()) {
-                    Ok(_) => base_url.trim().trim_end_matches('/').to_string(),
-                    Err(_) => "http://localhost:8080".to_string(),
-                },
-            }
+            panic!("Failed to construct SequencerClient: {e}");
         })
     }
 

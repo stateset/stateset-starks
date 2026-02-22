@@ -4,6 +4,7 @@
 //! optimized for both human inspection (JSON) and efficient transport (binary).
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::error::BatchError;
 use crate::prover::BatchProof;
@@ -291,6 +292,8 @@ impl SerializableBatchProof {
             BatchError::DeserializationFailed("num_events is too large for this platform".to_string())
         })?;
 
+        let batch_id = batch_id_to_uuid_string(batch_id)?;
+
         // Construct the proof struct (partial - hash will be recomputed on verification)
         let proof = BatchProof {
             proof_bytes,
@@ -298,10 +301,7 @@ impl SerializableBatchProof {
             prev_state_root,
             new_state_root,
             metadata: crate::prover::BatchProofMetadata {
-                batch_id: format!(
-                    "{:016x}{:016x}{:016x}{:016x}",
-                    batch_id[0], batch_id[1], batch_id[2], batch_id[3]
-                ),
+                batch_id,
                 num_events: num_events_usize,
                 all_compliant: all_compliant == 1,
                 proving_time_ms: 0,
@@ -388,6 +388,21 @@ impl From<BatchPublicInputs> for SerializableBatchPublicInputs {
     }
 }
 
+fn batch_id_to_uuid_string(batch_id: [u64; 4]) -> Result<String, BatchError> {
+    let mut batch_id_bytes = [0u8; 16];
+
+    for (index, limb) in batch_id.iter().enumerate() {
+        let limb = u32::try_from(*limb).map_err(|_| {
+            BatchError::DeserializationFailed(
+                "batch_id values must fit in u32 for UUID reconstruction".to_string(),
+            )
+        })?;
+        batch_id_bytes[index * 4..index * 4 + 4].copy_from_slice(&limb.to_le_bytes());
+    }
+
+    Ok(Uuid::from_bytes(batch_id_bytes).to_string())
+}
+
 impl From<SerializableBatchPublicInputs> for BatchPublicInputs {
     fn from(inputs: SerializableBatchPublicInputs) -> Self {
         use ves_stark_primitives::felt_from_u64;
@@ -447,6 +462,16 @@ mod tests {
     use super::*;
     use crate::prover::BatchProofMetadata;
     use ves_stark_primitives::felt_from_u64;
+
+    fn uuid_from_batch_id_fields(batch_id: [u64; 4]) -> Uuid {
+        let mut bytes = [0u8; 16];
+
+        for (index, limb) in batch_id.iter().enumerate() {
+            bytes[index * 4..index * 4 + 4].copy_from_slice(&limb.to_le_bytes()[..4]);
+        }
+
+        Uuid::from_bytes(bytes).unwrap()
+    }
 
     fn sample_proof() -> BatchProof {
         BatchProof {
@@ -517,6 +542,21 @@ mod tests {
     }
 
     #[test]
+    fn test_binary_round_trip_preserves_batch_id_as_uuid() {
+        let proof = sample_proof();
+        let mut inputs = sample_public_inputs();
+        inputs.batch_id = [11, 22, 33, 44].map(felt_from_u64);
+
+        let serializable = SerializableBatchProof::new(proof, inputs);
+        let expected_batch_id = uuid_from_batch_id_fields([11, 22, 33, 44]).to_string();
+
+        let bytes = serializable.to_bytes().unwrap();
+        let deserialized = SerializableBatchProof::from_bytes(&bytes).unwrap();
+
+        assert_eq!(deserialized.proof.metadata.batch_id, expected_batch_id);
+    }
+
+    #[test]
     fn test_binary_deserialization_rejects_short_payload() {
         let proof = sample_proof();
         let inputs = sample_public_inputs();
@@ -541,6 +581,24 @@ mod tests {
         bytes[all_compliant_offset..all_compliant_offset + 8]
             .copy_from_slice(&2u64.to_le_bytes());
 
+        assert!(matches!(
+            SerializableBatchProof::from_bytes(&bytes),
+            Err(BatchError::DeserializationFailed(_))
+        ));
+    }
+
+    #[test]
+    fn test_binary_deserialization_rejects_invalid_batch_id_limb() {
+        let proof = sample_proof();
+        let mut inputs = sample_public_inputs();
+        inputs.batch_id = [
+            felt_from_u64(u32::MAX as u64 + 1),
+            felt_from_u64(22),
+            felt_from_u64(33),
+            felt_from_u64(44),
+        ];
+
+        let bytes = SerializableBatchProof::new(proof, inputs).to_bytes().unwrap();
         assert!(matches!(
             SerializableBatchProof::from_bytes(&bytes),
             Err(BatchError::DeserializationFailed(_))

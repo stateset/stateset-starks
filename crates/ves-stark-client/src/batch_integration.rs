@@ -9,8 +9,108 @@ use crate::error::{ClientError, Result};
 use crate::set_chain::{BatchProofResponse, BatchProofSubmission, SetChainClient};
 
 fn parse_batch_id_from_metadata(batch_id: &str) -> Result<Uuid> {
-    Uuid::parse_str(batch_id).map_err(|e| {
-        ClientError::InvalidPublicInputs(format!("Invalid batch_id '{}': {e}", batch_id))
+    let batch_id = batch_id.trim();
+
+    if let Ok(uuid) = Uuid::parse_str(batch_id) {
+        return Ok(uuid);
+    }
+
+    let normalized = batch_id
+        .strip_prefix("0x")
+        .or_else(|| batch_id.strip_prefix("0X"))
+        .unwrap_or(batch_id);
+
+    let bytes = hex::decode(normalized).map_err(|e| {
+        ClientError::InvalidPublicInputs(format!(
+            "Invalid batch_id '{}': hex decode error: {e}",
+            batch_id
+        ))
+    })?;
+
+    let batch_id = match bytes.len() {
+        16 => Uuid::from_slice(&bytes).map_err(|e| {
+            ClientError::InvalidPublicInputs(format!("Invalid batch_id '{batch_id}': {e}"))
+        })?,
+        32 => parse_legacy_batch_id_from_u64_limbs(&bytes, batch_id)?,
+        _ => {
+            return Err(ClientError::InvalidPublicInputs(format!(
+                "Invalid batch_id '{}': expected 16 or 32 bytes, got {}",
+                batch_id,
+                bytes.len()
+            )))
+        }
+    };
+
+    Ok(batch_id)
+}
+
+fn parse_legacy_batch_id_from_u64_limbs(
+    bytes: &[u8],
+    original: &str,
+) -> Result<Uuid> {
+    if bytes.len() != 32 {
+        return Err(ClientError::InvalidPublicInputs(format!(
+            "Invalid batch_id '{}': expected 32 bytes",
+            original
+        )));
+    }
+
+    let mut batch_id_bytes = [0u8; 16];
+    for (index, chunk) in bytes.chunks_exact(8).enumerate() {
+        if chunk[..4].iter().any(|byte| *byte != 0) {
+            return Err(ClientError::InvalidPublicInputs(format!(
+                "Invalid batch_id '{original}': unsupported 32-byte format",
+            )));
+        }
+
+        let start = index * 4;
+        batch_id_bytes[start..start + 4].copy_from_slice(&chunk[4..]);
+    }
+
+    Uuid::from_slice(&batch_id_bytes).map_err(|e| {
+        ClientError::InvalidPublicInputs(format!("Invalid batch_id '{original}': {e}"))
+    })
+}
+
+fn batch_event_count_from_metadata(num_events: usize) -> Result<u32> {
+    u32::try_from(num_events).map_err(|_| {
+        ClientError::InvalidPublicInputs(
+            "proof metadata num_events does not fit in u32".to_string(),
+        )
+    })
+}
+
+fn validate_sequence_range(
+    sequence_start: u64,
+    sequence_end: u64,
+    num_events: usize,
+) -> Result<u32> {
+    if sequence_start > sequence_end {
+        return Err(ClientError::InvalidPublicInputs(
+            "sequence_start must be <= sequence_end".to_string(),
+        ));
+    }
+
+    let span = sequence_end
+        .checked_sub(sequence_start)
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| {
+            ClientError::InvalidPublicInputs("sequence range overflows u64".to_string())
+        })?;
+
+    let event_count = u64::try_from(num_events).map_err(|_| {
+        ClientError::InvalidPublicInputs("num_events does not fit in u64".to_string())
+    })?;
+
+    if span != event_count {
+        return Err(ClientError::InvalidPublicInputs(format!(
+            "inconsistent sequence range: expected {} events, got {}",
+            span, event_count
+        )));
+    }
+
+    u32::try_from(num_events).map_err(|_| {
+        ClientError::InvalidPublicInputs("num_events does not fit in u32".to_string())
     })
 }
 
@@ -44,6 +144,11 @@ impl SetChainClient {
     ) -> Result<BatchProofResponse> {
         // Parse batch_id from hex string
         let batch_id = parse_batch_id_from_metadata(&proof.metadata.batch_id)?;
+        let event_count = validate_sequence_range(
+            sequence_start,
+            sequence_end,
+            proof.metadata.num_events,
+        )?;
 
         // Convert state roots from [u64; 4] to [u8; 32]
         let prev_state_root = u64_array_to_bytes(&proof.prev_state_root);
@@ -58,7 +163,7 @@ impl SetChainClient {
             new_state_root,
             sequence_start,
             sequence_end,
-            proof.metadata.num_events as u32,
+            event_count,
             &proof.proof_bytes,
             policy_hash,
             policy_limit,
@@ -84,6 +189,11 @@ impl SetChainClient {
     ) -> Result<BatchProofResponse> {
         // Parse batch_id from hex string
         let batch_id = parse_batch_id_from_metadata(&proof.metadata.batch_id)?;
+        let event_count = validate_sequence_range(
+            sequence_start,
+            sequence_end,
+            proof.metadata.num_events,
+        )?;
 
         let prev_state_root = u64_array_to_bytes(&proof.prev_state_root);
         let new_state_root = u64_array_to_bytes(&proof.new_state_root);
@@ -97,7 +207,7 @@ impl SetChainClient {
             new_state_root,
             sequence_start,
             sequence_end,
-            proof.metadata.num_events as u32,
+            event_count,
             &proof.proof_bytes,
             policy_hash,
             policy_limit,
@@ -178,7 +288,9 @@ impl BatchSubmissionBuilder {
             new_state_root: Some(u64_array_to_bytes(&proof.new_state_root)),
             sequence_start: None,
             sequence_end: None,
-            event_count: Some(proof.metadata.num_events as u32),
+            event_count: Some(batch_event_count_from_metadata(
+                proof.metadata.num_events,
+            )?),
             proof_bytes: Some(proof.proof_bytes.clone()),
             policy_hash: None,
             policy_limit: None,
@@ -297,6 +409,20 @@ impl BatchSubmissionBuilder {
             message: "policy_limit is required".to_string(),
         })?;
 
+        if let (Some(sequence_start), Some(sequence_end), Some(event_count)) = (
+            self.sequence_start,
+            self.sequence_end,
+            self.event_count,
+        ) {
+            validate_sequence_range(
+                sequence_start,
+                sequence_end,
+                usize::try_from(event_count).map_err(|_| {
+                    ClientError::InvalidPublicInputs("event_count does not fit in platform usize".to_string())
+                })?,
+            )?;
+        }
+
         Ok(SetChainClient::create_submission(
             batch_id,
             tenant_id,
@@ -325,6 +451,16 @@ impl Default for BatchSubmissionBuilder {
 mod tests {
     use super::*;
     use ves_stark_batch::prover::{BatchProof, BatchProofMetadata};
+
+    fn uuid_from_batch_id_fields(batch_id: [u64; 4]) -> Uuid {
+        let mut bytes = [0u8; 16];
+        for (index, limb) in batch_id.iter().enumerate() {
+            let encoded = format!("{:016x}", limb);
+            let decoded = hex::decode(encoded).expect("valid 16-byte hex string");
+            bytes[index * 4..index * 4 + 4].copy_from_slice(&decoded[4..]);
+        }
+        Uuid::from_bytes(bytes).unwrap()
+    }
 
     fn sample_batch_proof() -> BatchProof {
         BatchProof {
@@ -373,6 +509,29 @@ mod tests {
     }
 
     #[test]
+    fn test_batch_submission_builder_legacy_hex_batch_id() {
+        let batch_id_limb_values = [
+            0x01020304u64,
+            0x05060708u64,
+            0x090A0B0Cu64,
+            0x0D0E0F10u64,
+        ];
+
+        let mut proof = sample_batch_proof();
+        proof.metadata.batch_id = format!(
+            "{:016x}{:016x}{:016x}{:016x}",
+            batch_id_limb_values[0],
+            batch_id_limb_values[1],
+            batch_id_limb_values[2],
+            batch_id_limb_values[3]
+        );
+
+        let builder = BatchSubmissionBuilder::from_batch_proof(&proof).unwrap();
+        let expected_batch_id = uuid_from_batch_id_fields(batch_id_limb_values);
+        assert_eq!(builder.batch_id.unwrap(), expected_batch_id);
+    }
+
+    #[test]
     fn test_batch_submission_builder_missing_field() {
         let proof = sample_batch_proof();
         let builder = BatchSubmissionBuilder::from_batch_proof(&proof).unwrap();
@@ -388,6 +547,40 @@ mod tests {
         proof.metadata.batch_id = "not-a-uuid".to_string();
 
         let result = BatchSubmissionBuilder::from_batch_proof(&proof);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_batch_submission_builder_invalid_legacy_hex_batch_id() {
+        let mut proof = sample_batch_proof();
+        let bytes = {
+            let mut bytes = [0u8; 32];
+            bytes[0] = 0xFF;
+            hex::encode(bytes)
+        };
+
+        proof.metadata.batch_id = bytes;
+
+        let result = BatchSubmissionBuilder::from_batch_proof(&proof);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_batch_submission_builder_invalid_sequence_range() {
+        let proof = sample_batch_proof();
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let result = BatchSubmissionBuilder::from_batch_proof(&proof)
+            .unwrap()
+            .tenant_id(tenant_id)
+            .store_id(store_id)
+            .events_root([0u8; 32])
+            .proof_bytes(proof.proof_bytes)
+            .policy_hash([0u8; 32])
+            .policy_limit(10000)
+            .sequence_range(1, 11)
+            .build();
+
         assert!(result.is_err());
     }
 }
