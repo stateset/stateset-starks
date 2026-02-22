@@ -84,7 +84,7 @@ Generate a STARK compliance proof.
 - `proofHash` (string): SHA-256 hash of proof
 - `provingTimeMs` (number): Generation time in milliseconds
 - `proofSize` (number): Size in bytes
-- `witnessCommitment` (number[]): 4-element commitment array (legacy; not safe for JS `number`)
+- `witnessCommitment` (string[]): 4-element decimal commitment array
 - `witnessCommitmentHex` (string): 64-character lowercase hex commitment (recommended)
 
 ### `verify(proofBytes, publicInputs, witnessCommitment)`
@@ -94,7 +94,7 @@ Verify a STARK compliance proof.
 **Parameters:**
 - `proofBytes` (Buffer): Raw proof bytes from `prove()`
 - `publicInputs` (JsCompliancePublicInputs): Must match proving inputs
-- `witnessCommitment` (number[]): 4-element array from proof
+- `witnessCommitment` (string[]): 4-element decimal array from proof
 
 **Returns:** `JsVerificationResult`
 - `valid` (boolean): Whether proof is valid

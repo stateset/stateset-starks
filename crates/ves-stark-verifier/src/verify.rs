@@ -2,7 +2,7 @@
 //!
 //! This module provides the main verification logic for VES compliance proofs.
 
-use crate::error::{validate_hex_string, VerifierError};
+use crate::error::{validate_hex_string, VerifierError, MAX_PROOF_SIZE};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use ves_stark_air::compliance::{ComplianceAir, PublicInputs};
@@ -54,6 +54,14 @@ pub fn verify_compliance_proof(
     witness_commitment: &[u64; 4],
 ) -> Result<VerificationResult, VerifierError> {
     let start = Instant::now();
+
+    // Size check: reject oversized proofs before attempting deserialization
+    if proof_bytes.len() > MAX_PROOF_SIZE {
+        return Err(VerifierError::ProofTooLarge {
+            size: proof_bytes.len(),
+            max_size: MAX_PROOF_SIZE,
+        });
+    }
 
     // Input hardening: validate hex string formats in public inputs
     validate_hex_string("payload_plain_hash", &public_inputs.payload_plain_hash, 64)?;
@@ -225,7 +233,30 @@ pub struct ComplianceVerifier {
 impl ComplianceVerifier {
     /// Create a new verifier with default options
     pub fn new() -> Self {
-        Self::try_new().expect("invalid proof options")
+        Self::try_new().unwrap_or_else(|_| Self {
+            acceptable_options: Self::fallback_options(),
+        })
+    }
+
+    fn fallback_options() -> AcceptableOptions {
+        AcceptableOptions::OptionSet(vec![
+            Self::to_winterfell_unchecked(&ves_stark_air::options::ProofOptions::default()),
+            Self::to_winterfell_unchecked(&ves_stark_air::options::ProofOptions::fast()),
+            Self::to_winterfell_unchecked(&ves_stark_air::options::ProofOptions::secure()),
+        ])
+    }
+
+    fn to_winterfell_unchecked(
+        options: &ves_stark_air::options::ProofOptions,
+    ) -> winter_air::ProofOptions {
+        winter_air::ProofOptions::new(
+            options.num_queries,
+            options.blowup_factor,
+            options.grinding_factor,
+            options.field_extension,
+            options.fri_folding_factor,
+            31,
+        )
     }
 
     /// Create a new verifier with default options without panicking

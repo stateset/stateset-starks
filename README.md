@@ -19,9 +19,12 @@ Phase 1 implements per-event compliance proofs for:
 Note: The current AIR does **not** prove that the private `amount` equals a value decrypted or
 parsed from the payload hashes in the public inputs. It proves a relationship about a private
 `amount` witness (bound via a Rescue commitment) under the assumption that the surrounding VES
-pipeline derived that witness correctly. If your sequencer/pipeline can derive a Rescue witness
-commitment from the payload, include it in the canonical public inputs as `witnessCommitment` and
-require it during verification to bind the proved witness to the canonical inputs.
+pipeline derived that witness correctly.
+
+In the `stateset-sequencer` integration, the sequencer does **not** include `witnessCommitment` in
+canonical public inputs (it can't derive it pre-proof). Instead, the prover submits
+`witnessCommitment` alongside the proof, and the sequencer stores it and uses it during
+verification to bind the proof to the witness.
 
 ## Architecture
 
@@ -34,7 +37,7 @@ stateset-stark/
 │   ├── ves-stark-verifier/     # Proof verification
 │   ├── ves-stark-client/       # Sequencer/Set Chain client
 │   ├── ves-stark-cli/          # CLI utilities
-│   └── ves-stark-batch/        # Experimental batch proofs (not yet sound)
+│   └── ves-stark-batch/        # Batch proofs for aggregate state transition integrity
 └── tests/                       # Integration tests
 ```
 
@@ -59,10 +62,11 @@ let proof = prover.prove(&witness)?;
 ### Verify a Proof
 
 ```rust
-use ves_stark_verifier::verify_compliance_proof_auto_bound;
+use ves_stark_verifier::verify_compliance_proof_auto;
 
-// Requires `public_inputs.witnessCommitment` to be present to bind the proof to canonical inputs.
-let result = verify_compliance_proof_auto_bound(&proof.proof_bytes, &public_inputs)?;
+// The witness commitment is provided out-of-band (e.g., stored alongside the proof in the sequencer).
+let witness_commitment: [u64; 4] = proof.witness_commitment;
+let result = verify_compliance_proof_auto(&proof.proof_bytes, &public_inputs, &witness_commitment)?;
 assert!(result.valid);
 ```
 
@@ -109,10 +113,12 @@ Canonical public inputs (RFC 8785 JCS canonicalized):
   "eventSigningHash": "hex64",
   "policyId": "aml.threshold",
   "policyParams": {"threshold": 10000},
-  "policyHash": "hex64",
-  "witnessCommitment": "hex64"
+  "policyHash": "hex64"
 }
 ```
+
+`witnessCommitment` is optional in the public inputs format. The sequencer integration submits it
+alongside the proof instead of embedding it in canonical public inputs.
 
 ## Cryptographic Details
 

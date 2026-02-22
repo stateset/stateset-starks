@@ -6,6 +6,10 @@ rust-version = "1.90"
 description = "CLI tool for VES STARK proof generation and verification"
 license = "MIT OR Apache-2.0"
 
+[features]
+default = []
+dev = ["ves-stark-client/dev"]
+
 [[bin]]
 name = "ves-stark"
 path = "src/main.rs"
@@ -16,6 +20,7 @@ ves-stark-air = { path = "../ves-stark-air" }
 ves-stark-prover = { path = "../ves-stark-prover" }
 ves-stark-verifier = { path = "../ves-stark-verifier" }
 ves-stark-batch = { path = "../ves-stark-batch" }
+ves-stark-client = { path = "../ves-stark-client" }
 clap = { version = "4", features = ["derive"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -23,4 +28,6 @@ uuid = { workspace = true }
 hex = { workspace = true }
 base64 = "0.22"
 anyhow = { workspace = true }
+rand = { workspace = true }
 rayon = "1.8"
+tokio = { workspace = true }

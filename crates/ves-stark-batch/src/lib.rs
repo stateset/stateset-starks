@@ -4,13 +4,16 @@
 //! It enables proving that N compliance events were all verified correctly
 //! with a single STARK proof, along with state transition integrity.
 //!
-//! # Experimental
+//! # Batch proofs production-hardening note
 //!
-//! Batch proofs are Phase 2+ per the PRD and are **not** yet sound:
-//! - Event compliance proofs are not embedded or verified in this AIR
-//! - Merkle/state transition constraints are still incomplete
+//! Batch proofs are production-focused:
+//! - They bind per-event policy consistency, sequence continuity, and witness commitments.
+//! - They compute compliance/accumulator state inside the AIR and enforce Merkle and finalization hashing
+//!   in-circuit.
 //!
-//! Do not use this crate for production verification.
+//! Security note: batch proofs still do not embed payload-to-amount linkage inside this crate.
+//! If protocol security requires that, that linkage must be enforced by upstream policy
+//! ingestion/validation logic.
 //!
 //! # Architecture
 //!

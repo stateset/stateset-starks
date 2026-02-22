@@ -6,11 +6,11 @@ This document defines a concrete threat model for the current VES-STARK proof sy
 
 This threat model covers:
 - Per-event compliance proofs (`ves-stark-air`, `ves-stark-prover`, `ves-stark-verifier`)
+- Batch proofs (`ves-stark-batch`) for state-transition integrity and aggregate compliance enforcement
 
 It explicitly does not cover:
-- Batch proofs (`ves-stark-batch`) which are experimental and incomplete
 - Payload encryption/decryption correctness
-- Merkle/state-transition correctness outside the single-event AIR
+- Payload-to-amount linkage
 
 ## Statement Proven (Per-Event Compliance)
 

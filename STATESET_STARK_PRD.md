@@ -45,7 +45,7 @@ payload hashes inside the AIR.
 
 | Phase | Scope | Verification | Anchoring |
 |------:|-------|--------------|----------|
-| **1** | Per-event compliance proofs | Off-chain verifier (Rust) + sequencer input-consistency checks | Events/commitments anchored; proofs stored (proof anchoring optional later) |
+| **1** | Per-event compliance proofs | Off-chain verifier (Rust) + sequencer cryptographic STARK verification | Events/commitments anchored; proofs stored (proof anchoring optional later) |
 | 2+ | Batch validity (state transitions) | Off-chain first; on-chain later/optimistic | Requires Set Chain contract upgrades |
 
 ---
@@ -59,7 +59,7 @@ Postgres table:
 
 Key points:
 - Idempotency key: `(event_id, proof_type, proof_version, policy_hash)`
-- Stored fields include `policy_id`, `policy_params`, `policy_hash`, `proof_hash`, optional `public_inputs`.
+- Stored fields include `policy_id`, `policy_params`, `policy_hash`, `proof_hash`, optional `public_inputs`, and optional `witness_commitment` (required for STARK verification).
 
 ### 2.2 Sequencer API (Canonical Inputs + Proof Registry)
 
@@ -70,7 +70,7 @@ Proof registry:
 - `POST /api/v1/ves/compliance/{event_id}/proofs`
 - `GET  /api/v1/ves/compliance/{event_id}/proofs`
 - `GET  /api/v1/ves/compliance/proofs/{proof_id}`
-- `GET  /api/v1/ves/compliance/proofs/{proof_id}/verify` *(currently input-consistency only; Phase 1.1 makes it cryptographic)*
+- `GET  /api/v1/ves/compliance/proofs/{proof_id}/verify` *(cryptographic for STARK proofs; requires witnessCommitment stored alongside the proof)*
 
 ---
 

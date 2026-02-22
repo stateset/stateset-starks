@@ -1,6 +1,9 @@
-//! State transition constraints
+//! State transition constraints (reference implementation)
 //!
-//! These constraints verify the correct transition from prev_state_root to new_state_root.
+//! **Note:** These constraints are NOT currently used by `BatchComplianceAir`.
+//! The active state root consistency constraints live directly in `batch_air.rs`.
+//!
+//! This module is retained as a reference for future constraint development (Phase 3+).
 
 use crate::air::trace_layout::batch_cols;
 use winter_math::FieldElement;

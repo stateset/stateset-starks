@@ -78,11 +78,20 @@ impl BatchStateRoot {
             return Err(format!("Expected 32 bytes, got {}", bytes.len()));
         }
 
+        let mut chunk0 = [0u8; 8];
+        let mut chunk1 = [0u8; 8];
+        let mut chunk2 = [0u8; 8];
+        let mut chunk3 = [0u8; 8];
+        chunk0.copy_from_slice(&bytes[0..8]);
+        chunk1.copy_from_slice(&bytes[8..16]);
+        chunk2.copy_from_slice(&bytes[16..24]);
+        chunk3.copy_from_slice(&bytes[24..32]);
+
         let root = [
-            felt_from_u64(u64::from_le_bytes(bytes[0..8].try_into().unwrap())),
-            felt_from_u64(u64::from_le_bytes(bytes[8..16].try_into().unwrap())),
-            felt_from_u64(u64::from_le_bytes(bytes[16..24].try_into().unwrap())),
-            felt_from_u64(u64::from_le_bytes(bytes[24..32].try_into().unwrap())),
+            felt_from_u64(u64::from_le_bytes(chunk0)),
+            felt_from_u64(u64::from_le_bytes(chunk1)),
+            felt_from_u64(u64::from_le_bytes(chunk2)),
+            felt_from_u64(u64::from_le_bytes(chunk3)),
         ];
 
         Ok(Self { root })

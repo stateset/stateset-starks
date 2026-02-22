@@ -12,9 +12,9 @@ use ves_stark_batch::{
     EventLeaf, EventMerkleTree,
 };
 use ves_stark_primitives::public_inputs::{
-    compute_policy_hash, CompliancePublicInputs, PolicyParams,
+    compute_policy_hash, witness_commitment_u64_to_hex, CompliancePublicInputs, PolicyParams,
 };
-use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
+use ves_stark_primitives::{felt_from_u64, rescue::rescue_hash, Felt, FELT_ONE, FELT_ZERO};
 
 /// Get current Unix timestamp (for test purposes, use 0)
 fn timestamp() -> u64 {
@@ -29,27 +29,41 @@ fn create_policy_hash(threshold: u64) -> [Felt; 8] {
     let policy_id = "aml.threshold";
     let params = PolicyParams::threshold(threshold);
     let hash = compute_policy_hash(policy_id, &params).unwrap();
-    let hex = hash.to_hex();
-
-    // Convert 64-char hex to 8 field elements (8 chars each = 32 bits)
-    let mut result = [FELT_ZERO; 8];
-    for i in 0..8 {
-        let chunk = &hex[i * 8..(i + 1) * 8];
-        let val = u32::from_str_radix(chunk, 16).unwrap_or(0);
-        result[i] = felt_from_u64(val as u64);
-    }
-    result
+    ves_stark_primitives::hash_to_felts(&hash)
 }
 
-fn create_public_inputs(threshold: u64, seq: u64) -> CompliancePublicInputs {
+fn create_public_inputs(
+    threshold: u64,
+    amount: u64,
+    seq: u64,
+    tenant_id: Uuid,
+    store_id: Uuid,
+) -> CompliancePublicInputs {
     let policy_id = "aml.threshold";
     let params = PolicyParams::threshold(threshold);
     let hash = compute_policy_hash(policy_id, &params).unwrap();
+    let amount_limbs = [
+        felt_from_u64(amount & 0xFFFFFFFF),
+        felt_from_u64(amount >> 32),
+        FELT_ZERO,
+        FELT_ZERO,
+        FELT_ZERO,
+        FELT_ZERO,
+        FELT_ZERO,
+        FELT_ZERO,
+    ];
+    let commitment = rescue_hash(&amount_limbs);
+    let commitment_u64 = [
+        commitment[0].as_int(),
+        commitment[1].as_int(),
+        commitment[2].as_int(),
+        commitment[3].as_int(),
+    ];
 
     CompliancePublicInputs {
         event_id: Uuid::new_v4(),
-        tenant_id: Uuid::new_v4(),
-        store_id: Uuid::new_v4(),
+        tenant_id,
+        store_id,
         sequence_number: seq,
         payload_kind: 1,
         payload_plain_hash: "a".repeat(64),
@@ -58,7 +72,7 @@ fn create_public_inputs(threshold: u64, seq: u64) -> CompliancePublicInputs {
         policy_id: policy_id.to_string(),
         policy_params: params,
         policy_hash: hash.to_hex(),
-        witness_commitment: None,
+        witness_commitment: Some(witness_commitment_u64_to_hex(&commitment_u64)),
     }
 }
 
@@ -110,9 +124,11 @@ fn test_batch_metadata_serialization() {
 fn test_batch_event_witness_creation() {
     let threshold = 10000u64;
     let amount = 5000u64;
-    let public_inputs = create_public_inputs(threshold, 0);
+    let tenant_id = Uuid::new_v4();
+    let store_id = Uuid::new_v4();
+    let public_inputs = create_public_inputs(threshold, amount, 0, tenant_id, store_id);
 
-    let witness = BatchEventWitness::new(0, amount, public_inputs, threshold);
+    let witness = BatchEventWitness::new(0, amount, public_inputs, threshold).unwrap();
 
     assert_eq!(witness.event_index, 0);
     assert_eq!(witness.amount, amount);
@@ -127,9 +143,10 @@ fn test_batch_event_witness_creation() {
 fn test_batch_event_witness_non_compliant() {
     let threshold = 10000u64;
     let amount = 15000u64; // Exceeds threshold
-    let public_inputs = create_public_inputs(threshold, 0);
+    let public_inputs =
+        create_public_inputs(threshold, amount, 0, Uuid::new_v4(), Uuid::new_v4());
 
-    let witness = BatchEventWitness::new(0, amount, public_inputs, threshold);
+    let witness = BatchEventWitness::new(0, amount, public_inputs, threshold).unwrap();
 
     assert!(
         !witness.is_compliant,
@@ -142,9 +159,10 @@ fn test_batch_event_witness_non_compliant() {
 fn test_batch_event_witness_boundary() {
     let threshold = 10000u64;
     let amount = threshold; // Equal to threshold (should be non-compliant for strict <)
-    let public_inputs = create_public_inputs(threshold, 0);
+    let public_inputs =
+        create_public_inputs(threshold, amount, 0, Uuid::new_v4(), Uuid::new_v4());
 
-    let witness = BatchEventWitness::new(0, amount, public_inputs, threshold);
+    let witness = BatchEventWitness::new(0, amount, public_inputs, threshold).unwrap();
 
     assert!(
         !witness.is_compliant,
@@ -156,9 +174,10 @@ fn test_batch_event_witness_boundary() {
 fn test_batch_event_witness_amount_limbs() {
     let threshold = 10000u64;
     let amount = 0x1234567890ABCDEFu64;
-    let public_inputs = create_public_inputs(threshold, 0);
+    let public_inputs =
+        create_public_inputs(threshold, amount, 0, Uuid::new_v4(), Uuid::new_v4());
 
-    let witness = BatchEventWitness::new(0, amount, public_inputs, threshold);
+    let witness = BatchEventWitness::new(0, amount, public_inputs, threshold).unwrap();
     let limbs = witness.amount_limbs();
 
     assert_eq!(limbs[0].as_int(), 0x90ABCDEF);
@@ -173,22 +192,25 @@ fn test_batch_event_witness_amount_limbs() {
 #[test]
 fn test_batch_event_witness_compliance_felt() {
     let threshold = 10000u64;
-    let public_inputs = create_public_inputs(threshold, 0);
+    let public_inputs =
+        create_public_inputs(threshold, 5000, 0, Uuid::new_v4(), Uuid::new_v4());
 
-    let compliant_witness = BatchEventWitness::new(0, 5000, public_inputs.clone(), threshold);
+    let compliant_witness = BatchEventWitness::new(0, 5000, public_inputs.clone(), threshold)
+        .unwrap();
     assert_eq!(compliant_witness.compliance_felt().as_int(), 1);
 
-    let non_compliant_witness = BatchEventWitness::new(0, 15000, public_inputs, threshold);
+    let non_compliant_witness = BatchEventWitness::new(0, 15000, public_inputs, threshold).unwrap();
     assert_eq!(non_compliant_witness.compliance_felt().as_int(), 0);
 }
 
 #[test]
 fn test_batch_event_witness_to_event_leaf() {
     let threshold = 10000u64;
-    let public_inputs = create_public_inputs(threshold, 0);
+    let public_inputs =
+        create_public_inputs(threshold, 5000, 0, Uuid::new_v4(), Uuid::new_v4());
     let policy_hash = create_policy_hash(threshold);
 
-    let witness = BatchEventWitness::new(0, 5000, public_inputs, threshold);
+    let witness = BatchEventWitness::new(0, 5000, public_inputs, threshold).unwrap();
     let leaf = witness.to_event_leaf(&policy_hash);
 
     // Verify compliance flag
@@ -225,15 +247,18 @@ fn test_batch_witness_builder_empty() {
 fn test_batch_witness_builder_single_event() {
     let threshold = 10000u64;
     let batch_id = Uuid::new_v4();
-    let metadata = BatchMetadata::new(batch_id, Uuid::new_v4(), Uuid::new_v4(), 0, 0, timestamp());
+    let tenant_id = Uuid::new_v4();
+    let store_id = Uuid::new_v4();
+    let metadata = BatchMetadata::new(batch_id, tenant_id, store_id, 0, 0, timestamp());
     let policy_hash = create_policy_hash(threshold);
-    let public_inputs = create_public_inputs(threshold, 0);
+    let public_inputs = create_public_inputs(threshold, 5000, 0, tenant_id, store_id);
 
     let result = BatchWitnessBuilder::new()
         .metadata(metadata)
         .policy_hash(policy_hash)
         .policy_limit(threshold)
         .add_event(5000, public_inputs)
+            .unwrap()
         .build();
 
     assert!(result.is_ok());
@@ -246,7 +271,9 @@ fn test_batch_witness_builder_single_event() {
 fn test_batch_witness_builder_multiple_events() {
     let threshold = 10000u64;
     let batch_id = Uuid::new_v4();
-    let metadata = BatchMetadata::new(batch_id, Uuid::new_v4(), Uuid::new_v4(), 0, 2, timestamp());
+    let tenant_id = Uuid::new_v4();
+    let store_id = Uuid::new_v4();
+    let metadata = BatchMetadata::new(batch_id, tenant_id, store_id, 0, 2, timestamp());
     let policy_hash = create_policy_hash(threshold);
 
     let mut builder = BatchWitnessBuilder::new()
@@ -255,9 +282,18 @@ fn test_batch_witness_builder_multiple_events() {
         .policy_limit(threshold);
 
     // Add 3 events: 2 compliant, 1 non-compliant
-    builder = builder.add_event(5000, create_public_inputs(threshold, 0));
-    builder = builder.add_event(3000, create_public_inputs(threshold, 1));
-    builder = builder.add_event(15000, create_public_inputs(threshold, 2)); // Non-compliant
+    builder = builder
+        .add_event(5000, create_public_inputs(threshold, 5000, 0, tenant_id, store_id))
+        .unwrap();
+    builder = builder
+        .add_event(3000, create_public_inputs(threshold, 3000, 1, tenant_id, store_id))
+        .unwrap();
+    builder = builder
+        .add_event(
+            15000,
+            create_public_inputs(threshold, 15000, 2, tenant_id, store_id),
+        )
+        .unwrap(); // Non-compliant
 
     let result = builder.build();
     assert!(result.is_ok());
@@ -273,7 +309,9 @@ fn test_batch_witness_builder_multiple_events() {
 fn test_batch_witness_builder_with_prev_state_root() {
     let threshold = 10000u64;
     let batch_id = Uuid::new_v4();
-    let metadata = BatchMetadata::new(batch_id, Uuid::new_v4(), Uuid::new_v4(), 0, 0, timestamp());
+    let tenant_id = Uuid::new_v4();
+    let store_id = Uuid::new_v4();
+    let metadata = BatchMetadata::new(batch_id, tenant_id, store_id, 0, 0, timestamp());
     let policy_hash = create_policy_hash(threshold);
 
     let prev_root = BatchStateRoot::new([
@@ -288,12 +326,59 @@ fn test_batch_witness_builder_with_prev_state_root() {
         .policy_hash(policy_hash)
         .policy_limit(threshold)
         .prev_state_root(prev_root)
-        .add_event(5000, create_public_inputs(threshold, 0))
+        .add_event(5000, create_public_inputs(threshold, 5000, 0, tenant_id, store_id))
+            .unwrap()
         .build();
 
     assert!(result.is_ok());
     let witness = result.unwrap();
     assert_eq!(witness.prev_state_root.root[0].as_int(), 100);
+}
+
+#[test]
+fn test_batch_witness_builder_rejects_missing_witness_commitment() {
+    let threshold = 10000u64;
+    let batch_id = Uuid::new_v4();
+    let tenant_id = Uuid::new_v4();
+    let store_id = Uuid::new_v4();
+    let metadata = BatchMetadata::new(batch_id, tenant_id, store_id, 0, 0, timestamp());
+    let policy_hash = create_policy_hash(threshold);
+
+    let mut public_inputs = create_public_inputs(threshold, 5000, 0, tenant_id, store_id);
+    public_inputs.witness_commitment = None;
+
+    let result = BatchWitnessBuilder::new()
+        .metadata(metadata)
+        .policy_hash(policy_hash)
+        .policy_limit(threshold)
+        .add_event(5000, public_inputs)
+            .unwrap()
+        .build();
+
+    assert!(matches!(result, Err(_) ));
+}
+
+#[test]
+fn test_batch_witness_builder_rejects_invalid_witness_commitment() {
+    let threshold = 10000u64;
+    let batch_id = Uuid::new_v4();
+    let tenant_id = Uuid::new_v4();
+    let store_id = Uuid::new_v4();
+    let metadata = BatchMetadata::new(batch_id, tenant_id, store_id, 0, 0, timestamp());
+    let policy_hash = create_policy_hash(threshold);
+
+    let mut public_inputs = create_public_inputs(threshold, 5000, 0, tenant_id, store_id);
+    public_inputs.witness_commitment = Some("0".repeat(64));
+
+    let result = BatchWitnessBuilder::new()
+        .metadata(metadata)
+        .policy_hash(policy_hash)
+        .policy_limit(threshold)
+        .add_event(5000, public_inputs)
+            .unwrap()
+        .build();
+
+    assert!(matches!(result, Err(_) ));
 }
 
 // =============================================================================
@@ -498,7 +583,9 @@ fn test_batch_verifier_proof_hash() {
 fn test_batch_with_all_non_compliant() {
     let threshold = 10000u64;
     let batch_id = Uuid::new_v4();
-    let metadata = BatchMetadata::new(batch_id, Uuid::new_v4(), Uuid::new_v4(), 0, 2, timestamp());
+    let tenant_id = Uuid::new_v4();
+    let store_id = Uuid::new_v4();
+    let metadata = BatchMetadata::new(batch_id, tenant_id, store_id, 0, 2, timestamp());
     let policy_hash = create_policy_hash(threshold);
 
     let mut builder = BatchWitnessBuilder::new()
@@ -508,10 +595,18 @@ fn test_batch_with_all_non_compliant() {
 
     // All events exceed threshold
     for i in 0..3 {
-        builder = builder.add_event(
-            threshold + (i as u64 * 1000) + 1,
-            create_public_inputs(threshold, i as u64),
-        );
+        builder = builder
+            .add_event(
+                threshold + (i as u64 * 1000) + 1,
+                create_public_inputs(
+                    threshold,
+                    threshold + (i as u64 * 1000) + 1,
+                    i as u64,
+                    tenant_id,
+                    store_id,
+                ),
+            )
+            .unwrap();
     }
 
     let result = builder.build();
@@ -527,15 +622,25 @@ fn test_batch_with_all_non_compliant() {
 fn test_batch_with_zero_amounts() {
     let threshold = 10000u64;
     let batch_id = Uuid::new_v4();
-    let metadata = BatchMetadata::new(batch_id, Uuid::new_v4(), Uuid::new_v4(), 0, 1, timestamp());
+    let tenant_id = Uuid::new_v4();
+    let store_id = Uuid::new_v4();
+    let metadata = BatchMetadata::new(batch_id, tenant_id, store_id, 0, 1, timestamp());
     let policy_hash = create_policy_hash(threshold);
 
     let result = BatchWitnessBuilder::new()
         .metadata(metadata)
         .policy_hash(policy_hash)
         .policy_limit(threshold)
-        .add_event(0, create_public_inputs(threshold, 0))
-        .add_event(0, create_public_inputs(threshold, 1))
+        .add_event(
+            0,
+            create_public_inputs(threshold, 0, 0, tenant_id, store_id),
+        )
+        .unwrap()
+        .add_event(
+            0,
+            create_public_inputs(threshold, 0, 1, tenant_id, store_id),
+        )
+        .unwrap()
         .build();
 
     assert!(result.is_ok());
@@ -547,14 +652,20 @@ fn test_batch_with_zero_amounts() {
 fn test_batch_with_max_u64_threshold() {
     let threshold = u64::MAX;
     let batch_id = Uuid::new_v4();
-    let metadata = BatchMetadata::new(batch_id, Uuid::new_v4(), Uuid::new_v4(), 0, 0, timestamp());
+    let tenant_id = Uuid::new_v4();
+    let store_id = Uuid::new_v4();
+    let metadata = BatchMetadata::new(batch_id, tenant_id, store_id, 0, 0, timestamp());
     let policy_hash = create_policy_hash(threshold);
 
     let result = BatchWitnessBuilder::new()
         .metadata(metadata)
         .policy_hash(policy_hash)
         .policy_limit(threshold)
-        .add_event(u64::MAX - 1, create_public_inputs(threshold, 0))
+        .add_event(
+            u64::MAX - 1,
+            create_public_inputs(threshold, u64::MAX - 1, 0, tenant_id, store_id),
+        )
+        .unwrap()
         .build();
 
     assert!(result.is_ok());

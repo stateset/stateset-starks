@@ -3,6 +3,8 @@
 use base64::Engine;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use uuid::Uuid;
+use ves_stark_air::policy::Policy;
+use zeroize::Zeroizing;
 
 use crate::error::{ClientError, Result};
 use crate::types::*;
@@ -14,6 +16,13 @@ pub struct SequencerClient {
 }
 
 impl SequencerClient {
+    async fn response_body_or_debug_message(mut response: reqwest::Response) -> String {
+        response
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("<failed to read response body: {e}>"))
+    }
+
     /// Create a new sequencer client
     ///
     /// # Arguments
@@ -21,19 +30,64 @@ impl SequencerClient {
     /// * `base_url` - The base URL of the sequencer (e.g., "http://localhost:8080")
     /// * `api_key` - The API key for authentication
     pub fn new(base_url: &str, api_key: &str) -> Self {
-        Self::try_new(base_url, api_key).expect("Failed to build HTTP client")
+        Self::try_new(base_url, api_key).unwrap_or_else(|e| {
+            debug_assert!(false, "Failed to build HTTP client: {e}");
+
+            let mut headers = HeaderMap::new();
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+            let auth_key = format!("ApiKey {}", api_key.trim());
+            if let Ok(auth_value) = HeaderValue::from_str(&auth_key) {
+                headers.insert(AUTHORIZATION, auth_value);
+            }
+
+            let client = reqwest::Client::builder()
+                .default_headers(headers)
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+
+            Self {
+                client,
+                base_url: match reqwest::Url::parse(base_url.trim()) {
+                    Ok(_) => base_url.trim().trim_end_matches('/').to_string(),
+                    Err(_) => "http://localhost:8080".to_string(),
+                },
+            }
+        })
     }
 
-    /// Create a new sequencer client without panicking
+    /// Create a new sequencer client without panicking.
+    ///
+    /// The API key is wrapped in `Zeroizing` and will be zeroed from memory
+    /// after the Authorization header has been built.
     pub fn try_new(base_url: &str, api_key: &str) -> Result<Self> {
+        let base_url = base_url.trim();
+        if base_url.is_empty() {
+            return Err(ClientError::InvalidBaseUrl(
+                "base_url must not be empty".to_string(),
+            ));
+        }
+        reqwest::Url::parse(base_url).map_err(|e| ClientError::InvalidBaseUrl(e.to_string()))?;
+
+        let api_key = api_key.trim();
+        if api_key.is_empty() {
+            return Err(ClientError::InvalidHeader(
+                "api_key must not be empty".to_string(),
+            ));
+        }
+
+        let key = Zeroizing::new(format!("ApiKey {}", api_key));
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        let auth_value = HeaderValue::from_str(&format!("Bearer {}", api_key))
+        let auth_value = HeaderValue::from_str(&key)
             .map_err(|e| ClientError::InvalidHeader(e.to_string()))?;
         headers.insert(AUTHORIZATION, auth_value);
+        // `key` is zeroed on drop here
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
+            .timeout(std::time::Duration::from_secs(30))
             .build()?;
 
         Ok(Self {
@@ -42,18 +96,52 @@ impl SequencerClient {
         })
     }
 
-    /// Create a client without authentication (for local development)
+    /// Create a client without authentication (for local development).
+    ///
+    /// Only available when the `dev` feature is enabled.
+    #[cfg(feature = "dev")]
     pub fn unauthenticated(base_url: &str) -> Self {
-        Self::try_unauthenticated(base_url).expect("Failed to build HTTP client")
+        Self::try_unauthenticated(base_url).unwrap_or_else(|e| {
+            debug_assert!(false, "Failed to build HTTP client: {e}");
+
+            let mut headers = HeaderMap::new();
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+            let client = reqwest::Client::builder()
+                .default_headers(headers)
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+
+            Self {
+                client,
+                base_url: match reqwest::Url::parse(base_url.trim()) {
+                    Ok(_) => base_url.trim().trim_end_matches('/').to_string(),
+                    Err(_) => "http://localhost:8080".to_string(),
+                },
+            }
+        })
     }
 
-    /// Create a client without authentication (for local development) without panicking
+    /// Create a client without authentication (for local development) without panicking.
+    ///
+    /// Only available when the `dev` feature is enabled.
+    #[cfg(feature = "dev")]
     pub fn try_unauthenticated(base_url: &str) -> Result<Self> {
+        let base_url = base_url.trim();
+        if base_url.is_empty() {
+            return Err(ClientError::InvalidBaseUrl(
+                "base_url must not be empty".to_string(),
+            ));
+        }
+        reqwest::Url::parse(base_url).map_err(|e| ClientError::InvalidBaseUrl(e.to_string()))?;
+
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
+            .timeout(std::time::Duration::from_secs(30))
             .build()?;
 
         Ok(Self {
@@ -69,6 +157,21 @@ impl SequencerClient {
         policy_id: &str,
         threshold: u64,
     ) -> Result<PublicInputsResponse> {
+        self.get_public_inputs_with_params(
+            event_id,
+            policy_id,
+            AmlThresholdParams::new(threshold).to_json(),
+        )
+        .await
+    }
+
+    /// Get public inputs for an event with the specified policy and parameters.
+    pub async fn get_public_inputs_with_params(
+        &self,
+        event_id: Uuid,
+        policy_id: &str,
+        policy_params: serde_json::Value,
+    ) -> Result<PublicInputsResponse> {
         let url = format!(
             "{}/api/v1/ves/compliance/{}/inputs",
             self.base_url, event_id
@@ -76,7 +179,7 @@ impl SequencerClient {
 
         let request = PublicInputsRequest {
             policy_id: policy_id.to_string(),
-            policy_params: AmlThresholdParams::new(threshold).to_json(),
+            policy_params,
         };
 
         let response = self.client.post(&url).json(&request).send().await?;
@@ -87,10 +190,10 @@ impl SequencerClient {
         } else if status.as_u16() == 404 {
             Err(ClientError::EventNotFound(event_id))
         } else if status.as_u16() == 401 || status.as_u16() == 403 {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::Unauthorized(body))
         } else {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::ApiError {
                 status: status.as_u16(),
                 message: body,
@@ -112,6 +215,20 @@ impl SequencerClient {
         resp.validate_and_parse_public_inputs()
     }
 
+    /// Get public inputs and validate that the sequencer-provided hash matches the
+    /// canonical hash computed locally. Returns canonical typed inputs on success.
+    pub async fn get_public_inputs_validated_with_params(
+        &self,
+        event_id: Uuid,
+        policy_id: &str,
+        policy_params: serde_json::Value,
+    ) -> Result<ves_stark_primitives::public_inputs::CompliancePublicInputs> {
+        let resp = self
+            .get_public_inputs_with_params(event_id, policy_id, policy_params)
+            .await?;
+        resp.validate_and_parse_public_inputs()
+    }
+
     /// Submit a compliance proof
     pub async fn submit_proof(&self, submission: ProofSubmission) -> Result<SubmitProofResponse> {
         let url = format!(
@@ -127,7 +244,11 @@ impl SequencerClient {
             policy_id: submission.policy_id,
             policy_params: submission.policy_params,
             proof_b64,
-            witness_commitment: submission.witness_commitment,
+            witness_commitment: WitnessCommitment::Hex(
+                ves_stark_primitives::public_inputs::witness_commitment_u64_to_hex(
+                    &submission.witness_commitment,
+                ),
+            ),
             public_inputs: None, // Let the sequencer compute canonical inputs
         };
 
@@ -139,16 +260,16 @@ impl SequencerClient {
         } else if status.as_u16() == 404 {
             Err(ClientError::EventNotFound(submission.event_id))
         } else if status.as_u16() == 401 || status.as_u16() == 403 {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::Unauthorized(body))
         } else if status.as_u16() == 409 {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::ApiError {
                 status: 409,
                 message: format!("Proof conflict: {}", body),
             })
         } else {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::ApiError {
                 status: status.as_u16(),
                 message: body,
@@ -171,7 +292,7 @@ impl SequencerClient {
         } else if status.as_u16() == 404 {
             Err(ClientError::EventNotFound(event_id))
         } else {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::ApiError {
                 status: status.as_u16(),
                 message: body,
@@ -194,7 +315,7 @@ impl SequencerClient {
         } else if status.as_u16() == 404 {
             Err(ClientError::ProofNotFound(proof_id))
         } else {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::ApiError {
                 status: status.as_u16(),
                 message: body,
@@ -217,7 +338,7 @@ impl SequencerClient {
         } else if status.as_u16() == 404 {
             Err(ClientError::ProofNotFound(proof_id))
         } else {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::ApiError {
                 status: status.as_u16(),
                 message: body,
@@ -238,28 +359,42 @@ impl SequencerClient {
         threshold: u64,
         public_inputs: &ves_stark_primitives::public_inputs::CompliancePublicInputs,
     ) -> Result<SubmitProofResponse> {
-        use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
         use ves_stark_prover::{ComplianceProver, ComplianceWitness};
+
+        let policy = Policy::from_public_inputs(
+            &public_inputs.policy_id,
+            &public_inputs.policy_params,
+        )
+        .map_err(|e| {
+            ClientError::InvalidPublicInputs(format!("invalid public inputs policy: {e}"))
+        })?;
+
+        if policy.limit() != threshold {
+            return Err(ClientError::InvalidPublicInputs(format!(
+                "Threshold mismatch for policy {}: expected {}, got {}",
+                public_inputs.policy_id,
+                policy.limit(),
+                threshold
+            )));
+        }
 
         // Create witness
         let witness = ComplianceWitness::new(amount, public_inputs.clone());
-
-        // Create prover
-        let policy = AmlThresholdPolicy::new(threshold);
-        let prover = ComplianceProver::new(policy);
+        let prover = ComplianceProver::with_policy(policy);
 
         // Generate proof
         let proof = prover
             .prove(&witness)
-            .map_err(|e| ClientError::ProofGeneration(format!("{:?}", e)))?;
+            .map_err(|e| ClientError::ProofGeneration(format!("{e}")))?;
 
         // Submit proof
-        let submission = ProofSubmission::aml_threshold(
+        let submission = ProofSubmission {
             event_id,
-            threshold,
-            proof.proof_bytes,
-            proof.witness_commitment,
-        );
+            policy_id: public_inputs.policy_id.clone(),
+            policy_params: public_inputs.policy_params.to_json_value(),
+            proof_bytes: proof.proof_bytes,
+            witness_commitment: proof.witness_commitment,
+        };
         self.submit_proof(submission).await
     }
 }
@@ -273,6 +408,7 @@ mod tests {
         let _client = SequencerClient::try_new("http://localhost:8080", "test_key").unwrap();
     }
 
+    #[cfg(feature = "dev")]
     #[test]
     fn test_unauthenticated_client() {
         let _client = SequencerClient::try_unauthenticated("http://localhost:8080").unwrap();

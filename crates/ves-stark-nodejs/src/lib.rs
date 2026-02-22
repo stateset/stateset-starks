@@ -12,6 +12,37 @@ use ves_stark_primitives::{witness_commitment_hex_to_u64, CompliancePublicInputs
 use ves_stark_prover::{ComplianceProver, ComplianceWitness};
 use ves_stark_verifier::verify_compliance_proof_auto;
 
+fn as_non_negative_u64(value: i64, field_name: &str) -> Result<u64> {
+    u64::try_from(value).map_err(|_| {
+        Error::new(
+            Status::InvalidArg,
+            format!("{} must be non-negative", field_name),
+        )
+    })
+}
+
+fn parse_witness_commitment(witness_commitment: Vec<String>) -> Result<[u64; 4]> {
+    if witness_commitment.len() != 4 {
+        return Err(Error::new(
+            Status::InvalidArg,
+            format!(
+                "Witness commitment must have exactly 4 elements, got {}",
+                witness_commitment.len()
+            ),
+        ));
+    }
+
+    let mut commitment = [0u64; 4];
+    for (idx, value) in witness_commitment.iter().enumerate() {
+        let parsed = value
+            .parse::<u64>()
+            .map_err(|_| Error::new(Status::InvalidArg, "Invalid witness commitment element".to_string()))?;
+        commitment[idx] = parsed;
+    }
+
+    Ok(commitment)
+}
+
 /// Public inputs for compliance proof generation/verification
 #[napi(object)]
 pub struct JsCompliancePublicInputs {
@@ -53,7 +84,7 @@ pub struct JsComplianceProof {
     /// Size of proof in bytes
     pub proof_size: i64,
     /// Witness commitment (4 x u64 as field elements)
-    pub witness_commitment: Vec<i64>,
+    pub witness_commitment: Vec<String>,
     /// Witness commitment encoded as 32 bytes (4 x u64 big-endian) and hex-encoded (64 chars).
     pub witness_commitment_hex: String,
 }
@@ -86,7 +117,7 @@ fn convert_public_inputs(js: &JsCompliancePublicInputs) -> Result<CompliancePubl
         event_id,
         tenant_id,
         store_id,
-        sequence_number: js.sequence_number as u64,
+        sequence_number: as_non_negative_u64(js.sequence_number, "sequence_number")?,
         payload_kind: js.payload_kind,
         payload_plain_hash: js.payload_plain_hash.clone(),
         payload_cipher_hash: js.payload_cipher_hash.clone(),
@@ -112,19 +143,8 @@ pub fn prove(
     policy_type: String,
     policy_limit: i64,
 ) -> Result<JsComplianceProof> {
-    // Validate amount is non-negative
-    if amount < 0 {
-        return Err(Error::new(
-            Status::InvalidArg,
-            "Amount must be non-negative",
-        ));
-    }
-    if policy_limit < 0 {
-        return Err(Error::new(
-            Status::InvalidArg,
-            "Policy limit must be non-negative",
-        ));
-    }
+    let amount = as_non_negative_u64(amount, "amount")?;
+    let policy_limit = as_non_negative_u64(policy_limit, "policy_limit")?;
 
     // Create policy based on type
     let policy = match policy_type.as_str() {
@@ -156,8 +176,11 @@ pub fn prove(
         )
     })?;
 
-    // Convert witness commitment to i64 vec (JS doesn't have native u64)
-    let witness_commitment: Vec<i64> = proof.witness_commitment.iter().map(|&v| v as i64).collect();
+    let witness_commitment: Vec<String> = proof
+        .witness_commitment
+        .iter()
+        .map(|value| value.to_string())
+        .collect();
     let witness_commitment_hex = proof.witness_commitment_hex.clone().ok_or_else(|| {
         Error::new(
             Status::GenericFailure,
@@ -185,27 +208,12 @@ pub fn prove(
 pub fn verify(
     proof_bytes: Buffer,
     public_inputs: JsCompliancePublicInputs,
-    witness_commitment: Vec<i64>,
+    witness_commitment: Vec<String>,
 ) -> Result<JsVerificationResult> {
     // Convert public inputs
     let rust_inputs = convert_public_inputs(&public_inputs)?;
 
-    // Convert witness commitment to u64 array
-    if witness_commitment.len() != 4 {
-        return Err(Error::new(
-            Status::InvalidArg,
-            format!(
-                "Witness commitment must have exactly 4 elements, got {}",
-                witness_commitment.len()
-            ),
-        ));
-    }
-    let commitment: [u64; 4] = [
-        witness_commitment[0] as u64,
-        witness_commitment[1] as u64,
-        witness_commitment[2] as u64,
-        witness_commitment[3] as u64,
-    ];
+    let commitment = parse_witness_commitment(witness_commitment)?;
 
     // Verify proof
     let result = verify_compliance_proof_auto(&proof_bytes, &rust_inputs, &commitment);
@@ -290,8 +298,15 @@ pub fn compute_policy_hash(policy_id: String, policy_params: serde_json::Value) 
 /// @param threshold - The AML threshold value
 /// @returns Policy parameters JSON object
 #[napi]
-pub fn create_aml_threshold_params(threshold: i64) -> serde_json::Value {
-    serde_json::json!({ "threshold": threshold })
+pub fn create_aml_threshold_params(threshold: i64) -> Result<serde_json::Value> {
+    if threshold < 0 {
+        return Err(Error::new(
+            Status::InvalidArg,
+            "Threshold must be non-negative".to_string(),
+        ));
+    }
+
+    Ok(serde_json::json!({ "threshold": threshold }))
 }
 
 /// Create policy parameters for order total cap policy
@@ -299,6 +314,10 @@ pub fn create_aml_threshold_params(threshold: i64) -> serde_json::Value {
 /// @param cap - The order total cap value
 /// @returns Policy parameters JSON object
 #[napi]
-pub fn create_order_total_cap_params(cap: i64) -> serde_json::Value {
-    serde_json::json!({ "cap": cap })
+pub fn create_order_total_cap_params(cap: i64) -> Result<serde_json::Value> {
+    if cap < 0 {
+        return Err(Error::new(Status::InvalidArg, "Cap must be non-negative".to_string()));
+    }
+
+    Ok(serde_json::json!({ "cap": cap }))
 }

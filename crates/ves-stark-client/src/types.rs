@@ -58,23 +58,16 @@ impl PublicInputsResponse {
     }
 }
 
-/// Structured public inputs from the sequencer
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompliancePublicInputs {
-    pub event_id: Uuid,
-    pub tenant_id: Uuid,
-    pub store_id: Uuid,
-    pub sequence_number: u64,
-    pub payload_kind: u32,
-    pub payload_plain_hash: String,
-    pub payload_cipher_hash: String,
-    pub event_signing_hash: String,
-    pub policy_id: String,
-    pub policy_params: serde_json::Value,
-    pub policy_hash: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub witness_commitment: Option<String>,
+// Note: For canonical `CompliancePublicInputs`, use `ves_stark_primitives::public_inputs::CompliancePublicInputs`.
+
+/// Witness commitment for STARK compliance proofs.
+///
+/// Prefer `Hex` across JSON APIs to avoid JavaScript `u64` precision issues.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum WitnessCommitment {
+    Hex(String),
+    U64([u64; 4]),
 }
 
 /// Request to submit a compliance proof
@@ -86,7 +79,7 @@ pub struct SubmitProofRequest {
     pub policy_id: String,
     pub policy_params: serde_json::Value,
     pub proof_b64: String,
-    pub witness_commitment: [u64; 4],
+    pub witness_commitment: WitnessCommitment,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_inputs: Option<serde_json::Value>,
 }
@@ -104,7 +97,9 @@ pub struct SubmitProofResponse {
     pub policy_params: serde_json::Value,
     pub policy_hash: String,
     pub proof_hash: String,
-    pub witness_commitment: [u64; 4],
+    pub witness_commitment: Option<[u64; 4]>,
+    #[serde(default)]
+    pub witness_commitment_hex: Option<String>,
     pub public_inputs: Option<serde_json::Value>,
     pub submitted_at: String,
 }
@@ -122,7 +117,9 @@ pub struct ProofSummary {
     pub policy_params: serde_json::Value,
     pub policy_hash: String,
     pub proof_hash: String,
-    pub witness_commitment: [u64; 4],
+    pub witness_commitment: Option<[u64; 4]>,
+    #[serde(default)]
+    pub witness_commitment_hex: Option<String>,
     pub public_inputs: Option<serde_json::Value>,
     pub submitted_at: String,
 }
@@ -149,7 +146,9 @@ pub struct ProofDetails {
     pub policy_hash: String,
     pub proof_hash: String,
     pub proof_b64: String,
-    pub witness_commitment: [u64; 4],
+    pub witness_commitment: Option<[u64; 4]>,
+    #[serde(default)]
+    pub witness_commitment_hex: Option<String>,
     pub public_inputs: Option<serde_json::Value>,
     pub submitted_at: String,
 }
@@ -169,6 +168,16 @@ pub struct VerifyResponse {
     pub public_inputs_hash: Option<String>,
     pub canonical_public_inputs_hash: String,
     pub public_inputs_match: bool,
+    #[serde(default)]
+    pub witness_commitment: Option<[u64; 4]>,
+    #[serde(default)]
+    pub witness_commitment_hex: Option<String>,
+    #[serde(default)]
+    pub stark_valid: Option<bool>,
+    #[serde(default)]
+    pub stark_error: Option<String>,
+    #[serde(default)]
+    pub stark_verification_time_ms: Option<u64>,
     pub valid: bool,
     pub reason: Option<String>,
 }

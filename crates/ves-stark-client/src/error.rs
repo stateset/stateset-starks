@@ -52,6 +52,10 @@ pub enum ClientError {
     #[error("Invalid header value: {0}")]
     InvalidHeader(String),
 
+    /// Invalid base URL for client configuration.
+    #[error("Invalid base URL: {0}")]
+    InvalidBaseUrl(String),
+
     // Set Chain specific errors
     #[error("Batch already committed on Set Chain: {0}")]
     BatchAlreadyCommitted(uuid::Uuid),

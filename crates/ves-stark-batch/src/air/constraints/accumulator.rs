@@ -1,7 +1,10 @@
-//! Compliance accumulator constraints
+//! Compliance accumulator constraints (reference implementation)
 //!
-//! These constraints ensure that the compliance accumulator correctly
-//! tracks the AND of all individual event compliance flags.
+//! **Note:** These constraints are NOT currently used by `BatchComplianceAir`.
+//! The active accumulator constraints live directly in `batch_air.rs` and use a
+//! gamma-scaled multiplicative approach for non-degeneracy.
+//!
+//! This module is retained as a reference for future constraint development (Phase 3+).
 
 use crate::air::trace_layout::batch_cols;
 use winter_math::FieldElement;

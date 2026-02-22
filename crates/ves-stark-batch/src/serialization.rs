@@ -63,6 +63,11 @@ impl SerializableBatchProof {
     /// Current protocol version
     pub const VERSION: u8 = 1;
 
+    /// Fixed-size public input payload in bytes for compact binary serialization.
+    ///
+    /// 33 u64 elements × 8 bytes.
+    const PUBLIC_INPUT_BYTES: usize = 33 * 8;
+
     /// Create a new serializable batch proof
     pub fn new(proof: BatchProof, public_inputs: BatchPublicInputs) -> Self {
         Self {
@@ -92,7 +97,9 @@ impl SerializableBatchProof {
         bytes.push(self.version);
 
         // Proof length (4 bytes, big-endian)
-        let proof_len = self.proof.proof_bytes.len() as u32;
+        let proof_len = u32::try_from(self.proof.proof_bytes.len()).map_err(|_| {
+            BatchError::SerializationFailed("Proof payload is too large to serialize".to_string())
+        })?;
         bytes.extend_from_slice(&proof_len.to_be_bytes());
 
         // Proof bytes
@@ -147,8 +154,18 @@ impl SerializableBatchProof {
         Ok(bytes)
     }
 
+    /// Maximum allowed serialized proof size in bytes (10 MB)
+    pub const MAX_SERIALIZED_SIZE: usize = 10 * 1024 * 1024;
+
     /// Deserialize from compact binary format
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, BatchError> {
+        if bytes.len() > Self::MAX_SERIALIZED_SIZE {
+            return Err(BatchError::ProofTooLarge {
+                size: bytes.len(),
+                max_size: Self::MAX_SERIALIZED_SIZE,
+            });
+        }
+
         if bytes.len() < 5 {
             return Err(BatchError::DeserializationFailed(
                 "Input too short".to_string(),
@@ -173,74 +190,111 @@ impl SerializableBatchProof {
                 as usize;
         pos += 4;
 
-        if bytes.len() < pos + proof_len + 256 {
+        let proof_len_end = pos + proof_len;
+        let public_inputs_end = proof_len_end + Self::PUBLIC_INPUT_BYTES;
+
+        if proof_len_end > bytes.len() || public_inputs_end > bytes.len() {
             return Err(BatchError::DeserializationFailed(
-                "Input too short for proof".to_string(),
+                "Input too short for proof and public inputs".to_string(),
             ));
         }
 
         // Proof bytes
-        let proof_bytes = bytes[pos..pos + proof_len].to_vec();
-        pos += proof_len;
+        let proof_bytes = bytes[pos..proof_len_end].to_vec();
+        pos = proof_len_end;
 
         // Helper to read u64
-        let read_u64 = |pos: &mut usize| -> u64 {
-            let val = u64::from_le_bytes([
-                bytes[*pos],
-                bytes[*pos + 1],
-                bytes[*pos + 2],
-                bytes[*pos + 3],
-                bytes[*pos + 4],
-                bytes[*pos + 5],
-                bytes[*pos + 6],
-                bytes[*pos + 7],
-            ]);
+        let read_u64 = |bytes: &[u8], pos: &mut usize| -> Result<u64, BatchError> {
+            if *pos + 8 > bytes.len() {
+                return Err(BatchError::DeserializationFailed(
+                    "Input too short while reading public inputs".to_string(),
+                ));
+            }
+
+            let mut raw = [0u8; 8];
+            raw.copy_from_slice(&bytes[*pos..*pos + 8]);
             *pos += 8;
-            val
+            Ok(u64::from_le_bytes(raw))
         };
 
         // Read public inputs
         let mut prev_state_root = [0u64; 4];
         for val in &mut prev_state_root {
-            *val = read_u64(&mut pos);
+            *val = read_u64(bytes, &mut pos)?;
         }
 
         let mut new_state_root = [0u64; 4];
         for val in &mut new_state_root {
-            *val = read_u64(&mut pos);
+            *val = read_u64(bytes, &mut pos)?;
         }
 
         let mut batch_id = [0u64; 4];
         for val in &mut batch_id {
-            *val = read_u64(&mut pos);
+            *val = read_u64(bytes, &mut pos)?;
         }
 
         let mut tenant_id = [0u64; 4];
         for val in &mut tenant_id {
-            *val = read_u64(&mut pos);
+            *val = read_u64(bytes, &mut pos)?;
         }
 
         let mut store_id = [0u64; 4];
         for val in &mut store_id {
-            *val = read_u64(&mut pos);
+            *val = read_u64(bytes, &mut pos)?;
         }
 
-        let sequence_start = read_u64(&mut pos);
-        let sequence_end = read_u64(&mut pos);
-        let num_events = read_u64(&mut pos);
-        let all_compliant = read_u64(&mut pos);
+        let sequence_start = read_u64(bytes, &mut pos)?;
+        let sequence_end = read_u64(bytes, &mut pos)?;
+        let num_events = read_u64(bytes, &mut pos)?;
+        let all_compliant = read_u64(bytes, &mut pos)?;
 
         let mut policy_hash = [0u64; 8];
         for val in &mut policy_hash {
-            *val = read_u64(&mut pos);
+            *val = read_u64(bytes, &mut pos)?;
         }
 
-        let policy_limit = read_u64(&mut pos);
+        let policy_limit = read_u64(bytes, &mut pos)?;
+
+        if sequence_start > sequence_end {
+            return Err(BatchError::DeserializationFailed(
+                "Invalid sequence range in public inputs".to_string(),
+            ));
+        }
+
+        let expected_num_events = sequence_end
+            .checked_sub(sequence_start)
+            .and_then(|range| range.checked_add(1))
+            .ok_or_else(|| {
+                BatchError::DeserializationFailed("Sequence span overflows u64".to_string())
+            })?;
+
+        if expected_num_events != num_events {
+            return Err(BatchError::DeserializationFailed(format!(
+                "Inconsistent sequence range ({}) and num_events ({})",
+                expected_num_events, num_events
+            )));
+        }
+
+        if all_compliant > 1 {
+            return Err(BatchError::DeserializationFailed(
+                "Invalid all_compliant flag (must be 0 or 1)".to_string(),
+            ));
+        }
+
+        if pos != public_inputs_end {
+            return Err(BatchError::DeserializationFailed(
+                "Input contains unexpected trailing bytes".to_string(),
+            ));
+        }
+
+        let num_events_usize = usize::try_from(num_events).map_err(|_| {
+            BatchError::DeserializationFailed("num_events is too large for this platform".to_string())
+        })?;
 
         // Construct the proof struct (partial - hash will be recomputed on verification)
         let proof = BatchProof {
             proof_bytes,
-            proof_hash: String::new(), // Will be verified separately
+            proof_hash: BatchProof::compute_hash(&proof_bytes).to_hex(),
             prev_state_root,
             new_state_root,
             metadata: crate::prover::BatchProofMetadata {
@@ -248,11 +302,11 @@ impl SerializableBatchProof {
                     "{:016x}{:016x}{:016x}{:016x}",
                     batch_id[0], batch_id[1], batch_id[2], batch_id[3]
                 ),
-                num_events: num_events as usize,
+                num_events: num_events_usize,
                 all_compliant: all_compliant == 1,
                 proving_time_ms: 0,
                 trace_length: 0,
-                proof_size: 0,
+                proof_size: proof_bytes.len(),
                 prover_version: String::new(),
             },
         };
@@ -392,6 +446,7 @@ impl From<SerializableBatchPublicInputs> for BatchPublicInputs {
 mod tests {
     use super::*;
     use crate::prover::BatchProofMetadata;
+    use ves_stark_primitives::felt_from_u64;
 
     fn sample_proof() -> BatchProof {
         BatchProof {
@@ -412,7 +467,19 @@ mod tests {
     }
 
     fn sample_public_inputs() -> BatchPublicInputs {
-        BatchPublicInputs::default()
+        BatchPublicInputs::new(
+            [1, 2, 3, 4].map(felt_from_u64),
+            [5, 6, 7, 8].map(felt_from_u64),
+            [9, 10, 11, 12].map(felt_from_u64),
+            [13, 14, 15, 16].map(felt_from_u64),
+            [17, 18, 19, 20].map(felt_from_u64),
+            0,
+            3,
+            4,
+            true,
+            [21, 22, 23, 24, 25, 26, 27, 28].map(felt_from_u64),
+            10_000,
+        )
     }
 
     #[test]
@@ -446,6 +513,51 @@ mod tests {
         assert_eq!(
             deserialized.public_inputs.new_state_root,
             serializable.public_inputs.new_state_root
+        );
+    }
+
+    #[test]
+    fn test_binary_deserialization_rejects_short_payload() {
+        let proof = sample_proof();
+        let inputs = sample_public_inputs();
+        let bytes = SerializableBatchProof::new(proof, inputs).to_bytes().unwrap();
+
+        let short = &bytes[..bytes.len() - 1];
+        assert!(matches!(
+            SerializableBatchProof::from_bytes(short),
+            Err(BatchError::DeserializationFailed(_))
+        ));
+    }
+
+    #[test]
+    fn test_binary_deserialization_rejects_invalid_all_compliant_flag() {
+        let proof = sample_proof();
+        let inputs = sample_public_inputs();
+        let mut bytes = SerializableBatchProof::new(proof, inputs).to_bytes().unwrap();
+
+        // all_compliant is the 4th u64 inside the fixed public input block.
+        let all_compliant_offset =
+            bytes.len() - SerializableBatchProof::PUBLIC_INPUT_BYTES + 184;
+        bytes[all_compliant_offset..all_compliant_offset + 8]
+            .copy_from_slice(&2u64.to_le_bytes());
+
+        assert!(matches!(
+            SerializableBatchProof::from_bytes(&bytes),
+            Err(BatchError::DeserializationFailed(_))
+        ));
+    }
+
+    #[test]
+    fn test_binary_round_trip_recomputes_proof_hash() {
+        let proof = sample_proof();
+        let inputs = sample_public_inputs();
+        let serializable = SerializableBatchProof::new(proof.clone(), inputs);
+        let bytes = serializable.to_bytes().unwrap();
+
+        let deserialized = SerializableBatchProof::from_bytes(&bytes).unwrap();
+        assert_eq!(
+            deserialized.proof.proof_hash,
+            BatchProof::compute_hash(&proof.proof_bytes).to_hex()
         );
     }
 

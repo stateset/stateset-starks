@@ -8,8 +8,11 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::error::{ClientError, Result};
+
+const ZERO_REGISTRY_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
 /// Set Chain configuration
 #[derive(Debug, Clone)]
@@ -27,12 +30,50 @@ impl Default for SetChainConfig {
         Self {
             rpc_url: "https://rpc.set.stateset.network".to_string(),
             chain_id: 84532001,
+            // Must be replaced with the deployed SetRegistry address before use.
             registry_address: "0x0000000000000000000000000000000000000000".to_string(),
         }
     }
 }
 
 impl SetChainConfig {
+    fn validate(&self) -> Result<()> {
+        let address = self.registry_address.trim();
+
+        let hex_address = address
+            .strip_prefix("0x")
+            .or_else(|| address.strip_prefix("0X"))
+            .ok_or_else(|| {
+                ClientError::InvalidPublicInputs(
+                    "registry_address must be a 0x-prefixed hex string".to_string(),
+                )
+            })?;
+
+        if address.eq_ignore_ascii_case(ZERO_REGISTRY_ADDRESS) {
+            return Err(ClientError::InvalidPublicInputs(
+                "registry_address must be non-zero".to_string(),
+            ));
+        }
+
+        if hex_address.len() != 40 {
+            return Err(ClientError::InvalidPublicInputs(
+                "registry_address must be 20-byte hex string".to_string(),
+            ));
+        }
+
+        let bytes = hex::decode(hex_address).map_err(|_| {
+            ClientError::InvalidPublicInputs("registry_address is not valid hex".to_string())
+        })?;
+
+        if bytes.len() != 20 || bytes.iter().all(|byte| *byte == 0) {
+            return Err(ClientError::InvalidPublicInputs(
+                "registry_address must be a 20-byte non-zero hex address".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Create a config for local development
     pub fn local() -> Self {
         Self {
@@ -47,6 +88,7 @@ impl SetChainConfig {
         Self {
             rpc_url: "https://rpc-testnet.set.stateset.network".to_string(),
             chain_id: 84532001,
+            // Must be replaced with the deployed SetRegistry address before use.
             registry_address: "0x0000000000000000000000000000000000000000".to_string(),
         }
     }
@@ -85,16 +127,20 @@ pub struct BatchProofSubmission {
 }
 
 impl BatchProofSubmission {
-    /// Compute the proof hash (SHA-256)
-    pub fn proof_hash(&self) -> String {
+    /// Compute the proof hash (SHA-256).
+    ///
+    /// Returns an error if the base64-encoded proof bytes are invalid.
+    pub fn proof_hash(&self) -> Result<String> {
         let proof_bytes = base64::engine::general_purpose::STANDARD
             .decode(&self.proof_b64)
-            .unwrap_or_default();
+            .map_err(|e| ClientError::InvalidPublicInputs(format!("invalid proof base64: {e}")))?;
         let hash = Sha256::digest(&proof_bytes);
-        format!("0x{}", hex::encode(hash))
+        Ok(format!("0x{}", hex::encode(hash)))
     }
 
-    /// Get proof size in bytes
+    /// Get proof size in bytes.
+    ///
+    /// Returns 0 if the base64-encoded proof is invalid.
     pub fn proof_size(&self) -> u64 {
         base64::engine::general_purpose::STANDARD
             .decode(&self.proof_b64)
@@ -175,6 +221,13 @@ pub struct SetChainClient {
 }
 
 impl SetChainClient {
+    async fn response_body_or_debug_message(mut response: reqwest::Response) -> String {
+        response
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("<failed to read response body: {e}>"))
+    }
+
     /// Create a new Set Chain client
     ///
     /// # Arguments
@@ -183,19 +236,67 @@ impl SetChainClient {
     /// * `api_key` - The API key for authentication
     /// * `config` - Set Chain configuration
     pub fn new(base_url: &str, api_key: &str, config: SetChainConfig) -> Self {
-        Self::try_new(base_url, api_key, config).expect("Failed to build HTTP client")
+        Self::try_new(base_url, api_key, config).unwrap_or_else(|e| {
+            debug_assert!(false, "Failed to build HTTP client: {e}");
+
+            let mut headers = HeaderMap::new();
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+            let auth_key = format!("Bearer {}", api_key.trim());
+            if let Ok(auth_value) = HeaderValue::from_str(&auth_key) {
+                headers.insert(AUTHORIZATION, auth_value);
+            }
+
+            let client = reqwest::Client::builder()
+                .default_headers(headers)
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+
+            Self {
+                client,
+                base_url: match reqwest::Url::parse(base_url.trim()) {
+                    Ok(_) => base_url.trim().trim_end_matches('/').to_string(),
+                    Err(_) => "http://localhost:8080".to_string(),
+                },
+                config: SetChainConfig::default(),
+            }
+        })
     }
 
     /// Create a new Set Chain client without panicking.
+    ///
+    /// The API key is wrapped in `Zeroizing` and will be zeroed from memory
+    /// after the Authorization header has been built.
     pub fn try_new(base_url: &str, api_key: &str, config: SetChainConfig) -> Result<Self> {
+        config.validate()?;
+
+        let base_url = base_url.trim();
+        if base_url.is_empty() {
+            return Err(ClientError::InvalidBaseUrl(
+                "base_url must not be empty".to_string(),
+            ));
+        }
+        reqwest::Url::parse(base_url).map_err(|e| ClientError::InvalidBaseUrl(e.to_string()))?;
+
+        let api_key = api_key.trim();
+        if api_key.is_empty() {
+            return Err(ClientError::InvalidHeader(
+                "api_key must not be empty".to_string(),
+            ));
+        }
+
+        let key = Zeroizing::new(format!("Bearer {}", api_key));
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        let auth_value = HeaderValue::from_str(&format!("Bearer {}", api_key))
+        let auth_value = HeaderValue::from_str(&key)
             .map_err(|e| ClientError::InvalidHeader(e.to_string()))?;
         headers.insert(AUTHORIZATION, auth_value);
+        // `key` is zeroed on drop here
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
+            .timeout(std::time::Duration::from_secs(30))
             .build()?;
 
         Ok(Self {
@@ -205,18 +306,55 @@ impl SetChainClient {
         })
     }
 
-    /// Create a client without authentication (for local development)
+    /// Create a client without authentication (for local development).
+    ///
+    /// Only available when the `dev` feature is enabled.
+    #[cfg(feature = "dev")]
     pub fn unauthenticated(base_url: &str, config: SetChainConfig) -> Self {
-        Self::try_unauthenticated(base_url, config).expect("Failed to build HTTP client")
+        Self::try_unauthenticated(base_url, config).unwrap_or_else(|e| {
+            debug_assert!(false, "Failed to build HTTP client: {e}");
+
+            let mut headers = HeaderMap::new();
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+            let client = reqwest::Client::builder()
+                .default_headers(headers)
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+
+            Self {
+                client,
+                base_url: match reqwest::Url::parse(base_url.trim()) {
+                    Ok(_) => base_url.trim().trim_end_matches('/').to_string(),
+                    Err(_) => "http://localhost:8080".to_string(),
+                },
+                config: SetChainConfig::default(),
+            }
+        })
     }
 
     /// Create a client without authentication (for local development) without panicking.
+    ///
+    /// Only available when the `dev` feature is enabled.
+    #[cfg(feature = "dev")]
     pub fn try_unauthenticated(base_url: &str, config: SetChainConfig) -> Result<Self> {
+        config.validate()?;
+
+        let base_url = base_url.trim();
+        if base_url.is_empty() {
+            return Err(ClientError::InvalidBaseUrl(
+                "base_url must not be empty".to_string(),
+            ));
+        }
+        reqwest::Url::parse(base_url).map_err(|e| ClientError::InvalidBaseUrl(e.to_string()))?;
+
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
+            .timeout(std::time::Duration::from_secs(30))
             .build()?;
 
         Ok(Self {
@@ -252,12 +390,12 @@ impl SetChainClient {
         } else if status.as_u16() == 404 {
             Err(ClientError::BatchNotFound(submission.batch_id))
         } else if status.as_u16() == 401 || status.as_u16() == 403 {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::Unauthorized(body))
         } else if status.as_u16() == 409 {
             Err(ClientError::ProofAlreadyAnchored(submission.batch_id))
         } else {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::ApiError {
                 status: status.as_u16(),
                 message: body,
@@ -299,14 +437,14 @@ impl SetChainClient {
         } else if status.as_u16() == 404 {
             Err(ClientError::BatchNotFound(request.submission.batch_id))
         } else if status.as_u16() == 401 || status.as_u16() == 403 {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::Unauthorized(body))
         } else if status.as_u16() == 409 {
             Err(ClientError::BatchAlreadyCommitted(
                 request.submission.batch_id,
             ))
         } else {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::ApiError {
                 status: status.as_u16(),
                 message: body,
@@ -326,7 +464,7 @@ impl SetChainClient {
         } else if status.as_u16() == 404 {
             Err(ClientError::BatchNotFound(batch_id))
         } else {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::ApiError {
                 status: status.as_u16(),
                 message: body,
@@ -369,7 +507,7 @@ impl SetChainClient {
         } else if status.as_u16() == 404 {
             Err(ClientError::BatchNotFound(batch_id))
         } else {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::ApiError {
                 status: status.as_u16(),
                 message: body,
@@ -406,7 +544,7 @@ impl SetChainClient {
         if status.is_success() {
             Ok(response.json().await?)
         } else {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::ApiError {
                 status: status.as_u16(),
                 message: body,
@@ -434,7 +572,7 @@ impl SetChainClient {
         } else if status.as_u16() == 404 {
             Ok(None)
         } else {
-            let body = response.text().await.unwrap_or_default();
+            let body = Self::response_body_or_debug_message(response).await;
             Err(ClientError::ApiError {
                 status: status.as_u16(),
                 message: body,
@@ -491,6 +629,18 @@ mod tests {
     }
 
     #[test]
+    fn test_set_chain_config_zero_registry_is_rejected() {
+        let config = SetChainConfig::testnet();
+        assert!(SetChainClient::try_new("http://localhost:8080", "test_key", config).is_err());
+    }
+
+    #[test]
+    fn test_set_chain_config_default_is_rejected() {
+        let config = SetChainConfig::default();
+        assert!(SetChainClient::try_new("http://localhost:8080", "test_key", config).is_err());
+    }
+
+    #[test]
     fn test_set_chain_config_local() {
         let config = SetChainConfig::local();
         assert_eq!(config.chain_id, 31337);
@@ -503,6 +653,7 @@ mod tests {
         let _client = SetChainClient::try_new("http://localhost:8080", "test_key", config).unwrap();
     }
 
+    #[cfg(feature = "dev")]
     #[test]
     fn test_unauthenticated_client() {
         let config = SetChainConfig::local();
@@ -527,7 +678,7 @@ mod tests {
             all_compliant: true,
         };
 
-        assert!(submission.proof_hash().starts_with("0x"));
+        assert!(submission.proof_hash().unwrap().starts_with("0x"));
         assert_eq!(submission.proof_size(), 10);
     }
 

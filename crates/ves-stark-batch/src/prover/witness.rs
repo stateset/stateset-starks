@@ -3,12 +3,15 @@
 //! This module defines the witness structures for batch state transition proofs.
 //! A batch witness contains multiple event witnesses plus batch-level metadata.
 
+use std::collections::HashSet;
 use uuid::Uuid;
+use ves_stark_air::policy::Policy;
 use ves_stark_primitives::public_inputs::CompliancePublicInputs;
-use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
+use ves_stark_primitives::rescue::rescue_hash;
+use ves_stark_primitives::{felt_from_u64, felts_to_hash, Felt, FELT_ONE, FELT_ZERO};
 
 use crate::air::trace_layout::MAX_BATCH_SIZE;
-use crate::error::BatchError;
+use crate::error::{BatchError, BatchResult};
 use crate::state::{BatchMetadata, BatchStateRoot, EventLeaf, EventMerkleTree};
 
 /// Witness for a single event within a batch
@@ -34,14 +37,41 @@ impl BatchEventWitness {
         amount: u64,
         public_inputs: CompliancePublicInputs,
         threshold: u64,
-    ) -> Self {
-        let is_compliant = amount < threshold;
-        Self {
+    ) -> Result<Self, BatchError> {
+        let policy = Policy::from_public_inputs(
+            &public_inputs.policy_id,
+            &public_inputs.policy_params,
+        )
+        .map_err(|e| {
+            BatchError::InvalidWitness(format!("Event {event_index} failed to parse policy: {e}"))
+        })?;
+
+        if policy.limit() != threshold {
+            return Err(BatchError::InvalidWitness(format!(
+                "Event {event_index} policy limit mismatch: event policy limit {}, expected {}",
+                policy.limit(),
+                threshold
+            )));
+        }
+
+        let is_compliant = policy.validate_amount(amount);
+        Ok(Self {
             event_index,
             amount,
             public_inputs,
             is_compliant,
-        }
+        })
+    }
+
+    /// Parse the compliance policy from public inputs.
+    pub fn parsed_policy(&self) -> Result<Policy, BatchError> {
+        Policy::from_public_inputs(&self.public_inputs.policy_id, &self.public_inputs.policy_params)
+            .map_err(|e| {
+                BatchError::InvalidWitness(format!(
+                    "Event {} policy parse failed: {e}",
+                    self.event_index
+                ))
+            })
     }
 
     /// Get amount as field element limbs (low to high, 8 x u32)
@@ -139,12 +169,159 @@ impl BatchWitness {
             });
         }
 
-        // Validate event indices are sequential
+        // Validate metadata sequence range.
+        if self.metadata.sequence_start > self.metadata.sequence_end {
+            return Err(BatchError::InvalidWitness(format!(
+                "Invalid metadata sequence range: start {} is greater than end {}",
+                self.metadata.sequence_start, self.metadata.sequence_end
+            )));
+        }
+
+        let declared_sequence_count = self
+            .metadata
+            .sequence_end
+            .checked_sub(self.metadata.sequence_start)
+            .and_then(|count| count.checked_add(1))
+            .ok_or_else(|| {
+                BatchError::InvalidWitness("Metadata sequence range overflows u64".to_string())
+            })?;
+        if declared_sequence_count != self.events.len() as u64 {
+            return Err(BatchError::InvalidWitness(format!(
+                "Sequence range length mismatch: expected {}, got {}",
+                declared_sequence_count,
+                self.events.len()
+            )));
+        }
+
+        let batch_policy_hash_hex = felts_to_hash(&self.policy_hash).to_hex();
+        let mut batch_policy: Option<Policy> = None;
+        let mut seen_event_ids: HashSet<Uuid> = HashSet::with_capacity(self.events.len());
+
+        // Validate per-event policy and sequence consistency
         for (i, event) in self.events.iter().enumerate() {
+            if !seen_event_ids.insert(event.public_inputs.event_id) {
+                return Err(BatchError::InvalidWitness(format!(
+                    "Duplicate event_id {} at index {}",
+                    event.public_inputs.event_id, event.event_index
+                )));
+            }
+
+            // Validate witness-specific event index.
             if event.event_index != i {
                 return Err(BatchError::InvalidWitness(format!(
                     "Event index mismatch: expected {}, got {}",
                     i, event.event_index
+                )));
+            }
+
+            // Validate event metadata sequence continuity and bounds.
+            let expected_sequence = self.metadata.sequence_start + i as u64;
+            if event.public_inputs.sequence_number != expected_sequence {
+                return Err(BatchError::InvalidWitness(format!(
+                    "Event {} sequence mismatch: expected {}, got {}",
+                    event.event_index,
+                    expected_sequence,
+                    event.public_inputs.sequence_number
+                )));
+            }
+
+            // Validate tenant/store identity matches batch metadata.
+            if event.public_inputs.tenant_id != self.metadata.tenant_id {
+                return Err(BatchError::InvalidWitness(format!(
+                    "Event {} tenant id does not match batch tenant id",
+                    event.event_index
+                )));
+            }
+            if event.public_inputs.store_id != self.metadata.store_id {
+                return Err(BatchError::InvalidWitness(format!(
+                    "Event {} store id does not match batch store id",
+                    event.event_index
+                )));
+            }
+
+            // Validate policy and policy hash.
+            let event_policy = event.parsed_policy()?;
+            if event.public_inputs.policy_hash != batch_policy_hash_hex {
+                return Err(BatchError::InvalidWitness(format!(
+                    "Event {} policy hash mismatch with batch policy hash",
+                    event.event_index
+                )));
+            }
+
+            let policy_hash_valid = event
+                .public_inputs
+                .validate_policy_hash()
+                .map_err(|e| {
+                    BatchError::InvalidWitness(format!(
+                        "Event {} policy hash validation failed: {e}",
+                        event.event_index
+                    ))
+                })?;
+            if !policy_hash_valid {
+                return Err(BatchError::InvalidWitness(format!(
+                    "Event {} policy hash does not match computed policy hash",
+                    event.event_index
+                )));
+            }
+
+            if let Some(policy) = &batch_policy {
+                if policy != &event_policy {
+                    return Err(BatchError::InvalidWitness(format!(
+                        "Event {} policy mismatch: expected {:?}, got {:?}",
+                        event.event_index, policy, event_policy
+                    )));
+                }
+            } else {
+                if event_policy.limit() != self.policy_limit {
+                    return Err(BatchError::InvalidWitness(format!(
+                        "Batch policy limit mismatch: batch limit {}, event {} limit {}",
+                        self.policy_limit,
+                        event.event_index,
+                        event_policy.limit()
+                    )));
+                }
+                batch_policy = Some(event_policy);
+            }
+
+            // Validate witness-computed compliance status.
+            let expected_compliant = batch_policy
+                .as_ref()
+                .ok_or_else(|| {
+                    BatchError::InvalidWitness(format!(
+                        "Event {} batch policy was not initialized before validation",
+                        event.event_index
+                    ))
+                })?
+                .validate_amount(event.amount);
+            if event.is_compliant != expected_compliant {
+                return Err(BatchError::InvalidWitness(format!(
+                    "Event {} compliance flag mismatch: expected {}, got {}",
+                    event.event_index, expected_compliant, event.is_compliant
+                )));
+            }
+
+            // Witness-commitment binding.
+            let expected_commitment = event
+                .public_inputs
+                .witness_commitment_u64()
+                .map_err(|e| {
+                    BatchError::InvalidWitness(format!(
+                        "Event {} witness commitment parse failed: {e}",
+                        event.event_index
+                    ))
+                })?
+                .ok_or_else(|| {
+                    BatchError::InvalidWitness(format!(
+                        "Event {} missing witness commitment",
+                        event.event_index
+                    ))
+                })?;
+
+            let actual_commitment = compute_amount_commitment_u64(&event.amount_limbs());
+            if expected_commitment != actual_commitment {
+                return Err(BatchError::InvalidWitness(format!(
+                    "Event {} witness commitment mismatch: expected {:?}, got {:?}",
+                    event.event_index, expected_commitment, actual_commitment
                 )));
             }
         }
@@ -162,22 +339,21 @@ impl BatchWitness {
         self.events.len()
     }
 
-    /// Build the event Merkle tree from the witnesses
-    pub fn build_event_tree(&self) -> EventMerkleTree {
+    /// Build the event Merkle tree from the witnesses.
+    pub fn build_event_tree(&self) -> BatchResult<EventMerkleTree> {
         let leaves: Vec<EventLeaf> = self
             .events
             .iter()
             .map(|e| e.to_event_leaf(&self.policy_hash))
             .collect();
 
-        // Note: from_leaves returns Result, unwrap since we know leaves are valid
-        EventMerkleTree::from_leaves(leaves).expect("Failed to build event tree")
+        EventMerkleTree::from_leaves(leaves)
     }
 
     /// Compute the new state root for this batch
-    pub fn compute_new_state_root(&self) -> BatchStateRoot {
-        let event_tree = self.build_event_tree();
-        BatchStateRoot::compute(&event_tree, &self.metadata)
+    pub fn compute_new_state_root(&self) -> BatchResult<BatchStateRoot> {
+        let event_tree = self.build_event_tree()?;
+        Ok(BatchStateRoot::compute(&event_tree, &self.metadata))
     }
 
     /// Get batch ID as field elements
@@ -193,6 +369,16 @@ impl BatchWitness {
     /// Get store ID as field elements
     pub fn store_id_felts(&self) -> [Felt; 4] {
         uuid_to_felts(&self.metadata.store_id)
+    }
+}
+
+impl BatchWitness {
+    /// Parse the batch policy from the first event.
+    pub(crate) fn policy(&self) -> Result<Policy, BatchError> {
+        if self.events.is_empty() {
+            return Err(BatchError::EmptyBatch);
+        }
+        self.events[0].parsed_policy()
     }
 }
 
@@ -242,21 +428,24 @@ impl BatchWitnessBuilder {
     }
 
     /// Add an event to the batch
-    pub fn add_event(mut self, amount: u64, public_inputs: CompliancePublicInputs) -> Self {
+    pub fn add_event(mut self, amount: u64, public_inputs: CompliancePublicInputs) -> Result<Self, BatchError> {
         let threshold = self.policy_limit.unwrap_or(u64::MAX);
-        let event = BatchEventWitness::new(self.events.len(), amount, public_inputs, threshold);
+        let event = BatchEventWitness::new(self.events.len(), amount, public_inputs, threshold)?;
         self.events.push(event);
-        self
+        Ok(self)
     }
 
     /// Add multiple events to the batch
-    pub fn add_events(mut self, events: Vec<(u64, CompliancePublicInputs)>) -> Self {
+    pub fn add_events(
+        mut self,
+        events: Vec<(u64, CompliancePublicInputs)>,
+    ) -> Result<Self, BatchError> {
         let threshold = self.policy_limit.unwrap_or(u64::MAX);
         for (amount, public_inputs) in events {
-            let event = BatchEventWitness::new(self.events.len(), amount, public_inputs, threshold);
+            let event = BatchEventWitness::new(self.events.len(), amount, public_inputs, threshold)?;
             self.events.push(event);
         }
-        self
+        Ok(self)
     }
 
     /// Build the batch witness
@@ -305,20 +494,41 @@ fn uuid_to_felts(uuid: &Uuid) -> [Felt; 4] {
     ]
 }
 
+fn compute_amount_commitment_u64(amount_limbs: &[Felt; 8]) -> [u64; 4] {
+    let hash_output = rescue_hash(amount_limbs);
+    [
+        hash_output[0].as_int(),
+        hash_output[1].as_int(),
+        hash_output[2].as_int(),
+        hash_output[3].as_int(),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ves_stark_primitives::public_inputs::{compute_policy_hash, PolicyParams};
+    use ves_stark_primitives::public_inputs::{
+        compute_policy_hash, witness_commitment_u64_to_hex, PolicyParams,
+    };
 
-    fn sample_public_inputs(threshold: u64, event_index: usize) -> CompliancePublicInputs {
-        let policy_id = "aml.threshold";
-        let params = PolicyParams::threshold(threshold);
+    fn sample_public_inputs_with_policy(
+        policy_id: &str,
+        params: PolicyParams,
+        amount: u64,
+        event_index: usize,
+        tenant_id: Uuid,
+        store_id: Uuid,
+    ) -> CompliancePublicInputs {
         let hash = compute_policy_hash(policy_id, &params).unwrap();
+        let mut amount_limbs = [FELT_ZERO; 8];
+        amount_limbs[0] = felt_from_u64(amount & 0xFFFFFFFF);
+        amount_limbs[1] = felt_from_u64(amount >> 32);
+        let commitment = compute_amount_commitment_u64(&amount_limbs);
 
         CompliancePublicInputs {
             event_id: Uuid::new_v4(),
-            tenant_id: Uuid::new_v4(),
-            store_id: Uuid::new_v4(),
+            tenant_id,
+            store_id,
             sequence_number: event_index as u64,
             payload_kind: 1,
             payload_plain_hash: "0".repeat(64),
@@ -327,8 +537,25 @@ mod tests {
             policy_id: policy_id.to_string(),
             policy_params: params,
             policy_hash: hash.to_hex(),
-            witness_commitment: None,
+            witness_commitment: Some(witness_commitment_u64_to_hex(&commitment)),
         }
+    }
+
+    fn sample_public_inputs(
+        threshold: u64,
+        amount: u64,
+        event_index: usize,
+        tenant_id: Uuid,
+        store_id: Uuid,
+    ) -> CompliancePublicInputs {
+        sample_public_inputs_with_policy(
+            "aml.threshold",
+            PolicyParams::threshold(threshold),
+            amount,
+            event_index,
+            tenant_id,
+            store_id,
+        )
     }
 
     fn sample_policy_hash(threshold: u64) -> [Felt; 8] {
@@ -341,8 +568,9 @@ mod tests {
     #[test]
     fn test_batch_event_witness() {
         let threshold = 10000u64;
-        let inputs = sample_public_inputs(threshold, 0);
-        let witness = BatchEventWitness::new(0, 5000, inputs, threshold);
+        let amount = 5_000u64;
+        let inputs = sample_public_inputs(threshold, amount, 0, Uuid::new_v4(), Uuid::new_v4());
+        let witness = BatchEventWitness::new(0, amount, inputs, threshold).unwrap();
 
         assert!(witness.is_compliant);
         assert_eq!(witness.event_index, 0);
@@ -352,18 +580,41 @@ mod tests {
     #[test]
     fn test_batch_event_witness_non_compliant() {
         let threshold = 10000u64;
-        let inputs = sample_public_inputs(threshold, 0);
-        let witness = BatchEventWitness::new(0, 15000, inputs, threshold);
+        let amount = 15_000u64;
+        let inputs = sample_public_inputs(threshold, amount, 0, Uuid::new_v4(), Uuid::new_v4());
+        let witness = BatchEventWitness::new(0, amount, inputs, threshold).unwrap();
 
         assert!(!witness.is_compliant);
+    }
+
+    #[test]
+    fn test_batch_event_witness_order_total_cap_boundary() {
+        let cap = 10_000u64;
+        let mut inputs = sample_public_inputs_with_policy(
+            "order_total.cap",
+            PolicyParams::cap(cap),
+            cap,
+            0,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        // Fill required derived hash
+        inputs.policy_hash = compute_policy_hash("order_total.cap", &PolicyParams::cap(cap))
+            .unwrap()
+            .to_hex();
+        let witness = BatchEventWitness::new(0, cap, inputs, cap).unwrap();
+
+        assert!(witness.is_compliant);
     }
 
     #[test]
     fn test_batch_witness_builder() {
         let threshold = 10000u64;
         let policy_hash = sample_policy_hash(threshold);
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
         let metadata =
-            BatchMetadata::with_ids(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 0, 9);
+            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 9);
 
         let mut builder = BatchWitnessBuilder::new()
             .metadata(metadata)
@@ -372,8 +623,11 @@ mod tests {
 
         // Add 10 events
         for i in 0..10 {
-            let inputs = sample_public_inputs(threshold, i);
-            builder = builder.add_event(5000 + i as u64 * 100, inputs);
+            let amount = 5_000u64 + i as u64 * 100;
+            let inputs = sample_public_inputs(threshold, amount, i, tenant_id, store_id);
+            builder = builder
+                .add_event(amount, inputs)
+                .unwrap();
         }
 
         let witness = builder.build().unwrap();
@@ -402,8 +656,10 @@ mod tests {
     fn test_batch_witness_compute_state_root() {
         let threshold = 10000u64;
         let policy_hash = sample_policy_hash(threshold);
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
         let metadata =
-            BatchMetadata::with_ids(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 0, 3);
+            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 3);
 
         let mut builder = BatchWitnessBuilder::new()
             .metadata(metadata)
@@ -411,14 +667,166 @@ mod tests {
             .policy_limit(threshold);
 
         for i in 0..4 {
-            let inputs = sample_public_inputs(threshold, i);
-            builder = builder.add_event(5000, inputs);
+            let amount = 5_000u64;
+            let inputs = sample_public_inputs(threshold, amount, i, tenant_id, store_id);
+            builder = builder.add_event(5000, inputs).unwrap();
         }
 
         let witness = builder.build().unwrap();
-        let new_root = witness.compute_new_state_root();
+        let new_root = witness.compute_new_state_root().unwrap();
 
         // Root should be non-zero
         assert!(new_root.root.iter().any(|f| *f != FELT_ZERO));
+    }
+
+    #[test]
+    fn test_batch_witness_policy_mismatch() {
+        let threshold = 10_000u64;
+        let cap = 10_000u64;
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
+        let policy_hash = sample_policy_hash(threshold);
+
+        let wrong_policy_inputs = sample_public_inputs_with_policy(
+            "order_total.cap",
+            PolicyParams::cap(cap),
+            5_000,
+            0,
+            tenant_id,
+            store_id,
+        );
+
+        let witness = BatchWitness::new(
+            vec![BatchEventWitness::new(0, 5_000, wrong_policy_inputs, threshold).unwrap()],
+            metadata,
+            BatchStateRoot::genesis(),
+            policy_hash,
+            threshold,
+        );
+
+        assert!(matches!(witness.validate(), Err(BatchError::InvalidWitness(_))));
+    }
+
+    #[test]
+    fn test_batch_witness_witness_commitment_binding() {
+        let threshold = 10_000u64;
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
+        let policy_hash = sample_policy_hash(threshold);
+
+        let mut inputs = sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id);
+        let amount = 5_000u64;
+        let amount_limbs = BatchEventWitness::new(0, amount, inputs.clone(), threshold)
+            .unwrap()
+            .amount_limbs();
+        let actual_commitment = compute_amount_commitment_u64(&amount_limbs);
+        inputs.witness_commitment = Some(witness_commitment_u64_to_hex(&actual_commitment));
+
+        let witness = BatchWitness::new(
+            vec![BatchEventWitness::new(0, amount, inputs, threshold).unwrap()],
+            metadata,
+            BatchStateRoot::genesis(),
+            policy_hash,
+            threshold,
+        );
+
+        assert!(witness.validate().is_ok());
+
+        let bad_tenant_id = Uuid::new_v4();
+        let bad_store_id = Uuid::new_v4();
+        let mut bad_inputs = sample_public_inputs(threshold, amount, 0, bad_tenant_id, bad_store_id);
+        bad_inputs.witness_commitment = Some("0".repeat(64));
+        let bad_witness = BatchWitness::new(
+            vec![BatchEventWitness::new(0, amount, bad_inputs, threshold).unwrap()],
+            BatchMetadata::with_ids(Uuid::new_v4(), bad_tenant_id, bad_store_id, 0, 0),
+            BatchStateRoot::genesis(),
+            policy_hash,
+            threshold,
+        );
+
+        assert!(matches!(bad_witness.validate(), Err(BatchError::InvalidWitness(_))));
+    }
+
+    #[test]
+    fn test_batch_witness_missing_witness_commitment() {
+        let threshold = 10_000u64;
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
+        let policy_hash = sample_policy_hash(threshold);
+        let mut inputs = sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id);
+        inputs.witness_commitment = None;
+
+        let witness = BatchWitness::new(
+            vec![BatchEventWitness::new(0, 5_000, inputs, threshold).unwrap()],
+            metadata,
+            BatchStateRoot::genesis(),
+            policy_hash,
+            threshold,
+        );
+
+        assert!(matches!(
+            witness.validate(),
+            Err(BatchError::InvalidWitness(_))
+        ));
+    }
+
+    #[test]
+    fn test_batch_witness_rejects_duplicate_event_ids() {
+        let threshold = 10_000u64;
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let shared_event_id = Uuid::new_v4();
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 1);
+        let policy_hash = sample_policy_hash(threshold);
+
+        let mut first = sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id);
+        let mut second = sample_public_inputs(threshold, 2_500, 1, tenant_id, store_id);
+        first.event_id = shared_event_id;
+        second.event_id = shared_event_id;
+
+        let witness = BatchWitness::new(
+            vec![
+                BatchEventWitness::new(0, 5_000, first, threshold).unwrap(),
+                BatchEventWitness::new(1, 2_500, second, threshold).unwrap(),
+            ],
+            metadata,
+            BatchStateRoot::genesis(),
+            policy_hash,
+            threshold,
+        );
+
+        assert!(matches!(
+            witness.validate(),
+            Err(BatchError::InvalidWitness(_))
+        ));
+    }
+
+    #[test]
+    fn test_batch_witness_tenant_store_mismatch() {
+        let threshold = 10_000u64;
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
+        let policy_hash = sample_policy_hash(threshold);
+
+        let mut inputs = sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id);
+        inputs.tenant_id = Uuid::new_v4(); // Intentionally mismatch
+        let witness = BatchWitness::new(
+            vec![BatchEventWitness::new(0, 5_000, inputs, threshold).unwrap()],
+            metadata,
+            BatchStateRoot::genesis(),
+            policy_hash,
+            threshold,
+        );
+
+        assert!(matches!(witness.validate(), Err(BatchError::InvalidWitness(_))));
     }
 }

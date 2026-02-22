@@ -33,6 +33,18 @@ pub const MAX_BATCH_SIZE: usize = 128;
 /// Rows needed per event for compliance verification
 pub const ROWS_PER_EVENT: usize = 4;
 
+/// Rows per Merkle tree node.
+///
+/// Rescue hashing uses 14 half-rounds plus 1 output row in the in-circuit
+/// permutation trace.
+pub const ROWS_PER_MERKLE_NODE: usize = 15;
+
+/// Rows for finalization phase.
+///
+/// The state root hash uses the same Rescue transition structure as Merkle nodes:
+/// 14 half-rounds plus output.
+pub const FINALIZE_ROWS: usize = 15;
+
 /// Multiplicative factor used in the batch compliance accumulator update.
 ///
 /// See `BatchComplianceAir` for how this is used to keep the accumulator non-constant in the
@@ -181,8 +193,23 @@ pub mod batch_cols {
     /// (and never during Merkle/finalize/padding rows).
     pub const EVENTS_DONE: usize = POLICY_LIMIT + 1;
 
+    // =========================================================================
+    // In-circuit Rescue hash state (for Merkle + Finalize phases)
+    // =========================================================================
+    /// Rescue permutation state during Merkle hashing and state root finalization.
+    /// 12 columns tracking the full Rescue state through half-rounds.
+    pub const MERKLE_RESCUE_STATE_START: usize = EVENTS_DONE + 1;
+    pub const MERKLE_RESCUE_STATE_END: usize = MERKLE_RESCUE_STATE_START + 12;
+
+    /// Step counter within a Rescue hash computation (0..14).
+    /// Steps 0-13 are half-rounds; step 14 is the output row.
+    pub const MERKLE_HASH_STEP: usize = MERKLE_RESCUE_STATE_END;
+
+    /// Flag: is this row part of the finalize hash computation?
+    pub const IS_FINALIZE_HASH: usize = MERKLE_HASH_STEP + 1;
+
     /// Reserved (last column) - alias for backward compatibility.
-    pub const RESERVED: usize = EVENTS_DONE;
+    pub const RESERVED: usize = IS_FINALIZE_HASH;
 
     // =========================================================================
     // Helper functions
@@ -243,6 +270,13 @@ pub mod batch_cols {
         debug_assert!(i < 4);
         METADATA_HASH_START + i
     }
+
+    /// Get Merkle Rescue state element
+    #[inline]
+    pub fn merkle_rescue_state(i: usize) -> usize {
+        debug_assert!(i < 12);
+        MERKLE_RESCUE_STATE_START + i
+    }
 }
 
 /// Phases of batch computation
@@ -282,17 +316,32 @@ pub fn calculate_trace_length(num_events: usize) -> usize {
     // Event processing rows
     let event_rows = num_events * ROWS_PER_EVENT;
 
-    // Merkle tree rows: sum of nodes at each level
-    // For n leaves (padded to power of 2), need n/2 + n/4 + ... + 1 = n-1 internal nodes
-    let padded_leaves = num_events.next_power_of_two();
-    let merkle_rows = padded_leaves - 1;
+    // Merkle tree rows: each internal node takes ROWS_PER_MERKLE_NODE rows
+    // for in-circuit Rescue hash verification (14 half-rounds + 1 output)
+    let merkle_rows = merkle_row_count(num_events);
 
-    // Finalization rows
-    let finalize_rows = 4;
+    // Finalization rows: in-circuit Rescue hash of state root
+    let finalize_rows = FINALIZE_ROWS;
 
     // Total, rounded up to power of 2
     let total = event_rows + merkle_rows + finalize_rows;
     total.next_power_of_two().max(MIN_BATCH_TRACE_LENGTH)
+}
+
+/// Compute the number of internal Merkle nodes for a given number of events.
+///
+/// A Merkle tree over `n` leaves has `2^⌈log2(n)⌉ - 1` internal nodes after
+/// zero-padding to the next power-of-two leaf count.
+#[inline]
+pub fn merkle_node_count(num_events: usize) -> usize {
+    let padded_leaves = num_events.max(1).next_power_of_two();
+    padded_leaves - 1
+}
+
+/// Compute total in-circuit Merkle rows required for a given batch size.
+#[inline]
+pub fn merkle_row_count(num_events: usize) -> usize {
+    merkle_node_count(num_events) * ROWS_PER_MERKLE_NODE
 }
 
 #[cfg(test)]
@@ -318,17 +367,17 @@ mod tests {
 
     #[test]
     fn test_calculate_trace_length() {
-        // 8 events: 8*4 + 7 + 4 = 43 -> 64
-        assert_eq!(calculate_trace_length(8), 256); // min is 256
+        // 8 events: 8*4 + 7*15 + 15 = 152 -> 256 (min)
+        assert_eq!(calculate_trace_length(8), 256);
 
-        // 16 events: 16*4 + 15 + 4 = 83 -> 128 -> 256
+        // 16 events: 16*4 + 15*15 + 15 = 304 -> 256 (min)
         assert_eq!(calculate_trace_length(16), 256);
 
-        // 64 events: 64*4 + 63 + 4 = 323 -> 512
-        assert_eq!(calculate_trace_length(64), 512);
+        // 64 events: 64*4 + 63*15 + 15 = 1216 -> 2048
+        assert_eq!(calculate_trace_length(64), 2048);
 
-        // 100 events: 100*4 + 127 + 4 = 531 -> 1024
-        assert_eq!(calculate_trace_length(100), 1024);
+        // 100 events: 100*4 + 127*15 + 15 = 2320 -> 4096
+        assert_eq!(calculate_trace_length(100), 4096);
     }
 
     #[test]

@@ -41,7 +41,7 @@ export interface JsComplianceProof {
   /** Size of proof in bytes */
   proofSize: number
   /** Witness commitment (4 x u64 as field elements) */
-  witnessCommitment: Array<number>
+  witnessCommitment: Array<string>
   /** Witness commitment encoded as 32 bytes (4 x u64 big-endian) and hex-encoded (64 chars). */
   witnessCommitmentHex: string
 }
@@ -76,7 +76,7 @@ export declare function prove(amount: number, publicInputs: JsCompliancePublicIn
  * @param witnessCommitment - Witness commitment from the proof
  * @returns VerificationResult indicating if proof is valid
  */
-export declare function verify(proofBytes: Buffer, publicInputs: JsCompliancePublicInputs, witnessCommitment: Array<number>): JsVerificationResult
+export declare function verify(proofBytes: Buffer, publicInputs: JsCompliancePublicInputs, witnessCommitment: Array<string>): JsVerificationResult
 /**
  * Verify a STARK compliance proof using the witness commitment hex string.
  *

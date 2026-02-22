@@ -70,6 +70,9 @@ impl BatchVerificationResult {
     }
 }
 
+/// Maximum allowed proof size in bytes (10 MB)
+pub const MAX_BATCH_PROOF_SIZE: usize = 10 * 1024 * 1024;
+
 /// Verify a batch proof
 ///
 /// This is the main entry point for batch proof verification. It takes raw proof
@@ -80,9 +83,17 @@ pub fn verify_batch_proof(
 ) -> Result<BatchVerificationResult, BatchError> {
     let start = Instant::now();
 
+    // Size check: reject oversized proofs before attempting deserialization
+    if proof_bytes.len() > MAX_BATCH_PROOF_SIZE {
+        return Err(BatchError::ProofTooLarge {
+            size: proof_bytes.len(),
+            max_size: MAX_BATCH_PROOF_SIZE,
+        });
+    }
+
     // Deserialize proof
     let proof = winter_verifier::Proof::from_bytes(proof_bytes)
-        .map_err(|e| BatchError::DeserializationFailed(format!("{:?}", e)))?;
+        .map_err(|e| BatchError::DeserializationFailed(format!("{e}")))?;
 
     // Define acceptable proof options
     let acceptable_options = AcceptableOptions::OptionSet(vec![
@@ -134,7 +145,7 @@ pub fn verify_batch_proof(
         Err(e) => Ok(BatchVerificationResult {
             valid: false,
             verification_time_ms: verification_time.as_millis() as u64,
-            error: Some(format!("{:?}", e)),
+            error: Some(format!("{e}")),
             prev_state_root,
             new_state_root,
             num_events: public_inputs.num_events_usize(),
@@ -145,39 +156,13 @@ pub fn verify_batch_proof(
 
 /// Batch proof verifier
 pub struct BatchVerifier {
-    /// Acceptable proof options
-    #[allow(dead_code)]
-    acceptable_options: AcceptableOptions,
+    _private: (),
 }
 
 impl BatchVerifier {
     /// Create a new verifier with default options
     pub fn new() -> Self {
-        Self::try_new().expect("invalid proof options")
-    }
-
-    /// Create a new verifier with default options without panicking
-    pub fn try_new() -> Result<Self, BatchError> {
-        Ok(Self {
-            acceptable_options: AcceptableOptions::OptionSet(vec![
-                ProofOptions::default().try_to_winterfell().map_err(|e| {
-                    BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}"))
-                })?,
-                ProofOptions::fast().try_to_winterfell().map_err(|e| {
-                    BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}"))
-                })?,
-                ProofOptions::secure().try_to_winterfell().map_err(|e| {
-                    BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}"))
-                })?,
-            ]),
-        })
-    }
-
-    /// Create a verifier with custom acceptable options
-    pub fn with_options(options: AcceptableOptions) -> Self {
-        Self {
-            acceptable_options: options,
-        }
+        Self { _private: () }
     }
 
     /// Verify a batch proof

@@ -38,12 +38,16 @@ assert.strictEqual(Array.isArray(proof.witnessCommitment), true)
 assert.strictEqual(proof.witnessCommitment.length, 4)
 assert.strictEqual(typeof proof.witnessCommitmentHex, 'string')
 assert.strictEqual(proof.witnessCommitmentHex.length, 64)
+assert.strictEqual(typeof proof.witnessCommitment[0], 'string')
 
 // Bound verification: require canonical public inputs to carry the witness commitment.
 const publicInputsBound = {
   ...publicInputsBase,
   witnessCommitment: proof.witnessCommitmentHex,
 }
+
+const okWithNumbers = ves.verify(proof.proofBytes, publicInputsBound, proof.witnessCommitment)
+assert.strictEqual(okWithNumbers.valid, true, okWithNumbers.error || 'verification failed')
 
 const ok = ves.verifyHex(proof.proofBytes, publicInputsBound, proof.witnessCommitmentHex)
 assert.strictEqual(ok.valid, true, ok.error || 'verification failed')
@@ -62,4 +66,3 @@ assert.strictEqual(bad.valid, false)
 assert.ok(bad.error && bad.error.length > 0, 'expected an error message')
 
 console.log('ok')
-

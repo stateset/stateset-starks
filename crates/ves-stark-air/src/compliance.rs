@@ -197,13 +197,26 @@ pub enum PublicInputsError {
 impl PublicInputs {
     /// Create new public inputs (legacy, without witness commitment)
     pub fn new(policy_limit: u64, elements: Vec<Felt>) -> Self {
-        Self::try_new(policy_limit, elements).expect("public input element length mismatch")
+        let mut elements = elements;
+        elements.resize(cols::PUBLIC_INPUTS_LEN, FELT_ZERO);
+
+        Self {
+            policy_limit,
+            elements,
+            witness_commitment: [FELT_ZERO; 4],
+        }
     }
 
     /// Create new public inputs with witness commitment
     pub fn with_commitment(policy_limit: u64, elements: Vec<Felt>, commitment: [Felt; 4]) -> Self {
-        Self::try_with_commitment(policy_limit, elements, commitment)
-            .expect("public input element length mismatch")
+        let mut elements = elements;
+        elements.resize(cols::PUBLIC_INPUTS_LEN, FELT_ZERO);
+
+        Self {
+            policy_limit,
+            elements,
+            witness_commitment: commitment,
+        }
     }
 
     /// Create new public inputs (legacy, without witness commitment) without panicking

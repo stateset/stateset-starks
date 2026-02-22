@@ -137,7 +137,27 @@ impl ProofOptions {
 
     /// Convert to Winterfell ProofOptions
     pub fn to_winterfell(&self) -> winter_air::ProofOptions {
-        self.try_to_winterfell().expect("invalid proof options")
+        if let Err(err) = self.validate() {
+            debug_assert!(false, "invalid proof options: {err}");
+            let fallback = Self::default();
+            return winter_air::ProofOptions::new(
+                fallback.num_queries,
+                fallback.blowup_factor,
+                fallback.grinding_factor,
+                fallback.field_extension,
+                fallback.fri_folding_factor,
+                31,
+            );
+        }
+
+        winter_air::ProofOptions::new(
+            self.num_queries,
+            self.blowup_factor,
+            self.grinding_factor,
+            self.field_extension,
+            self.fri_folding_factor,
+            31,
+        )
     }
 
     /// Convert to Winterfell ProofOptions without panicking

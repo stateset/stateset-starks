@@ -72,6 +72,10 @@ pub enum BatchError {
     /// Witness validation error
     #[error("Witness validation error: {0}")]
     WitnessValidationError(String),
+
+    /// Proof is too large
+    #[error("Proof too large: {size} bytes exceeds maximum of {max_size} bytes")]
+    ProofTooLarge { size: usize, max_size: usize },
 }
 
 /// Result type for batch operations

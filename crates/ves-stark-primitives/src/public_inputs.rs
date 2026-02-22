@@ -62,6 +62,11 @@ impl PolicyParams {
     pub fn get_cap(&self) -> Option<u64> {
         self.0.get("cap")?.as_u64()
     }
+
+    /// Get the inner JSON value.
+    pub fn to_json_value(&self) -> serde_json::Value {
+        self.0.clone()
+    }
 }
 
 /// Canonical Public Inputs for VES Compliance Proofs

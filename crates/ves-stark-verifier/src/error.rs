@@ -5,6 +5,9 @@ use thiserror::Error;
 /// Current proof version (internal; used for compatibility checks where applicable)
 pub const PROOF_VERSION: u32 = 2;
 
+/// Maximum allowed proof size in bytes (10 MB)
+pub const MAX_PROOF_SIZE: usize = 10 * 1024 * 1024;
+
 /// Errors that can occur during proof verification
 #[derive(Debug, Error)]
 pub enum VerifierError {
@@ -60,6 +63,10 @@ pub enum VerifierError {
         "Witness commitment mismatch: the proof's commitment doesn't match the expected commitment"
     )]
     WitnessCommitmentMismatch,
+
+    /// Proof is too large
+    #[error("Proof too large: {size} bytes exceeds maximum of {max_size} bytes")]
+    ProofTooLarge { size: usize, max_size: usize },
 }
 
 impl VerifierError {

@@ -129,12 +129,13 @@ pub mod cols {
     /// Limbs 2-7 are boundary-asserted to zero and don't need binary decomposition
     #[inline]
     pub const fn amount_limb_bits_start(limb_idx: usize) -> usize {
-        match limb_idx {
-            0 => AMOUNT_BITS_LIMB0_START,
-            1 => AMOUNT_BITS_LIMB1_START,
-            // Limbs 2-7 don't have bit decomposition columns
-            // They are boundary-asserted to zero
-            _ => panic!("Only limbs 0-1 have binary decomposition"),
+        if limb_idx == 0 {
+            AMOUNT_BITS_LIMB0_START
+        } else if limb_idx == 1 {
+            AMOUNT_BITS_LIMB1_START
+        } else {
+            // Limbs 2-7 don't have bit decomposition columns and are boundary-asserted to zero.
+            AMOUNT_BITS_LIMB1_START
         }
     }
 
@@ -181,8 +182,7 @@ pub mod cols {
         debug_assert!(bit_idx < BITS_PER_LIMB);
         match limb_idx {
             0 => diff_limb0_bit(bit_idx),
-            1 => diff_limb1_bit(bit_idx),
-            _ => unreachable!("Only limbs 0-1 have diff bit decomposition"),
+            _ => diff_limb1_bit(bit_idx),
         }
     }
 

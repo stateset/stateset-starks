@@ -31,7 +31,8 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let config = SetChainConfig::testnet();
+//!     // For production deployments, provide the correct testnet/mainnet SetRegistry address.
+//!     let config = SetChainConfig::local();
 //!     let client = SetChainClient::try_new("http://localhost:8080", "api_key_here", config)?;
 //!
 //!     // Check if a batch has a proof anchored

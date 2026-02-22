@@ -8,6 +8,12 @@ use uuid::Uuid;
 use crate::error::{ClientError, Result};
 use crate::set_chain::{BatchProofResponse, BatchProofSubmission, SetChainClient};
 
+fn parse_batch_id_from_metadata(batch_id: &str) -> Result<Uuid> {
+    Uuid::parse_str(batch_id).map_err(|e| {
+        ClientError::InvalidPublicInputs(format!("Invalid batch_id '{}': {e}", batch_id))
+    })
+}
+
 /// Extension trait for SetChainClient to handle BatchProof from ves-stark-batch
 impl SetChainClient {
     /// Submit a batch proof from ves-stark-batch to Set Chain
@@ -37,13 +43,7 @@ impl SetChainClient {
         policy_limit: u64,
     ) -> Result<BatchProofResponse> {
         // Parse batch_id from hex string
-        let batch_id = Uuid::parse_str(&proof.metadata.batch_id).unwrap_or_else(|_| {
-            // If batch_id is a hex string but not a UUID, create one from the hash
-            let bytes = hex::decode(&proof.metadata.batch_id).unwrap_or_else(|_| vec![0u8; 16]);
-            let mut uuid_bytes = [0u8; 16];
-            uuid_bytes.copy_from_slice(&bytes[..16.min(bytes.len())]);
-            Uuid::from_bytes(uuid_bytes)
-        });
+        let batch_id = parse_batch_id_from_metadata(&proof.metadata.batch_id)?;
 
         // Convert state roots from [u64; 4] to [u8; 32]
         let prev_state_root = u64_array_to_bytes(&proof.prev_state_root);
@@ -83,12 +83,7 @@ impl SetChainClient {
         policy_limit: u64,
     ) -> Result<BatchProofResponse> {
         // Parse batch_id from hex string
-        let batch_id = Uuid::parse_str(&proof.metadata.batch_id).unwrap_or_else(|_| {
-            let bytes = hex::decode(&proof.metadata.batch_id).unwrap_or_else(|_| vec![0u8; 16]);
-            let mut uuid_bytes = [0u8; 16];
-            uuid_bytes.copy_from_slice(&bytes[..16.min(bytes.len())]);
-            Uuid::from_bytes(uuid_bytes)
-        });
+        let batch_id = parse_batch_id_from_metadata(&proof.metadata.batch_id)?;
 
         let prev_state_root = u64_array_to_bytes(&proof.prev_state_root);
         let new_state_root = u64_array_to_bytes(&proof.new_state_root);
@@ -119,12 +114,7 @@ impl SetChainClient {
         proof: &ves_stark_batch::prover::BatchProof,
     ) -> Result<bool> {
         // Parse batch_id
-        let batch_id = Uuid::parse_str(&proof.metadata.batch_id).unwrap_or_else(|_| {
-            let bytes = hex::decode(&proof.metadata.batch_id).unwrap_or_else(|_| vec![0u8; 16]);
-            let mut uuid_bytes = [0u8; 16];
-            uuid_bytes.copy_from_slice(&bytes[..16.min(bytes.len())]);
-            Uuid::from_bytes(uuid_bytes)
-        });
+        let batch_id = parse_batch_id_from_metadata(&proof.metadata.batch_id)?;
 
         let verification = self.verify_proof_hash(batch_id, &proof.proof_hash).await?;
         Ok(verification.proof_hash_valid)
@@ -176,15 +166,10 @@ impl BatchSubmissionBuilder {
         }
     }
 
-    pub fn from_batch_proof(proof: &ves_stark_batch::prover::BatchProof) -> Self {
-        let batch_id = Uuid::parse_str(&proof.metadata.batch_id).unwrap_or_else(|_| {
-            let bytes = hex::decode(&proof.metadata.batch_id).unwrap_or_else(|_| vec![0u8; 16]);
-            let mut uuid_bytes = [0u8; 16];
-            uuid_bytes.copy_from_slice(&bytes[..16.min(bytes.len())]);
-            Uuid::from_bytes(uuid_bytes)
-        });
+    pub fn from_batch_proof(proof: &ves_stark_batch::prover::BatchProof) -> Result<Self> {
+        let batch_id = parse_batch_id_from_metadata(&proof.metadata.batch_id)?;
 
-        Self {
+        Ok(Self {
             batch_id: Some(batch_id),
             tenant_id: None,
             store_id: None,
@@ -198,7 +183,7 @@ impl BatchSubmissionBuilder {
             policy_hash: None,
             policy_limit: None,
             all_compliant: proof.metadata.all_compliant,
-        }
+        })
     }
 
     pub fn batch_id(mut self, id: Uuid) -> Self {
@@ -374,6 +359,7 @@ mod tests {
     fn test_batch_submission_builder() {
         let proof = sample_batch_proof();
         let builder = BatchSubmissionBuilder::from_batch_proof(&proof)
+            .unwrap()
             .tenant_id(Uuid::new_v4())
             .store_id(Uuid::new_v4())
             .events_root([0u8; 32])
@@ -389,10 +375,19 @@ mod tests {
     #[test]
     fn test_batch_submission_builder_missing_field() {
         let proof = sample_batch_proof();
-        let builder = BatchSubmissionBuilder::from_batch_proof(&proof);
+        let builder = BatchSubmissionBuilder::from_batch_proof(&proof).unwrap();
 
         // Missing tenant_id should error
         let result = builder.build();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_batch_submission_builder_invalid_batch_id() {
+        let mut proof = sample_batch_proof();
+        proof.metadata.batch_id = "not-a-uuid".to_string();
+
+        let result = BatchSubmissionBuilder::from_batch_proof(&proof);
         assert!(result.is_err());
     }
 }

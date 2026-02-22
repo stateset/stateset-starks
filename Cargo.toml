@@ -58,6 +58,7 @@ winter-utils = "0.10"
 # Cryptography
 sha2 = "0.10"
 hex = "0.4"
+zeroize = { version = "1", features = ["derive"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

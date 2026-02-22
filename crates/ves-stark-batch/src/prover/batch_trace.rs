@@ -5,15 +5,19 @@
 
 use rayon::prelude::*;
 use ves_stark_air::policies::aml_threshold::compute_comparison_values;
+use ves_stark_air::policies::order_total_cap::compute_comparison_values_lte;
+use ves_stark_air::policy::ComparisonType;
 use ves_stark_air::trace::cols as base_cols;
-use ves_stark_primitives::rescue::{rescue_hash, STATE_WIDTH as RESCUE_STATE_WIDTH};
+use ves_stark_primitives::rescue::{
+    rescue_hash, rescue_permutation_trace, STATE_WIDTH as RESCUE_STATE_WIDTH,
+};
 use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
 use winter_math::FieldElement;
 use winter_prover::TraceTable;
 
 use crate::air::trace_layout::{
     batch_cols, calculate_trace_length, BatchPhase, BASE_TRACE_WIDTH, BATCH_TRACE_WIDTH,
-    COMPLIANCE_ACC_GAMMA, ROWS_PER_EVENT,
+    COMPLIANCE_ACC_GAMMA, FINALIZE_ROWS, ROWS_PER_EVENT, ROWS_PER_MERKLE_NODE,
 };
 use crate::error::BatchError;
 use crate::prover::witness::{BatchEventWitness, BatchWitness};
@@ -67,14 +71,6 @@ fn compute_witness_commitment(amount_limbs: &[Felt; 8]) -> [Felt; RESCUE_STATE_W
     state
 }
 
-/// Get limit limbs from threshold
-fn limit_limbs(limit: u64) -> [Felt; 8] {
-    let mut limbs = [FELT_ZERO; 8];
-    limbs[0] = felt_from_u64(limit & 0xFFFFFFFF);
-    limbs[1] = felt_from_u64(limit >> 32);
-    limbs
-}
-
 /// Builder for batch execution traces
 pub struct BatchTraceBuilder {
     /// The batch witness
@@ -109,27 +105,32 @@ impl BatchTraceBuilder {
         // Validate witness
         self.witness.validate()?;
 
+        let batch_policy = self.witness.policy()?;
+        let policy_comparison = batch_policy.comparison_type();
+        let policy_limit_limbs = batch_policy.limit_limbs();
+
         // Initialize trace columns
         let mut trace = vec![vec![FELT_ZERO; self.trace_length]; BATCH_TRACE_WIDTH];
 
         // Get batch-level data
-        let limit_limbs = limit_limbs(self.witness.policy_limit);
         let batch_id = self.witness.batch_id_felts();
         let tenant_id = self.witness.tenant_id_felts();
         let store_id = self.witness.store_id_felts();
         let metadata_hash = self.witness.metadata.to_rescue_hash();
 
         // Build event Merkle tree and compute state roots
-        let event_tree = self.witness.build_event_tree();
+        let event_tree = self.witness.build_event_tree()?;
         let prev_state_root = &self.witness.prev_state_root;
-        let new_state_root = self.witness.compute_new_state_root();
+        let new_state_root = self.witness.compute_new_state_root()?;
 
         // Process events in parallel
         let event_traces: Vec<_> = self
             .witness
             .events
             .par_iter()
-            .map(|event| self.build_event_trace(event, &limit_limbs))
+            .map(|event| {
+                self.build_event_trace(event, policy_comparison, &policy_limit_limbs)
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         // Fill trace with event data
@@ -268,20 +269,24 @@ impl BatchTraceBuilder {
     fn build_event_trace(
         &self,
         event: &BatchEventWitness,
+        comparison: ComparisonType,
         limit_limbs: &[Felt; 8],
     ) -> Result<EventTraceData, BatchError> {
         let amount_limbs = event.amount_limbs();
 
-        // Compute comparison values (using LT for AML threshold)
-        let comparison_values = compute_comparison_values(&amount_limbs, limit_limbs);
+        // Compute comparison values according to the event policy.
+        let comparison_values = match comparison {
+            ComparisonType::LessThan => compute_comparison_values(&amount_limbs, limit_limbs),
+            ComparisonType::LessThanOrEqual => compute_comparison_values_lte(&amount_limbs, limit_limbs),
+        };
 
         // Check compliance
         let final_comparison = comparison_values[7];
-        if event.is_compliant && final_comparison != FELT_ONE {
+        if event.compliance_felt() != final_comparison {
             return Err(BatchError::EventNotCompliant {
                 event_index: event.event_index,
                 message: format!(
-                    "Event {} marked compliant but comparison failed",
+                    "Event {} compliance flag mismatch with comparison result",
                     event.event_index
                 ),
             });
@@ -340,7 +345,11 @@ impl BatchTraceBuilder {
         Ok(EventTraceData { base })
     }
 
-    /// Fill Merkle tree computation rows
+    /// Fill Merkle tree computation rows (ROWS_PER_MERKLE_NODE rows per node).
+    ///
+    /// For each internal node, we emit in-circuit Rescue states:
+    /// - steps 0..13: half-round transitions
+    /// - step 14: output state row
     #[allow(clippy::too_many_arguments)]
     fn fill_merkle_trace(
         &self,
@@ -364,69 +373,100 @@ impl BatchTraceBuilder {
                     return current_row;
                 }
 
-                // Set Merkle columns
-                trace[batch_cols::MERKLE_LEVEL][current_row] = felt_from_u64(level_idx as u64);
-                trace[batch_cols::MERKLE_NODE_INDEX][current_row] = felt_from_u64(node_idx as u64);
-                trace[batch_cols::IS_MERKLE_ROW][current_row] = FELT_ONE;
-                trace[batch_cols::BATCH_PHASE][current_row] = BatchPhase::Merkle.to_felt();
+                let (left_child, right_child) =
+                    if let Some(children) = event_tree.level(level_idx) {
+                        (
+                            children
+                                .get(node_idx * 2)
+                                .copied()
+                                .unwrap_or([FELT_ZERO; 4]),
+                            children
+                                .get(node_idx * 2 + 1)
+                                .copied()
+                                .unwrap_or([FELT_ZERO; 4]),
+                        )
+                    } else {
+                        ([FELT_ZERO; 4], [FELT_ZERO; 4])
+                    };
 
-                // Output (this node's hash)
+                let mut hash_state = [FELT_ZERO; 12];
                 for i in 0..4 {
-                    trace[batch_cols::merkle_output(i)][current_row] = node[i];
+                    hash_state[i] = left_child[i];
+                    hash_state[4 + i] = right_child[i];
+                }
+                let trace_rows = rescue_permutation_trace(&hash_state);
+
+                for step in 0..ROWS_PER_MERKLE_NODE {
+                    let row = current_row + step;
+                    if row >= self.trace_length {
+                        break;
+                    }
+
+                    for i in 0..RESCUE_STATE_WIDTH {
+                        trace[batch_cols::merkle_rescue_state(i)][row] = trace_rows[step][i];
+                    }
+                    trace[batch_cols::MERKLE_HASH_STEP][row] = felt_from_u64(step as u64);
+                    trace[batch_cols::IS_FINALIZE_HASH][row] = FELT_ZERO;
+                    trace[batch_cols::IS_MERKLE_ROW][row] = FELT_ONE;
+                    trace[batch_cols::BATCH_PHASE][row] = BatchPhase::Merkle.to_felt();
+
+                    trace[batch_cols::MERKLE_LEVEL][row] = felt_from_u64(level_idx as u64);
+                    trace[batch_cols::MERKLE_NODE_INDEX][row] = felt_from_u64(node_idx as u64);
+
+                    for i in 0..4 {
+                        trace[batch_cols::merkle_output(i)][row] = node[i];
+                        trace[batch_cols::merkle_left(i)][row] = left_child[i];
+                        trace[batch_cols::merkle_right(i)][row] = right_child[i];
+                    }
+
+                    for i in 0..4 {
+                        trace[batch_cols::prev_state_root(i)][row] = prev_state_root.root[i];
+                        trace[batch_cols::new_state_root(i)][row] = new_state_root.root[i];
+                        trace[batch_cols::event_tree_root(i)][row] = event_tree.root()[i];
+                    }
+
+                    trace[batch_cols::COMPLIANCE_ACCUMULATOR][row] = compliance_accumulator;
+                    trace[batch_cols::EVENT_COMPLIANCE_FLAG][row] = filler_bit(row as u64);
+
+                    for i in 0..4 {
+                        trace[batch_cols::batch_id(i)][row] = batch_id[i];
+                        trace[batch_cols::metadata_hash(i)][row] = metadata_hash[i];
+                        trace[batch_cols::TENANT_ID_START + i][row] = tenant_id[i];
+                        trace[batch_cols::STORE_ID_START + i][row] = store_id[i];
+                    }
+                    trace[batch_cols::SEQUENCE_START][row] =
+                        felt_from_u64(self.witness.metadata.sequence_start);
+                    trace[batch_cols::SEQUENCE_END][row] =
+                        felt_from_u64(self.witness.metadata.sequence_end);
+                    trace[batch_cols::TIMESTAMP][row] =
+                        felt_from_u64(self.witness.metadata.timestamp);
+
+                    for i in 0..8 {
+                        trace[batch_cols::POLICY_HASH_START + i][row] =
+                            self.witness.policy_hash[i];
+                    }
+                    trace[batch_cols::POLICY_LIMIT][row] =
+                        felt_from_u64(self.witness.policy_limit);
+
+                    trace[batch_cols::NUM_EVENTS][row] =
+                        felt_from_u64(self.witness.num_events() as u64);
+                    trace[batch_cols::EVENT_INDEX][row] =
+                        felt_from_u64(self.witness.num_events() as u64);
+                    trace[batch_cols::EVENT_ROW][row] = FELT_ZERO;
+                    trace[batch_cols::EVENTS_DONE][row] = FELT_ONE;
                 }
 
-                // State roots (constant)
-                for i in 0..4 {
-                    trace[batch_cols::prev_state_root(i)][current_row] = prev_state_root.root[i];
-                    trace[batch_cols::new_state_root(i)][current_row] = new_state_root.root[i];
-                    trace[batch_cols::event_tree_root(i)][current_row] = event_tree.root()[i];
-                }
-
-                // Accumulator and compliance
-                trace[batch_cols::COMPLIANCE_ACCUMULATOR][current_row] = compliance_accumulator;
-                trace[batch_cols::EVENT_COMPLIANCE_FLAG][current_row] =
-                    filler_bit(current_row as u64);
-
-                // Metadata
-                for i in 0..4 {
-                    trace[batch_cols::batch_id(i)][current_row] = batch_id[i];
-                    trace[batch_cols::metadata_hash(i)][current_row] = metadata_hash[i];
-                }
-                for i in 0..4 {
-                    trace[batch_cols::TENANT_ID_START + i][current_row] = tenant_id[i];
-                    trace[batch_cols::STORE_ID_START + i][current_row] = store_id[i];
-                }
-                trace[batch_cols::SEQUENCE_START][current_row] =
-                    felt_from_u64(self.witness.metadata.sequence_start);
-                trace[batch_cols::SEQUENCE_END][current_row] =
-                    felt_from_u64(self.witness.metadata.sequence_end);
-                trace[batch_cols::TIMESTAMP][current_row] =
-                    felt_from_u64(self.witness.metadata.timestamp);
-
-                // Policy (constant)
-                for i in 0..8 {
-                    trace[batch_cols::POLICY_HASH_START + i][current_row] =
-                        self.witness.policy_hash[i];
-                }
-                trace[batch_cols::POLICY_LIMIT][current_row] =
-                    felt_from_u64(self.witness.policy_limit);
-
-                // Event info (constant from last event)
-                trace[batch_cols::NUM_EVENTS][current_row] =
-                    felt_from_u64(self.witness.num_events() as u64);
-                trace[batch_cols::EVENT_INDEX][current_row] =
-                    felt_from_u64(self.witness.num_events() as u64);
-                trace[batch_cols::EVENT_ROW][current_row] = FELT_ZERO;
-                trace[batch_cols::EVENTS_DONE][current_row] = FELT_ONE;
-
-                current_row += 1;
+                current_row += ROWS_PER_MERKLE_NODE;
             }
         }
 
         current_row
     }
 
-    /// Fill finalization rows
+    /// Fill finalization rows (ROWS_PER_MERKLE_NODE rows).
+    ///
+    /// The finalization phase represents:
+    ///   new_state_root = Rescue(event_tree_root || metadata_hash)
     #[allow(clippy::too_many_arguments)]
     fn fill_finalize_trace(
         &self,
@@ -441,55 +481,64 @@ impl BatchTraceBuilder {
         store_id: &[Felt; 4],
         metadata_hash: &[Felt; 4],
     ) -> usize {
-        let finalize_rows = 4;
         let mut current_row = start_row;
 
-        for _row_in_finalize in 0..finalize_rows {
-            if current_row >= self.trace_length {
-                return current_row;
+        let mut hash_state = [FELT_ZERO; RESCUE_STATE_WIDTH];
+        for i in 0..4 {
+            hash_state[i] = event_tree.root()[i];
+            hash_state[4 + i] = metadata_hash[i];
+        }
+        let trace_rows = rescue_permutation_trace(&hash_state);
+
+        for step in 0..FINALIZE_ROWS {
+            let row = current_row;
+            if row >= self.trace_length {
+                break;
             }
 
-            trace[batch_cols::BATCH_PHASE][current_row] = BatchPhase::Finalize.to_felt();
-            trace[batch_cols::IS_MERKLE_ROW][current_row] = FELT_ZERO;
-
-            // State roots
-            for i in 0..4 {
-                trace[batch_cols::prev_state_root(i)][current_row] = prev_state_root.root[i];
-                trace[batch_cols::new_state_root(i)][current_row] = new_state_root.root[i];
-                trace[batch_cols::event_tree_root(i)][current_row] = event_tree.root()[i];
-            }
-
-            // Compliance
-            trace[batch_cols::COMPLIANCE_ACCUMULATOR][current_row] = compliance_accumulator;
-            trace[batch_cols::EVENT_COMPLIANCE_FLAG][current_row] = filler_bit(current_row as u64);
-
-            // Metadata
-            for i in 0..4 {
-                trace[batch_cols::batch_id(i)][current_row] = batch_id[i];
-                trace[batch_cols::metadata_hash(i)][current_row] = metadata_hash[i];
+            for i in 0..RESCUE_STATE_WIDTH {
+                trace[batch_cols::merkle_rescue_state(i)][row] = trace_rows[step][i];
             }
             for i in 0..4 {
-                trace[batch_cols::TENANT_ID_START + i][current_row] = tenant_id[i];
-                trace[batch_cols::STORE_ID_START + i][current_row] = store_id[i];
+                trace[batch_cols::merkle_output(i)][row] = new_state_root.root[i];
             }
-            trace[batch_cols::SEQUENCE_START][current_row] =
+
+            trace[batch_cols::MERKLE_HASH_STEP][row] = felt_from_u64(step as u64);
+            trace[batch_cols::IS_FINALIZE_HASH][row] = FELT_ONE;
+            trace[batch_cols::IS_MERKLE_ROW][row] = FELT_ZERO;
+            trace[batch_cols::BATCH_PHASE][row] = BatchPhase::Finalize.to_felt();
+
+            for i in 0..4 {
+                trace[batch_cols::prev_state_root(i)][row] = prev_state_root.root[i];
+                trace[batch_cols::new_state_root(i)][row] = new_state_root.root[i];
+                trace[batch_cols::event_tree_root(i)][row] = event_tree.root()[i];
+            }
+
+            trace[batch_cols::COMPLIANCE_ACCUMULATOR][row] = compliance_accumulator;
+            trace[batch_cols::EVENT_COMPLIANCE_FLAG][row] = filler_bit(row as u64);
+
+            for i in 0..4 {
+                trace[batch_cols::batch_id(i)][row] = batch_id[i];
+                trace[batch_cols::metadata_hash(i)][row] = metadata_hash[i];
+                trace[batch_cols::TENANT_ID_START + i][row] = tenant_id[i];
+                trace[batch_cols::STORE_ID_START + i][row] = store_id[i];
+            }
+            trace[batch_cols::SEQUENCE_START][row] =
                 felt_from_u64(self.witness.metadata.sequence_start);
-            trace[batch_cols::SEQUENCE_END][current_row] =
+            trace[batch_cols::SEQUENCE_END][row] =
                 felt_from_u64(self.witness.metadata.sequence_end);
-            trace[batch_cols::TIMESTAMP][current_row] =
-                felt_from_u64(self.witness.metadata.timestamp);
-            trace[batch_cols::NUM_EVENTS][current_row] =
-                felt_from_u64(self.witness.num_events() as u64);
-            trace[batch_cols::EVENT_INDEX][current_row] =
-                felt_from_u64(self.witness.num_events() as u64);
-            trace[batch_cols::EVENT_ROW][current_row] = FELT_ZERO;
+            trace[batch_cols::TIMESTAMP][row] = felt_from_u64(self.witness.metadata.timestamp);
 
-            // Policy (constant)
             for i in 0..8 {
-                trace[batch_cols::POLICY_HASH_START + i][current_row] = self.witness.policy_hash[i];
+                trace[batch_cols::POLICY_HASH_START + i][row] = self.witness.policy_hash[i];
             }
-            trace[batch_cols::POLICY_LIMIT][current_row] = felt_from_u64(self.witness.policy_limit);
-            trace[batch_cols::EVENTS_DONE][current_row] = FELT_ONE;
+            trace[batch_cols::POLICY_LIMIT][row] = felt_from_u64(self.witness.policy_limit);
+            trace[batch_cols::NUM_EVENTS][row] =
+                felt_from_u64(self.witness.num_events() as u64);
+            trace[batch_cols::EVENT_INDEX][row] =
+                felt_from_u64(self.witness.num_events() as u64);
+            trace[batch_cols::EVENT_ROW][row] = FELT_ZERO;
+            trace[batch_cols::EVENTS_DONE][row] = FELT_ONE;
 
             current_row += 1;
         }
@@ -516,6 +565,8 @@ impl BatchTraceBuilder {
         for row in start_row..self.trace_length {
             trace[batch_cols::BATCH_PHASE][row] = BatchPhase::Padding.to_felt();
             trace[batch_cols::IS_MERKLE_ROW][row] = FELT_ZERO;
+            trace[batch_cols::IS_FINALIZE_HASH][row] = FELT_ZERO;
+            trace[batch_cols::MERKLE_HASH_STEP][row] = FELT_ZERO;
 
             // State roots (constant)
             for i in 0..4 {
@@ -577,19 +628,34 @@ mod tests {
     use crate::state::BatchMetadata;
     use uuid::Uuid;
     use ves_stark_primitives::public_inputs::{
-        compute_policy_hash, CompliancePublicInputs, PolicyParams,
+        compute_policy_hash, witness_commitment_u64_to_hex, CompliancePublicInputs, PolicyParams,
     };
     use winter_prover::Trace;
 
-    fn sample_public_inputs(threshold: u64, idx: usize) -> CompliancePublicInputs {
-        let policy_id = "aml.threshold";
-        let params = PolicyParams::threshold(threshold);
+    fn sample_public_inputs_with_policy(
+        policy_id: &str,
+        params: PolicyParams,
+        amount: u64,
+        idx: usize,
+        tenant_id: Uuid,
+        store_id: Uuid,
+    ) -> CompliancePublicInputs {
         let hash = compute_policy_hash(policy_id, &params).unwrap();
+        let mut amount_limbs = [FELT_ZERO; 8];
+        amount_limbs[0] = felt_from_u64(amount & 0xFFFFFFFF);
+        amount_limbs[1] = felt_from_u64(amount >> 32);
+        let commitment = rescue_hash(&amount_limbs);
+        let commitment_u64 = [
+            commitment[0].as_int(),
+            commitment[1].as_int(),
+            commitment[2].as_int(),
+            commitment[3].as_int(),
+        ];
 
         CompliancePublicInputs {
             event_id: Uuid::new_v4(),
-            tenant_id: Uuid::new_v4(),
-            store_id: Uuid::new_v4(),
+            tenant_id,
+            store_id,
             sequence_number: idx as u64,
             payload_kind: 1,
             payload_plain_hash: "0".repeat(64),
@@ -598,8 +664,25 @@ mod tests {
             policy_id: policy_id.to_string(),
             policy_params: params,
             policy_hash: hash.to_hex(),
-            witness_commitment: None,
+            witness_commitment: Some(witness_commitment_u64_to_hex(&commitment_u64)),
         }
+    }
+
+    fn sample_public_inputs(
+        threshold: u64,
+        amount: u64,
+        idx: usize,
+        tenant_id: Uuid,
+        store_id: Uuid,
+    ) -> CompliancePublicInputs {
+        sample_public_inputs_with_policy(
+            "aml.threshold",
+            PolicyParams::threshold(threshold),
+            amount,
+            idx,
+            tenant_id,
+            store_id,
+        )
     }
 
     fn sample_policy_hash(threshold: u64) -> [Felt; 8] {
@@ -609,12 +692,19 @@ mod tests {
         ves_stark_primitives::hash_to_felts(&hash)
     }
 
+    fn sample_policy_hash_with_id(policy_id: &str, params: PolicyParams) -> [Felt; 8] {
+        let hash = compute_policy_hash(policy_id, &params).unwrap();
+        ves_stark_primitives::hash_to_felts(&hash)
+    }
+
     #[test]
     fn test_batch_trace_builder_small() {
         let threshold = 10000u64;
         let policy_hash = sample_policy_hash(threshold);
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
         let metadata =
-            BatchMetadata::with_ids(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 0, 7);
+            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 7);
 
         let mut builder = BatchWitnessBuilder::new()
             .metadata(metadata)
@@ -623,8 +713,9 @@ mod tests {
 
         // Add 8 compliant events
         for i in 0..8 {
-            let inputs = sample_public_inputs(threshold, i);
-            builder = builder.add_event(5000 + i as u64 * 100, inputs);
+            let amount = 5000 + i as u64 * 100;
+            let inputs = sample_public_inputs(threshold, amount, i, tenant_id, store_id);
+            builder = builder.add_event(amount, inputs).unwrap();
         }
 
         let witness = builder.build().unwrap();
@@ -639,8 +730,10 @@ mod tests {
     fn test_batch_trace_state_roots() {
         let threshold = 10000u64;
         let policy_hash = sample_policy_hash(threshold);
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
         let metadata =
-            BatchMetadata::with_ids(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 0, 3);
+            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 3);
 
         let mut builder = BatchWitnessBuilder::new()
             .metadata(metadata)
@@ -648,12 +741,13 @@ mod tests {
             .policy_limit(threshold);
 
         for i in 0..4 {
-            let inputs = sample_public_inputs(threshold, i);
-            builder = builder.add_event(5000, inputs);
+            let amount = 5000;
+            let inputs = sample_public_inputs(threshold, amount, i, tenant_id, store_id);
+            builder = builder.add_event(5000, inputs).unwrap();
         }
 
         let witness = builder.build().unwrap();
-        let new_root = witness.compute_new_state_root();
+        let new_root = witness.compute_new_state_root().unwrap();
 
         let trace_builder = BatchTraceBuilder::new(witness);
         let trace = trace_builder.build().unwrap();
@@ -675,8 +769,10 @@ mod tests {
     fn test_batch_trace_compliance_accumulator() {
         let threshold = 10000u64;
         let policy_hash = sample_policy_hash(threshold);
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
         let metadata =
-            BatchMetadata::with_ids(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 0, 3);
+            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 3);
 
         let mut builder = BatchWitnessBuilder::new()
             .metadata(metadata)
@@ -684,8 +780,9 @@ mod tests {
             .policy_limit(threshold);
 
         for i in 0..4 {
-            let inputs = sample_public_inputs(threshold, i);
-            builder = builder.add_event(5000, inputs);
+            let amount = 5000;
+            let inputs = sample_public_inputs(threshold, amount, i, tenant_id, store_id);
+            builder = builder.add_event(5000, inputs).unwrap();
         }
 
         let witness = builder.build().unwrap();
@@ -693,6 +790,109 @@ mod tests {
         let trace = trace_builder.build().unwrap();
 
         // Compliance accumulator should be 1 at last row (all compliant)
+        let final_acc = trace.get(batch_cols::COMPLIANCE_ACCUMULATOR, trace.length() - 1);
+        assert_eq!(final_acc, FELT_ONE);
+    }
+
+    #[test]
+    fn test_batch_trace_builder_aml_threshold_boundary_rejects() {
+        let threshold = 10_000u64;
+        let policy_hash = sample_policy_hash(threshold);
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
+
+        let mut builder = BatchWitnessBuilder::new()
+            .metadata(metadata)
+            .policy_hash(policy_hash)
+            .policy_limit(threshold);
+
+        // AML threshold is strict: amount == threshold must be non-compliant.
+        builder = builder
+            .add_event(
+                threshold,
+                sample_public_inputs(threshold, threshold, 0, tenant_id, store_id),
+            )
+            .unwrap();
+
+        let witness = builder.build().unwrap();
+        assert!(!witness.all_compliant());
+
+        let trace_builder = BatchTraceBuilder::new(witness);
+        let trace = trace_builder.build().unwrap();
+
+        let final_acc = trace.get(batch_cols::COMPLIANCE_ACCUMULATOR, trace.length() - 1);
+        assert_eq!(final_acc, FELT_ZERO);
+    }
+
+    #[test]
+    fn test_batch_trace_builder_order_total_cap() {
+        let cap = 10000u64;
+        let policy_id = "order_total.cap";
+        let policy_hash = sample_policy_hash_with_id(policy_id, PolicyParams::cap(cap));
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 3);
+
+        let mut builder = BatchWitnessBuilder::new()
+            .metadata(metadata)
+            .policy_hash(policy_hash)
+            .policy_limit(cap);
+
+        for i in 0..4 {
+            let amount = 5_000 + i as u64 * 100;
+            let inputs = sample_public_inputs_with_policy(
+                policy_id,
+                PolicyParams::cap(cap),
+                amount,
+                i,
+                tenant_id,
+                store_id,
+            );
+            builder = builder
+                .add_event(amount, inputs)
+                .unwrap();
+        }
+
+        let witness = builder.build().unwrap();
+        let trace_builder = BatchTraceBuilder::new(witness);
+        let trace = trace_builder.build().unwrap();
+
+        let final_acc = trace.get(batch_cols::COMPLIANCE_ACCUMULATOR, trace.length() - 1);
+        assert_eq!(final_acc, FELT_ONE);
+    }
+
+    #[test]
+    fn test_batch_trace_builder_order_total_cap_boundary() {
+        let cap = 10_000u64;
+        let policy_id = "order_total.cap";
+        let policy_hash = sample_policy_hash_with_id(policy_id, PolicyParams::cap(cap));
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
+
+        let mut builder = BatchWitnessBuilder::new()
+            .metadata(metadata)
+            .policy_hash(policy_hash)
+            .policy_limit(cap);
+
+        let inputs = sample_public_inputs_with_policy(
+            policy_id,
+            PolicyParams::cap(cap),
+            cap,
+            0,
+            tenant_id,
+            store_id,
+        );
+        builder = builder.add_event(cap, inputs).unwrap();
+
+        let witness = builder.build().unwrap();
+        let trace_builder = BatchTraceBuilder::new(witness);
+        let trace = trace_builder.build().unwrap();
+
         let final_acc = trace.get(batch_cols::COMPLIANCE_ACCUMULATOR, trace.length() - 1);
         assert_eq!(final_acc, FELT_ONE);
     }

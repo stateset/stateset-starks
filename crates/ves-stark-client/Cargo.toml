@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 [features]
 default = []
 batch = ["ves-stark-batch"]
+dev = []
 
 [dependencies]
 ves-stark-primitives = { path = "../ves-stark-primitives" }
@@ -25,6 +26,7 @@ base64 = "0.22"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 sha2 = "0.10"
 hex = "0.4"
+zeroize = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

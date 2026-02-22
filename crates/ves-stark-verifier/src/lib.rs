@@ -17,7 +17,7 @@
 mod error;
 mod verify;
 
-pub use error::{validate_hex_string, VerifierError, PROOF_VERSION};
+pub use error::{validate_hex_string, VerifierError, MAX_PROOF_SIZE, PROOF_VERSION};
 pub use verify::{
     verify_compliance_proof, verify_compliance_proof_auto, verify_compliance_proof_auto_bound,
     ComplianceVerifier, VerificationResult,

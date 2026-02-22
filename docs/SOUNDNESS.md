@@ -108,6 +108,6 @@ formal security proof.
 - Amount-to-payload binding is not enforced in the AIR today.
 - Public inputs are bound to the proof instance, but are not used in constraints to derive or
   constrain the private witness.
-- Batch proofs (`ves-stark-batch`) are prototype-grade: they bind batch public inputs and enforce a
-  well-formed scaled-AND accumulator over per-event compliance flags, but they do not yet verify
-  Merkle transitions or per-event proof correctness.
+- Batch proofs (`ves-stark-batch`) currently do not include a payload-to-amount linkage inside this
+  crate. They do prove per-event policy compliance, policy consistency, batch ordering constraints,
+  and in-circuit Merkle/finalization hashing for state transition integrity.

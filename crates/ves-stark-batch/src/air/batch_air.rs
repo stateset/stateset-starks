@@ -1,25 +1,36 @@
 //! Batch Compliance AIR
-//!
-//! This module implements a **prototype** AIR for batch state transition proofs.
-//! It currently enforces **consistency only**:
-//! - State roots remain constant across the trace
-//! - Compliance accumulator is a scaled AND over per-event flags (updated exactly once per event)
-//! - Batch public inputs are bound to trace columns via boundary assertions
-//!
-//! It does **not** yet verify Merkle transitions or per-event proof correctness.
+///
+//! This module implements the batch AIR used for production-like Merkle + finalization
+//! hash verification with witness binding and compliance checks.
 
-use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
+use ves_stark_primitives::{
+    felt_from_u64,
+    rescue::{ROUND_CONSTANTS, STATE_WIDTH as RESCUE_STATE_WIDTH},
+    Felt, FELT_ONE, FELT_ZERO,
+};
 use winter_air::{
     Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,
     TransitionConstraintDegree,
 };
 use winter_math::FieldElement;
 
-use crate::air::trace_layout::{batch_cols, BatchPhase, COMPLIANCE_ACC_GAMMA};
+use crate::air::constraints::{
+    evaluate_compliance_binding_constraints,
+    evaluate_merkle_constraints, PERIODIC_COLUMN_COUNT, PERIODIC_RESCUE_ACTIVE_IDX,
+    PERIODIC_RESCUE_CONST_START_IDX, PERIODIC_RESCUE_INIT_IDX, PERIODIC_RESCUE_IS_FORWARD_IDX,
+    NUM_COMPLIANCE_BINDING_CONSTRAINTS, NUM_MERKLE_CONSTRAINTS,
+};
+use crate::air::trace_layout::{
+    batch_cols, merkle_node_count, BatchPhase, COMPLIANCE_ACC_GAMMA, ROWS_PER_EVENT,
+    ROWS_PER_MERKLE_NODE,
+};
 use crate::public_inputs::BatchPublicInputs;
 
-/// Number of transition constraints in simplified batch AIR
-pub const NUM_BATCH_CONSTRAINTS: usize = 54;
+/// Number of transition constraints in batch AIR.
+///
+/// 54 base + 46 Merkle/finalize constraints + 1 compliance binding = 101
+pub const NUM_BATCH_CONSTRAINTS: usize =
+    54 + NUM_MERKLE_CONSTRAINTS + NUM_COMPLIANCE_BINDING_CONSTRAINTS;
 
 /// Number of boundary assertions
 pub const NUM_BATCH_ASSERTIONS: usize = 44;
@@ -73,6 +84,16 @@ impl BatchComplianceAir {
         degrees.push(TransitionConstraintDegree::new(4)); // phase validity
         degrees.push(TransitionConstraintDegree::new(2)); // not done => phase == Event
         degrees.push(TransitionConstraintDegree::new(4)); // done => phase != Event
+
+        // Merkle/finalization constraints.
+        for _ in 0..NUM_MERKLE_CONSTRAINTS {
+            degrees.push(TransitionConstraintDegree::new(14));
+        }
+
+        // Compliance binding constraint (§2): 1 constraint
+        for _ in 0..NUM_COMPLIANCE_BINDING_CONSTRAINTS {
+            degrees.push(TransitionConstraintDegree::new(4));
+        }
 
         debug_assert_eq!(degrees.len(), NUM_BATCH_CONSTRAINTS);
 
@@ -165,9 +186,6 @@ impl Air for BatchComplianceAir {
         ));
 
         // Compliance accumulator starts at GAMMA^{-num_events}.
-        //
-        // This keeps the final value as a boolean (0/1) while ensuring the accumulator is
-        // non-constant even when all flags are 1.
         let num_events_u64 = self.pub_inputs.num_events.as_int();
         let gamma = Felt::new(COMPLIANCE_ACC_GAMMA);
         let gamma_inv_pow_n = gamma.exp(num_events_u64).inv();
@@ -398,8 +416,6 @@ impl Air for BatchComplianceAir {
         // Compliance accumulator constraints (3)
         // =========================================================================
 
-        // The accumulator is updated exactly once per event, on the transition into the last row
-        // of the event (when EVENT_ROW == 2 on the current row).
         let acc_curr = current[batch_cols::COMPLIANCE_ACCUMULATOR];
         let acc_next = next[batch_cols::COMPLIANCE_ACCUMULATOR];
         let flag = current[batch_cols::EVENT_COMPLIANCE_FLAG];
@@ -445,11 +461,71 @@ impl Air for BatchComplianceAir {
         result[idx] = done * (phase_curr - E::ONE) * (phase_curr - two) * (phase_curr - three);
         idx += 1;
 
+        // =========================================================================
+        // Merkle structural constraints (NUM_MERKLE_CONSTRAINTS)
+        // =========================================================================
+
+        let used = evaluate_merkle_constraints::<E>(current, next, periodic_values, &mut result[idx..]);
+        idx += used;
+
+        // =========================================================================
+        // Compliance binding constraints (NUM_COMPLIANCE_BINDING_CONSTRAINTS)
+        // =========================================================================
+
+        let used = evaluate_compliance_binding_constraints::<E>(current, &mut result[idx..]);
+        idx += used;
+
         debug_assert_eq!(idx, NUM_BATCH_CONSTRAINTS);
     }
 
     fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
-        vec![]
+        let trace_len = self.trace_length();
+        let mut columns = Vec::with_capacity(PERIODIC_COLUMN_COUNT);
+
+        let num_events = self.pub_inputs.num_events.as_int() as usize;
+        let mut rescue_active = vec![FELT_ZERO; trace_len];
+        let mut rescue_init = vec![FELT_ZERO; trace_len];
+        let mut rescue_is_forward = vec![FELT_ZERO; trace_len];
+
+        let mut round_columns: Vec<Vec<Felt>> = (0..RESCUE_STATE_WIDTH)
+            .map(|_| vec![FELT_ZERO; trace_len])
+            .collect();
+
+        let mut row = num_events * ROWS_PER_EVENT;
+
+        // Build one hash segment per internal Merkle node plus one finalization segment.
+        let merkle_segments = merkle_node_count(num_events) + 1;
+        for _ in 0..merkle_segments {
+            for step in 0..ROWS_PER_MERKLE_NODE {
+                if row >= trace_len {
+                    break;
+                }
+
+                if step < (ROWS_PER_MERKLE_NODE - 1) {
+                    rescue_active[row] = FELT_ONE;
+                    rescue_is_forward[row] = if step % 2 == 0 { FELT_ONE } else { FELT_ZERO };
+                    for col in 0..RESCUE_STATE_WIDTH {
+                        round_columns[col][row] = felt_from_u64(ROUND_CONSTANTS[step][col]);
+                    }
+                }
+
+                if step == 0 {
+                    rescue_init[row] = FELT_ONE;
+                }
+
+                row += 1;
+            }
+        }
+
+        columns.push(rescue_active);
+        columns.push(rescue_init);
+        columns.push(rescue_is_forward);
+        for col in round_columns {
+            columns.push(col);
+        }
+
+        debug_assert_eq!(columns.len(), PERIODIC_COLUMN_COUNT);
+        columns
     }
 }
 

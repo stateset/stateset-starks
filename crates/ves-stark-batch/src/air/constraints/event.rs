@@ -1,7 +1,9 @@
-//! Event processing constraints
+//! Event processing constraints (reference implementation)
 //!
-//! These constraints ensure that each event in the batch is correctly processed
-//! for compliance verification.
+//! **Note:** These constraints are NOT currently used by `BatchComplianceAir`.
+//! The active event progression constraints live directly in `batch_air.rs`.
+//!
+//! This module is retained as a reference for future constraint development (Phase 3+).
 
 use crate::air::trace_layout::batch_cols;
 use winter_math::FieldElement;

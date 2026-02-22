@@ -22,8 +22,9 @@ use std::path::PathBuf;
 use std::time::Instant;
 use uuid::Uuid;
 
+use ves_stark_client::{ProofSubmission, SequencerClient};
 use ves_stark_primitives::public_inputs::{
-    compute_policy_hash, CompliancePublicInputs, PolicyParams,
+    compute_policy_hash, witness_commitment_hex_to_u64, CompliancePublicInputs, PolicyParams,
 };
 use ves_stark_primitives::{hash_to_felts, Felt};
 use ves_stark_prover::{ComplianceProof, ComplianceProver, ComplianceWitness, Policy};
@@ -31,7 +32,8 @@ use ves_stark_verifier::verify_compliance_proof;
 
 // Batch proving imports
 use ves_stark_batch::{
-    BatchMetadata, BatchProver, BatchStateRoot, BatchVerifier, BatchWitnessBuilder,
+    BatchMetadata, BatchProver, BatchPublicInputs, BatchStateRoot, BatchVerifier, BatchWitnessBuilder,
+    SerializableBatchProof,
 };
 
 /// Policy type for CLI
@@ -46,7 +48,7 @@ enum PolicyType {
 }
 
 impl PolicyType {
-    fn to_policy(&self, limit: u64) -> Policy {
+    fn as_policy(&self, limit: u64) -> Policy {
         match self {
             PolicyType::AmlThreshold => Policy::aml_threshold(limit),
             PolicyType::OrderTotalCap => Policy::order_total_cap(limit),
@@ -113,6 +115,35 @@ enum Commands {
         /// Output as JSON with metadata
         #[arg(long)]
         json: bool,
+    },
+
+    /// Generate a compliance proof for an event and submit it to the sequencer.
+    ///
+    /// Authentication: set the STATESET_API_KEY environment variable.
+    ProveSubmit {
+        /// Sequencer base URL (e.g., http://localhost:8080)
+        #[arg(long, default_value = "http://localhost:8080")]
+        sequencer_url: String,
+
+        /// Event ID to prove about
+        #[arg(long)]
+        event_id: Uuid,
+
+        /// The amount to prove (must satisfy policy constraint)
+        #[arg(short, long)]
+        amount: u64,
+
+        /// The policy limit (threshold for aml.threshold, cap for order_total.cap)
+        #[arg(short, long)]
+        limit: u64,
+
+        /// Policy type
+        #[arg(short, long, value_enum, default_value = "aml.threshold")]
+        policy: PolicyType,
+
+        /// Verify the stored proof after submission
+        #[arg(long)]
+        verify: bool,
     },
 
     /// Verify a compliance proof
@@ -237,6 +268,22 @@ fn main() -> Result<()> {
             json,
         } => prove(amount, limit, policy, inputs, output, json),
 
+        Commands::ProveSubmit {
+            sequencer_url,
+            event_id,
+            amount,
+            limit,
+            policy,
+            verify,
+        } => prove_submit(
+            sequencer_url,
+            event_id,
+            amount,
+            limit,
+            policy,
+            verify,
+        ),
+
         Commands::Verify {
             proof,
             inputs,
@@ -291,7 +338,7 @@ fn prove(
     output_path: Option<PathBuf>,
     json_output: bool,
 ) -> Result<()> {
-    let policy = policy_type.to_policy(limit);
+    let policy = policy_type.as_policy(limit);
 
     // Validate inputs
     if !policy.validate_amount(amount) {
@@ -347,6 +394,7 @@ fn prove(
             "proof_hash": proof.proof_hash,
             "metadata": proof.metadata,
             "witness_commitment": proof.witness_commitment,
+            "witness_commitment_hex": proof.witness_commitment_hex,
             "policy": {
                 "type": policy_type.policy_id(),
                 "limit": limit,
@@ -378,6 +426,108 @@ fn prove(
     Ok(())
 }
 
+fn prove_submit(
+    sequencer_url: String,
+    event_id: Uuid,
+    amount: u64,
+    limit: u64,
+    policy_type: PolicyType,
+    verify_after: bool,
+) -> Result<()> {
+    let policy = policy_type.as_policy(limit);
+    if !policy.validate_amount(amount) {
+        anyhow::bail!(
+            "Amount ({}) must be {} limit ({}) for {} policy",
+            amount,
+            policy_type.comparison_desc(),
+            limit,
+            policy_type.policy_id()
+        );
+    }
+
+    let policy_id = policy_type.policy_id();
+    let policy_params = policy_type.create_policy_params(limit).to_json_value();
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to create tokio runtime")?;
+
+    rt.block_on(async move {
+        let api_key = std::env::var("STATESET_API_KEY").context(
+            "STATESET_API_KEY environment variable is required.\n\
+             Set it with: export STATESET_API_KEY=your-api-key",
+        )?;
+        let client = SequencerClient::try_new(&sequencer_url, &api_key)
+            .map_err(|e| anyhow::anyhow!("failed to create sequencer client: {e}"))?;
+
+        eprintln!("Fetching canonical public inputs from sequencer...");
+        eprintln!("  URL: {}", sequencer_url);
+        eprintln!("  Event ID: {}", event_id);
+        eprintln!("  Policy: {}", policy_id);
+
+        let public_inputs = client
+            .get_public_inputs_validated_with_params(event_id, policy_id, policy_params.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to fetch public inputs: {e}"))?;
+
+        eprintln!("Generating proof...");
+        eprintln!(
+            "  Amount: {} {} {}",
+            amount,
+            policy_type.comparison_desc(),
+            limit
+        );
+
+        let witness = ComplianceWitness::new(amount, public_inputs);
+        let prover = ComplianceProver::with_policy(policy);
+        let proof = prover
+            .prove(&witness)
+            .map_err(|e| anyhow::anyhow!("proof generation failed: {e:?}"))?;
+
+        eprintln!("Submitting proof to sequencer...");
+        let submission = ProofSubmission {
+            event_id,
+            policy_id: policy_id.to_string(),
+            policy_params,
+            proof_bytes: proof.proof_bytes,
+            witness_commitment: proof.witness_commitment,
+        };
+
+        let resp = client
+            .submit_proof(submission)
+            .await
+            .map_err(|e| anyhow::anyhow!("proof submission failed: {e}"))?;
+
+        println!("Submitted proof_id={}", resp.proof_id);
+        println!("  proof_hash={}", resp.proof_hash);
+        println!("  policy_hash={}", resp.policy_hash);
+        if let Some(hex) = resp.witness_commitment_hex.as_deref() {
+            println!("  witness_commitment_hex={}", hex);
+        }
+
+        if verify_after {
+            eprintln!("Verifying stored proof via sequencer...");
+            let verify = client
+                .verify_proof(resp.proof_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("proof verify failed: {e}"))?;
+            println!("Verified valid={}", verify.valid);
+            if let Some(stark_valid) = verify.stark_valid {
+                println!("  stark_valid={}", stark_valid);
+            }
+            if let Some(err) = verify.stark_error.as_deref() {
+                println!("  stark_error={}", err);
+            }
+            if let Some(ms) = verify.stark_verification_time_ms {
+                println!("  stark_verification_time_ms={}", ms);
+            }
+        }
+
+        Ok(())
+    })
+}
+
 fn verify(
     proof_path: PathBuf,
     inputs_path: PathBuf,
@@ -406,30 +556,43 @@ fn verify(
         let bytes = base64::engine::general_purpose::STANDARD.decode(b64)?;
 
         // Load witness commitment from JSON
-        let commitment = if let Some(wc) = json.get("witness_commitment") {
-            let arr = wc
-                .as_array()
-                .ok_or_else(|| anyhow::anyhow!("witness_commitment must be an array"))?;
+        let parse_witness_commitment_value = |value: &serde_json::Value| -> Result<[u64; 4]> {
+            let arr = value.as_array().ok_or_else(|| {
+                anyhow::anyhow!("witness_commitment must be an array of numbers or decimal strings")
+            })?;
+
             if arr.len() != 4 {
                 anyhow::bail!("witness_commitment must have exactly 4 elements");
             }
-            [
-                arr[0]
-                    .as_u64()
-                    .ok_or_else(|| anyhow::anyhow!("Invalid commitment element"))?,
-                arr[1]
-                    .as_u64()
-                    .ok_or_else(|| anyhow::anyhow!("Invalid commitment element"))?,
-                arr[2]
-                    .as_u64()
-                    .ok_or_else(|| anyhow::anyhow!("Invalid commitment element"))?,
-                arr[3]
-                    .as_u64()
-                    .ok_or_else(|| anyhow::anyhow!("Invalid commitment element"))?,
-            ]
-        } else {
-            anyhow::bail!("Missing witness_commitment in proof JSON");
+
+            let mut commitment = [0u64; 4];
+            for (idx, element) in arr.iter().enumerate() {
+                commitment[idx] = match element {
+                    serde_json::Value::String(s) => s.parse::<u64>().map_err(|_| {
+                        anyhow::anyhow!("Invalid witness_commitment[{}] element", idx)
+                    })?,
+                    serde_json::Value::Number(n) => n.as_u64().ok_or_else(|| {
+                        anyhow::anyhow!("Invalid witness_commitment[{}] element", idx)
+                    })?,
+                    _ => {
+                        anyhow::bail!("Invalid witness_commitment[{}] element", idx);
+                    }
+                };
+            }
+
+            Ok(commitment)
         };
+
+        let commitment = if let Some(wc_hex) = json.get("witness_commitment_hex").and_then(|v| v.as_str()) {
+                witness_commitment_hex_to_u64(wc_hex)
+                    .map_err(|e| anyhow::anyhow!("Invalid witness_commitment_hex: {e}"))?
+            } else if let Some(wc) = json.get("witness_commitment") {
+                parse_witness_commitment_value(wc)?
+            } else if let Some(wc) = json.get("witnessCommitment") {
+                parse_witness_commitment_value(wc)?
+            } else {
+                anyhow::bail!("Missing witness_commitment or witness_commitment_hex in proof JSON");
+            };
 
         (bytes, commitment)
     } else {
@@ -445,7 +608,7 @@ fn verify(
     let start = Instant::now();
 
     // Verify with explicit policy parameters (verifier will check they match public inputs)
-    let policy = policy_type.to_policy(limit);
+    let policy = policy_type.as_policy(limit);
     let result =
         verify_compliance_proof(&proof_bytes, &public_inputs, &policy, &witness_commitment)
             .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
@@ -590,6 +753,13 @@ fn generate_random_public_inputs(
 fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType) -> Result<()> {
     use std::time::Duration;
 
+    if count == 0 {
+        anyhow::bail!("count must be greater than 0");
+    }
+    if count > u32::MAX as usize {
+        anyhow::bail!("count must be at most {}", u32::MAX);
+    }
+
     println!("VES STARK Benchmark");
     println!("==================");
     println!("  Policy: {}", policy_type.policy_id());
@@ -598,16 +768,29 @@ fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType)
     println!("  Limit: {}", limit);
     println!();
 
-    let policy = policy_type.to_policy(limit);
+    let policy = policy_type.as_policy(limit);
     let mut prove_times: Vec<Duration> = Vec::with_capacity(count);
     let mut verify_times: Vec<Duration> = Vec::with_capacity(count);
     let mut proof_sizes: Vec<usize> = Vec::with_capacity(count);
 
     for i in 0..count {
         // Generate random amount that satisfies the policy
-        let amount = match policy_type {
-            PolicyType::AmlThreshold => (rand_u64() % max_amount.min(limit - 1)).max(1),
-            PolicyType::OrderTotalCap => (rand_u64() % max_amount.min(limit + 1)).max(1),
+    let amount = match policy_type {
+        PolicyType::AmlThreshold => {
+            if limit == 0 {
+                anyhow::bail!("Aml threshold limit must be greater than 0");
+            }
+            let bound = max_amount.min(limit);
+            rand_u64() % bound
+        },
+        PolicyType::OrderTotalCap => {
+            let bound = max_amount.min(limit.saturating_add(1));
+                if bound == 0 {
+                    0
+                } else {
+                    rand_u64() % bound
+                }
+            },
         };
 
         // Generate inputs
@@ -654,12 +837,24 @@ fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType)
     let avg_verify = verify_times.iter().sum::<Duration>() / count as u32;
     let avg_size = proof_sizes.iter().sum::<usize>() / count;
 
-    let min_prove = prove_times.iter().min().unwrap();
-    let max_prove = prove_times.iter().max().unwrap();
-    let min_verify = verify_times.iter().min().unwrap();
-    let max_verify = verify_times.iter().max().unwrap();
-    let min_size = *proof_sizes.iter().min().unwrap();
-    let max_size = *proof_sizes.iter().max().unwrap();
+    let Some(min_prove) = prove_times.iter().min() else {
+        anyhow::bail!("No proof timing data was collected")
+    };
+    let Some(max_prove) = prove_times.iter().max() else {
+        anyhow::bail!("No proof timing data was collected")
+    };
+    let Some(min_verify) = verify_times.iter().min() else {
+        anyhow::bail!("No verification timing data was collected")
+    };
+    let Some(max_verify) = verify_times.iter().max() else {
+        anyhow::bail!("No verification timing data was collected")
+    };
+    let Some(min_size) = proof_sizes.iter().min() else {
+        anyhow::bail!("No proof size data was collected")
+    };
+    let Some(max_size) = proof_sizes.iter().max() else {
+        anyhow::bail!("No proof size data was collected")
+    };
 
     println!("Results:");
     println!("--------");
@@ -685,19 +880,10 @@ fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType)
     Ok(())
 }
 
-// Simple random number generator (not cryptographically secure, just for benchmarks)
+/// Generate a random u64 for benchmarks and test data generation.
 fn rand_u64() -> u64 {
-    use std::time::SystemTime;
-    let seed = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64;
-    // Simple xorshift
-    let mut x = seed ^ 0x5DEECE66D;
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    x
+    use rand::Rng;
+    rand::thread_rng().gen()
 }
 
 // ============================================================================
@@ -715,6 +901,13 @@ fn ensure_experimental_batch_enabled() -> Result<()> {
 
 fn batch_prove(num_events: usize, limit: u64, output_path: Option<PathBuf>) -> Result<()> {
     ensure_experimental_batch_enabled()?;
+
+    if num_events == 0 {
+        anyhow::bail!("num_events must be at least 1");
+    }
+    if limit == 0 {
+        anyhow::bail!("limit must be greater than 0");
+    }
 
     println!("Batch Proof Generation");
     println!("======================");
@@ -752,9 +945,11 @@ fn batch_prove(num_events: usize, limit: u64, output_path: Option<PathBuf>) -> R
 
     println!("Generating {} events...", num_events);
     for i in 0..num_events {
-        let amount = (rand_u64() % (limit - 1)).max(1);
+        let amount = rand_u64() % limit;
         let inputs = generate_batch_public_inputs(limit, i, tenant_id, store_id)?;
-        builder = builder.add_event(amount, inputs);
+        builder = builder
+            .add_event(amount, inputs)
+            .map_err(|e| anyhow::anyhow!("Failed to add event {i}: {e}"))?;
         print!(".");
         io::stdout().flush()?;
     }
@@ -796,16 +991,23 @@ fn batch_prove(num_events: usize, limit: u64, output_path: Option<PathBuf>) -> R
     println!("  Prev root: {:?}", proof.prev_state_root);
     println!("  New root:  {:?}", proof.new_state_root);
 
-    // Output proof
-    let output = serde_json::json!({
-        "proof_b64": base64::engine::general_purpose::STANDARD.encode(&proof.proof_bytes),
-        "proof_hash": proof.proof_hash,
-        "prev_state_root": proof.prev_state_root,
-        "new_state_root": proof.new_state_root,
-        "metadata": proof.metadata,
-    });
-
-    let json_str = serde_json::to_string_pretty(&output)?;
+    let public_inputs = BatchPublicInputs::new(
+        array_to_felts(&proof.prev_state_root),
+        array_to_felts(&proof.new_state_root),
+        witness.batch_id_felts(),
+        witness.tenant_id_felts(),
+        witness.store_id_felts(),
+        witness.metadata.sequence_start,
+        witness.metadata.sequence_end,
+        witness.num_events(),
+        witness.all_compliant(),
+        policy_hash,
+        limit,
+    );
+    let serializable = SerializableBatchProof::new(proof.clone(), public_inputs);
+    let json_str = serializable
+        .to_json()
+        .map_err(|e| anyhow::anyhow!("Failed to serialize batch proof: {:?}", e))?;
 
     if let Some(path) = output_path {
         fs::write(&path, &json_str)
@@ -832,25 +1034,19 @@ fn batch_verify(proof_path: PathBuf) -> Result<()> {
     let proof_str = fs::read_to_string(&proof_path)
         .with_context(|| format!("Failed to read proof file: {}", proof_path.display()))?;
 
-    let json: serde_json::Value = serde_json::from_str(&proof_str)?;
-
-    let proof_b64 = json["proof_b64"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("Missing proof_b64 field"))?;
-    let proof_bytes = base64::engine::general_purpose::STANDARD.decode(proof_b64)?;
-
-    let proof_hash = json["proof_hash"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("Missing proof_hash field"))?;
-
-    let prev_state_root: [u64; 4] = serde_json::from_value(json["prev_state_root"].clone())?;
-    let new_state_root: [u64; 4] = serde_json::from_value(json["new_state_root"].clone())?;
+    let batch_file: SerializableBatchProof = serde_json::from_str(&proof_str).map_err(|e| {
+        anyhow::anyhow!("Expected serialized batch proof JSON with `public_inputs`: {}", e)
+    })?;
+    let pub_inputs = batch_file.to_batch_public_inputs();
+    let proof = batch_file.proof;
+    let proof_bytes = proof.proof_bytes;
+    let proof_hash = proof.proof_hash.clone();
 
     println!("Loaded proof:");
     println!("  Size: {} bytes", proof_bytes.len());
     println!("  Hash: {}...", &proof_hash[..16]);
-    println!("  Prev root: {:?}", prev_state_root);
-    println!("  New root:  {:?}", new_state_root);
+    println!("  Prev root: {:?}", proof.prev_state_root);
+    println!("  New root:  {:?}", proof.new_state_root);
     println!();
 
     // Verify proof
@@ -859,41 +1055,27 @@ fn batch_verify(proof_path: PathBuf) -> Result<()> {
 
     let verifier = BatchVerifier::new();
 
-    // For now, construct public inputs from the JSON metadata
-    // In production, this would come from the chain state
-    let metadata = &json["metadata"];
-    let num_events = metadata["num_events"].as_u64().unwrap_or(0) as usize;
-    let all_compliant = metadata["all_compliant"].as_bool().unwrap_or(false);
-
-    // Create public inputs for verification
-    let pub_inputs = ves_stark_batch::BatchPublicInputs::new(
-        array_to_felts(&prev_state_root),
-        array_to_felts(&new_state_root),
-        [Felt::new(0); 4], // batch_id placeholder
-        [Felt::new(0); 4], // tenant_id placeholder
-        [Felt::new(0); 4], // store_id placeholder
-        0,
-        (num_events - 1) as u64,
-        num_events,
-        all_compliant,
-        [Felt::new(0); 8], // policy_hash placeholder
-        10000,             // policy_limit placeholder
-    );
-
     let result = verifier
         .verify(&proof_bytes, &pub_inputs)
         .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
 
     let elapsed = start.elapsed();
 
+    let expected_hash = ves_stark_batch::BatchProof::compute_hash(&proof_bytes).to_hex();
+    if expected_hash != proof_hash {
+        println!("  Warning: embedded proof hash does not match computed hash");
+        println!("    embedded: {}", proof_hash);
+        println!("    computed: {}", expected_hash);
+    }
+
     if result.valid {
         println!();
         println!("Batch Proof VALID!");
         println!("  Verification time: {:?}", elapsed);
         println!(
-            "  State transition verified: {} -> {}",
-            format!("{:?}", prev_state_root),
-            format!("{:?}", new_state_root)
+            "  State transition verified: {:?} -> {:?}",
+            proof.prev_state_root,
+            proof.new_state_root
         );
         Ok(())
     } else {
@@ -951,6 +1133,18 @@ fn run_sequencer(
 ) -> Result<()> {
     ensure_experimental_batch_enabled()?;
 
+    if limit == 0 {
+        anyhow::bail!("limit must be greater than 0");
+    }
+    if batch_size == 0 {
+        anyhow::bail!("batch_size must be greater than 0");
+    }
+    if include_violations && limit == u64::MAX {
+        anyhow::bail!(
+            "cannot generate violations with limit {limit} because no larger amount fits in u64"
+        );
+    }
+
     println!();
     println!("========================================");
     println!("  VES STARK Sequencer Simulation");
@@ -995,12 +1189,16 @@ fn run_sequencer(
     while total_events_processed < num_events {
         batch_num += 1;
         let events_in_batch = (num_events - total_events_processed).min(batch_size);
+        let batch_last_index = total_events_processed
+            .checked_add(events_in_batch)
+            .and_then(|v| v.checked_sub(1))
+            .ok_or_else(|| anyhow::anyhow!("event index overflow while batching"))?;
 
         println!("--- Batch {} ---", batch_num);
         println!(
             "  Events: {} - {}",
             total_events_processed,
-            total_events_processed + events_in_batch - 1
+            batch_last_index
         );
 
         // Create metadata for this batch
@@ -1009,13 +1207,13 @@ fn run_sequencer(
             tenant_id,
             store_id,
             total_events_processed as u64,
-            (total_events_processed + events_in_batch - 1) as u64,
+            batch_last_index as u64,
         );
 
         // Build witness
         let mut builder = BatchWitnessBuilder::new()
             .metadata(metadata.clone())
-            .prev_state_root(current_state_root.clone())
+            .prev_state_root(current_state_root)
             .policy_hash(policy_hash)
             .policy_limit(limit);
 
@@ -1027,15 +1225,18 @@ fn run_sequencer(
 
             // Decide if this event should be a violation
             let is_violation = include_violations && (seq % 5 == 4); // Every 5th event
-
             let amount = if is_violation {
-                limit + (rand_u64() % 1000) + 1 // Over limit
+                limit
+                    .saturating_add(1)
+                    .saturating_add(rand_u64() % 1000) // Over limit
             } else {
-                (rand_u64() % (limit - 1)).max(1) // Under limit
+                rand_u64() % limit // Under limit
             };
 
             let inputs = generate_batch_public_inputs(limit, seq, tenant_id, store_id)?;
-            builder = builder.add_event(amount, inputs);
+            builder = builder
+                .add_event(amount, inputs)
+                .map_err(|e| anyhow::anyhow!("Failed to add event {seq}: {e}"))?;
 
             if amount < limit {
                 compliant_count += 1;
@@ -1077,7 +1278,7 @@ fn run_sequencer(
         io::stdout().flush()?;
 
         let verifier = BatchVerifier::new();
-        let pub_inputs = ves_stark_batch::BatchPublicInputs::new(
+        let pub_inputs = BatchPublicInputs::new(
             current_state_root.root,
             new_state_root.root,
             witness.batch_id_felts(),
@@ -1113,15 +1314,8 @@ fn run_sequencer(
         // Save proof if output directory specified
         if let Some(ref dir) = output_dir {
             let proof_file = dir.join(format!("batch_{:04}.json", batch_num));
-            let output = serde_json::json!({
-                "batch_num": batch_num,
-                "proof_b64": base64::engine::general_purpose::STANDARD.encode(&proof.proof_bytes),
-                "proof_hash": proof.proof_hash,
-                "prev_state_root": proof.prev_state_root,
-                "new_state_root": proof.new_state_root,
-                "metadata": proof.metadata,
-            });
-            fs::write(&proof_file, serde_json::to_string_pretty(&output)?)?;
+            let serialized = SerializableBatchProof::new(proof.clone(), pub_inputs.clone());
+            fs::write(&proof_file, serialized.to_json()?)?;
             println!("  Saved: {}", proof_file.display());
         }
 
