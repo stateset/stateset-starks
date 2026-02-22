@@ -88,7 +88,14 @@ impl EventMerkleTree {
         }
 
         // Pad to power of 2 if needed
-        let n = leaf_hashes.len().next_power_of_two();
+        let n = leaf_hashes
+            .len()
+            .checked_next_power_of_two()
+            .ok_or_else(|| {
+                BatchError::MerkleTreeError(
+                    "Cannot construct a power-of-two tree for this number of leaves".to_string(),
+                )
+            })?;
         let mut padded_leaves = leaf_hashes.clone();
         while padded_leaves.len() < n {
             // Pad with zero hashes

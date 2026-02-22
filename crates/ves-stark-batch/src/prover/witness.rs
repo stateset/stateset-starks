@@ -392,6 +392,31 @@ pub struct BatchWitnessBuilder {
 }
 
 impl BatchWitnessBuilder {
+    fn require_policy_limit(&self) -> Result<u64, BatchError> {
+        self.policy_limit.ok_or_else(|| {
+            BatchError::InvalidWitness("Policy limit must be set before adding events".to_string())
+        })
+    }
+
+    fn ensure_additional_events_fit(&self, additional: usize) -> Result<(), BatchError> {
+        let projected_len = self
+            .events
+            .len()
+            .checked_add(additional)
+            .ok_or_else(|| {
+                BatchError::InvalidWitness("Batch size overflow while adding events".to_string())
+            })?;
+
+        if projected_len > MAX_BATCH_SIZE {
+            return Err(BatchError::BatchTooLarge {
+                size: projected_len,
+                max: MAX_BATCH_SIZE,
+            });
+        }
+
+        Ok(())
+    }
+
     /// Create a new batch witness builder
     pub fn new() -> Self {
         Self {
@@ -427,20 +452,28 @@ impl BatchWitnessBuilder {
         self
     }
 
-    /// Add an event to the batch
+    /// Add an event to the batch.
+    ///
+    /// Fails if the builder does not yet have `policy_limit` configured or if
+    /// adding the event would exceed `MAX_BATCH_SIZE`.
     pub fn add_event(mut self, amount: u64, public_inputs: CompliancePublicInputs) -> Result<Self, BatchError> {
-        let threshold = self.policy_limit.unwrap_or(u64::MAX);
+        let threshold = self.require_policy_limit()?;
+        self.ensure_additional_events_fit(1)?;
         let event = BatchEventWitness::new(self.events.len(), amount, public_inputs, threshold)?;
         self.events.push(event);
         Ok(self)
     }
 
-    /// Add multiple events to the batch
+    /// Add multiple events to the batch.
+    ///
+    /// Fails if the builder does not yet have `policy_limit` configured or if
+    /// adding all events would exceed `MAX_BATCH_SIZE`.
     pub fn add_events(
         mut self,
         events: Vec<(u64, CompliancePublicInputs)>,
     ) -> Result<Self, BatchError> {
-        let threshold = self.policy_limit.unwrap_or(u64::MAX);
+        let threshold = self.require_policy_limit()?;
+        self.ensure_additional_events_fit(events.len())?;
         for (amount, public_inputs) in events {
             let event = BatchEventWitness::new(self.events.len(), amount, public_inputs, threshold)?;
             self.events.push(event);
@@ -634,6 +667,48 @@ mod tests {
 
         assert_eq!(witness.num_events(), 10);
         assert!(witness.all_compliant());
+    }
+
+    #[test]
+    fn test_batch_witness_builder_requires_policy_limit() {
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+
+        let result = BatchWitnessBuilder::new()
+            .add_event(
+                1_000,
+                sample_public_inputs(10_000u64, 1_000, 0, tenant_id, store_id),
+            )
+            .unwrap_err();
+
+        assert!(matches!(result, BatchError::InvalidWitness(_)));
+    }
+
+    #[test]
+    fn test_batch_witness_builder_rejects_overflow_on_add_event() {
+        let threshold = 10_000u64;
+        let policy_hash = sample_policy_hash(threshold);
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let mut builder = BatchWitnessBuilder::new()
+            .policy_hash(policy_hash)
+            .policy_limit(threshold);
+
+        for i in 0..MAX_BATCH_SIZE {
+            let amount = 1_000u64;
+            builder = builder
+                .add_event(
+                    amount,
+                    sample_public_inputs(threshold, amount, i, tenant_id, store_id),
+                )
+                .unwrap();
+        }
+
+        let result = builder.add_event(
+            1_000,
+            sample_public_inputs(threshold, 1_000, MAX_BATCH_SIZE, tenant_id, store_id),
+        );
+        assert!(matches!(result, Err(BatchError::BatchTooLarge { .. })));
     }
 
     #[test]
