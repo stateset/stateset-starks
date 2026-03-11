@@ -4,7 +4,7 @@ STARK proving system for VES (Verifiable Event Sync) compliance proofs.
 
 ## Overview
 
-`stateset-stark` provides cryptographic proofs that VES events satisfy compliance policies without revealing the underlying data. Built on [Winterfell](https://github.com/facebook/winterfell), it uses STARKs (Scalable Transparent ARguments of Knowledge) for transparent, post-quantum secure proofs.
+`stateset-stark` provides cryptographic proofs that a private amount witness satisfies compliance policies without revealing the amount itself. Built on [Winterfell](https://github.com/facebook/winterfell), it uses STARKs (Scalable Transparent ARguments of Knowledge) for transparent, post-quantum secure proofs.
 
 ## Phase 1: Per-Event Compliance Proofs
 
@@ -13,7 +13,7 @@ Phase 1 implements per-event compliance proofs for:
 - **Policy**: Proves that a private order amount is strictly less than a threshold
   - `aml.threshold`: amount < threshold (strict)
   - `order_total.cap`: amount <= cap (non-strict)
-- **Use Case**: AML compliance (e.g., "order total < $10,000") without data exposure
+- **Use Case**: AML or order-cap compliance for an amount witness derived by a trusted VES pipeline
 - **Integration**: Works with `stateset-sequencer` proof registry
 
 Note: The current AIR does **not** prove that the private `amount` equals a value decrypted or

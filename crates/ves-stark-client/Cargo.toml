@@ -1,6 +1,6 @@
 [package]
 name = "ves-stark-client"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 rust-version = "1.90"
 description = "HTTP client for submitting VES STARK proofs to the StateSet sequencer"

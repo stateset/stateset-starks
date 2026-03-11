@@ -303,7 +303,7 @@ impl VerificationResult {
     }
 }
 
-/// Generate a STARK compliance proof
+/// Generate a STARK compliance proof for the provided amount witness.
 ///
 /// Args:
 ///     amount: The amount to prove compliance for (must satisfy policy constraint)
@@ -316,6 +316,11 @@ impl VerificationResult {
 /// Raises:
 ///     ValueError: If inputs are invalid
 ///     RuntimeError: If proof generation fails
+///
+/// Note:
+///     This proves a statement about the supplied ``amount`` witness. Binding that
+///     witness back to encrypted payload contents is the responsibility of the
+///     surrounding pipeline, not this library.
 ///
 /// Example:
 ///     >>> policy = Policy.aml_threshold(10000)

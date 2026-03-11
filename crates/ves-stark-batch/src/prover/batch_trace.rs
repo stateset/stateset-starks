@@ -176,7 +176,10 @@ impl BatchTraceBuilder {
         let batch_id = self.witness.batch_id_felts();
         let tenant_id = self.witness.tenant_id_felts();
         let store_id = self.witness.store_id_felts();
-        let metadata_hash = self.witness.metadata.to_rescue_hash();
+        let metadata_hash = self
+            .witness
+            .metadata
+            .to_chained_rescue_hash(&self.witness.prev_state_root.root);
 
         // Build event Merkle tree and compute state roots
         let event_leaves: Vec<_> = self
@@ -187,7 +190,11 @@ impl BatchTraceBuilder {
             .collect::<Result<Vec<_>, _>>()?;
         let event_tree = EventMerkleTree::from_leaves(event_leaves.clone())?;
         let prev_state_root = &self.witness.prev_state_root;
-        let new_state_root = BatchStateRoot::compute(&event_tree, &self.witness.metadata);
+        let new_state_root = BatchStateRoot::compute(
+            &self.witness.prev_state_root,
+            &event_tree,
+            &self.witness.metadata,
+        );
 
         // Process events in parallel
         let event_traces: Vec<_> = self
@@ -1097,6 +1104,7 @@ impl BatchTraceBuilder {
     ///
     /// The finalization phase represents:
     ///   new_state_root = Rescue(event_tree_root || metadata_hash)
+    /// where `metadata_hash = Rescue(prev_state_root || batch_metadata)`.
     #[allow(clippy::too_many_arguments)]
     fn fill_finalize_trace(
         &self,

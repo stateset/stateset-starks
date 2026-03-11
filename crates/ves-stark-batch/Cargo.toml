@@ -1,6 +1,6 @@
 [package]
 name = "ves-stark-batch"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 rust-version = "1.90"
 description = "Batch state transition proofs for VES compliance"

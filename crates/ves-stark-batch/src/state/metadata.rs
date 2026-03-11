@@ -98,31 +98,85 @@ impl BatchMetadata {
         ]
     }
 
-    /// Compute Rescue hash of metadata for state root computation
+    /// Compute a standalone Rescue hash of the batch metadata fields.
+    ///
+    /// This does not include the previous state root. Use
+    /// [`Self::to_chained_rescue_hash`] when deriving a chained batch state root.
     pub fn to_rescue_hash(&self) -> [Felt; 4] {
-        let batch_id_felts = Self::uuid_to_felts(&self.batch_id);
-        let tenant_id_felts = Self::uuid_to_felts(&self.tenant_id);
-        let store_id_felts = Self::uuid_to_felts(&self.store_id);
-
-        // Build input: batch_id (4) + tenant_id (4) + store_id (4) + sequence (2) + timestamp (1) = 15 elements
-        let input: Vec<Felt> = vec![
-            batch_id_felts[0],
-            batch_id_felts[1],
-            batch_id_felts[2],
-            batch_id_felts[3],
-            tenant_id_felts[0],
-            tenant_id_felts[1],
-            tenant_id_felts[2],
-            tenant_id_felts[3],
-            store_id_felts[0],
-            store_id_felts[1],
-            store_id_felts[2],
-            store_id_felts[3],
+        Self::standalone_rescue_hash_from_parts(
+            &self.batch_id_felts(),
+            &self.tenant_id_felts(),
+            &self.store_id_felts(),
             felt_from_u64(self.sequence_start),
             felt_from_u64(self.sequence_end),
             felt_from_u64(self.timestamp),
+        )
+    }
+
+    /// Compute the metadata hash used for chained batch state roots.
+    ///
+    /// The previous state root is folded into this hash so the resulting
+    /// `new_state_root` is bound to the claimed predecessor.
+    pub fn to_chained_rescue_hash(&self, prev_state_root: &[Felt; 4]) -> [Felt; 4] {
+        Self::chained_rescue_hash_from_parts(
+            prev_state_root,
+            &self.batch_id_felts(),
+            &self.tenant_id_felts(),
+            &self.store_id_felts(),
+            felt_from_u64(self.sequence_start),
+            felt_from_u64(self.sequence_end),
+            felt_from_u64(self.timestamp),
+        )
+    }
+
+    /// Compute the standalone metadata hash from already-encoded field elements.
+    pub fn standalone_rescue_hash_from_parts(
+        batch_id: &[Felt; 4],
+        tenant_id: &[Felt; 4],
+        store_id: &[Felt; 4],
+        sequence_start: Felt,
+        sequence_end: Felt,
+        timestamp: Felt,
+    ) -> [Felt; 4] {
+        let input: Vec<Felt> = vec![
+            batch_id[0],
+            batch_id[1],
+            batch_id[2],
+            batch_id[3],
+            tenant_id[0],
+            tenant_id[1],
+            tenant_id[2],
+            tenant_id[3],
+            store_id[0],
+            store_id[1],
+            store_id[2],
+            store_id[3],
+            sequence_start,
+            sequence_end,
+            timestamp,
         ];
 
+        rescue_hash(&input)
+    }
+
+    /// Compute the chained metadata hash from already-encoded field elements.
+    pub fn chained_rescue_hash_from_parts(
+        prev_state_root: &[Felt; 4],
+        batch_id: &[Felt; 4],
+        tenant_id: &[Felt; 4],
+        store_id: &[Felt; 4],
+        sequence_start: Felt,
+        sequence_end: Felt,
+        timestamp: Felt,
+    ) -> [Felt; 4] {
+        let mut input = Vec::with_capacity(19);
+        input.extend_from_slice(prev_state_root);
+        input.extend_from_slice(batch_id);
+        input.extend_from_slice(tenant_id);
+        input.extend_from_slice(store_id);
+        input.push(sequence_start);
+        input.push(sequence_end);
+        input.push(timestamp);
         rescue_hash(&input)
     }
 
@@ -188,6 +242,23 @@ mod tests {
         let hash2 = metadata.to_rescue_hash();
 
         assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_chained_metadata_hash_depends_on_prev_state_root() {
+        let metadata = BatchMetadata::new(
+            Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap(),
+            Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap(),
+            Uuid::parse_str("6ba7b811-9dad-11d1-80b4-00c04fd430c8").unwrap(),
+            0,
+            15,
+            1234567890,
+        );
+
+        let hash1 = metadata.to_chained_rescue_hash(&[felt_from_u64(1); 4]);
+        let hash2 = metadata.to_chained_rescue_hash(&[felt_from_u64(2); 4]);
+
+        assert_ne!(hash1, hash2);
     }
 
     #[test]

@@ -363,7 +363,11 @@ impl BatchWitness {
     /// Compute the new state root for this batch
     pub fn compute_new_state_root(&self) -> BatchResult<BatchStateRoot> {
         let event_tree = self.build_event_tree()?;
-        Ok(BatchStateRoot::compute(&event_tree, &self.metadata))
+        Ok(BatchStateRoot::compute(
+            &self.prev_state_root,
+            &event_tree,
+            &self.metadata,
+        ))
     }
 
     /// Compute the ordered accumulator over canonical per-event public-input hashes.

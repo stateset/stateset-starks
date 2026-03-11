@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-03-11
+
+### Changed
+- Batch state roots now bind the previous state root into the metadata hash, preventing valid batches from being re-anchored onto arbitrary history.
+- Limit-based client helpers now support both `aml.threshold` and `order_total.cap` instead of serializing AML parameters unconditionally.
+- Workspace, npm, Python, and Rust crate release metadata are aligned on `0.2.1`.
+
+### Fixed
+- Documentation now accurately distinguishes proving a private amount witness from proving payload-to-amount linkage, which remains an application-layer responsibility.
+- Soundness and threat-model docs now match the enforced minimum blowup factor.
+
 ### Added
 - `scripts/rescue_constants.py`, `docs/rescue_constants.json`, and `docs/RESCUE_CONSTANTS.md` to export and audit frozen Rescue-Prime constants (digest pinned in tests/docs).
 - `rust-toolchain.toml` and workspace-wide `rust-version` (MSRV) pinning to make CI/builds reproducible.

@@ -140,13 +140,17 @@ fn convert_public_inputs(js: &JsCompliancePublicInputs) -> Result<CompliancePubl
     })
 }
 
-/// Generate a STARK compliance proof
+/// Generate a STARK compliance proof for the provided amount witness.
 ///
 /// @param amount - The amount to prove compliance for (must be less than policy limit)
 /// @param publicInputs - Public inputs including event metadata and policy info
 /// @param policyType - Policy type: "aml.threshold" or "order_total.cap"
 /// @param policyLimit - The policy limit (threshold or cap value)
 /// @returns ComplianceProof containing proof bytes and metadata
+///
+/// Note: this proves a statement about the supplied `amount` witness. Binding that
+/// witness back to encrypted payload contents is the responsibility of the
+/// surrounding pipeline, not this library.
 #[napi]
 pub fn prove(
     amount: BigInt,

@@ -204,6 +204,22 @@ impl AmlThresholdParams {
     }
 }
 
+/// Parameters for order total cap policy
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderTotalCapParams {
+    pub cap: u64,
+}
+
+impl OrderTotalCapParams {
+    pub fn new(cap: u64) -> Self {
+        Self { cap }
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({ "cap": self.cap })
+    }
+}
+
 /// Proof submission helper
 #[derive(Debug, Clone)]
 pub struct ProofSubmission {
@@ -226,6 +242,22 @@ impl ProofSubmission {
             event_id,
             policy_id: "aml.threshold".to_string(),
             policy_params: AmlThresholdParams::new(threshold).to_json(),
+            proof_bytes,
+            witness_commitment,
+        }
+    }
+
+    /// Create a new proof submission for the order_total.cap policy
+    pub fn order_total_cap(
+        event_id: Uuid,
+        cap: u64,
+        proof_bytes: Vec<u8>,
+        witness_commitment: [u64; 4],
+    ) -> Self {
+        Self {
+            event_id,
+            policy_id: "order_total.cap".to_string(),
+            policy_params: OrderTotalCapParams::new(cap).to_json(),
             proof_bytes,
             witness_commitment,
         }

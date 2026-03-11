@@ -89,13 +89,13 @@ the chosen parameters/output).
 ## Proof Options And Degrees
 
 The Rescue constraints include an `x^7` S-box, so transition constraints include degree-7/9 terms.
-This requires a minimum LDE blowup factor of 8 for soundness in Winterfell (see
+This requires a minimum LDE blowup factor of 16 for the current AIR profiles in Winterfell (see
 `ves_stark_air::options::ProofOptions`).
 
 Proof security/size/performance are parameterized by `ProofOptions`:
-- `default`: `num_queries=28`, `blowup_factor=8`, `grinding_factor=16`, `field_extension=None`,
+- `default`: `num_queries=28`, `blowup_factor=16`, `grinding_factor=16`, `field_extension=None`,
   `fri_folding_factor=8`
-- `fast`: `num_queries=20`, `blowup_factor=8`, `grinding_factor=8`, `field_extension=None`,
+- `fast`: `num_queries=20`, `blowup_factor=16`, `grinding_factor=8`, `field_extension=None`,
   `fri_folding_factor=8`
 - `secure`: `num_queries=40`, `blowup_factor=16`, `grinding_factor=20`,
   `field_extension=Quadratic`, `fri_folding_factor=8`

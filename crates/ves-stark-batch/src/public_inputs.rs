@@ -5,12 +5,12 @@
 use ves_stark_primitives::{
     compute_policy_hash, felt_from_u64, hash_to_felts,
     public_inputs::{CompliancePublicInputs, PolicyParams},
-    rescue::rescue_hash,
     Felt, FELT_ONE, FELT_ZERO,
 };
 use winter_math::ToElements;
 
 use crate::error::{BatchError, BatchResult};
+use crate::state::BatchMetadata;
 
 /// Supported batch policy kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,16 +223,20 @@ impl BatchPublicInputs {
         self.try_policy_hash().unwrap_or([FELT_ZERO; 8])
     }
 
-    /// Compute the Rescue metadata hash from public metadata fields.
+    /// Compute the chained Rescue metadata hash from public metadata fields.
+    ///
+    /// The previous state root is mixed into this hash so the batch's
+    /// `new_state_root` is bound to the claimed predecessor.
     pub fn metadata_hash(&self) -> [Felt; 4] {
-        let mut input = Vec::with_capacity(15);
-        input.extend_from_slice(&self.batch_id);
-        input.extend_from_slice(&self.tenant_id);
-        input.extend_from_slice(&self.store_id);
-        input.push(self.sequence_start);
-        input.push(self.sequence_end);
-        input.push(self.timestamp);
-        rescue_hash(&input)
+        BatchMetadata::chained_rescue_hash_from_parts(
+            &self.prev_state_root,
+            &self.batch_id,
+            &self.tenant_id,
+            &self.store_id,
+            self.sequence_start,
+            self.sequence_end,
+            self.timestamp,
+        )
     }
 
     /// Get policy limit as u64
@@ -454,6 +458,31 @@ mod tests {
             .unwrap();
         assert_eq!(inputs.try_policy_hash().unwrap(), expected_hash);
         assert_eq!(inputs.public_inputs_accumulator, [felt_from_u64(7); 8]);
+    }
+
+    #[test]
+    fn test_metadata_hash_depends_on_prev_state_root() {
+        let inputs_a = BatchPublicInputs::new(
+            [felt_from_u64(1); 4],
+            [FELT_ZERO; 4],
+            [felt_from_u64(2); 4],
+            [felt_from_u64(3); 4],
+            [felt_from_u64(4); 4],
+            0,
+            0,
+            123,
+            1,
+            true,
+            BatchPolicyKind::AmlThreshold,
+            10_000,
+            [FELT_ZERO; 8],
+        );
+        let inputs_b = BatchPublicInputs {
+            prev_state_root: [felt_from_u64(9); 4],
+            ..inputs_a.clone()
+        };
+
+        assert_ne!(inputs_a.metadata_hash(), inputs_b.metadata_hash());
     }
 
     #[test]

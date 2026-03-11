@@ -16,6 +16,16 @@ pub struct SequencerClient {
 }
 
 impl SequencerClient {
+    fn policy_params_for_limit(policy_id: &str, policy_limit: u64) -> Result<serde_json::Value> {
+        match policy_id {
+            "aml.threshold" => Ok(AmlThresholdParams::new(policy_limit).to_json()),
+            "order_total.cap" => Ok(OrderTotalCapParams::new(policy_limit).to_json()),
+            _ => Err(ClientError::InvalidPublicInputs(format!(
+                "unsupported policy id for limit-based helper: {policy_id}"
+            ))),
+        }
+    }
+
     async fn response_body_or_debug_message(response: reqwest::Response) -> String {
         response
             .text()
@@ -107,17 +117,21 @@ impl SequencerClient {
         })
     }
 
-    /// Get public inputs for an event with the specified policy
+    /// Get public inputs for a limit-based policy.
+    ///
+    /// Supported policy ids:
+    /// - `aml.threshold`
+    /// - `order_total.cap`
     pub async fn get_public_inputs(
         &self,
         event_id: Uuid,
         policy_id: &str,
-        threshold: u64,
+        policy_limit: u64,
     ) -> Result<PublicInputsResponse> {
         self.get_public_inputs_with_params(
             event_id,
             policy_id,
-            AmlThresholdParams::new(threshold).to_json(),
+            Self::policy_params_for_limit(policy_id, policy_limit)?,
         )
         .await
     }
@@ -158,16 +172,15 @@ impl SequencerClient {
         }
     }
 
-    /// Get public inputs and validate that the sequencer-provided hash matches the
-    /// canonical hash computed locally. Returns canonical typed inputs on success.
+    /// Get public inputs for a limit-based policy and validate the sequencer-provided hash.
     pub async fn get_public_inputs_validated(
         &self,
         event_id: Uuid,
         policy_id: &str,
-        threshold: u64,
+        policy_limit: u64,
     ) -> Result<ves_stark_primitives::public_inputs::CompliancePublicInputs> {
         let resp = self
-            .get_public_inputs(event_id, policy_id, threshold)
+            .get_public_inputs(event_id, policy_id, policy_limit)
             .await?;
         resp.validate_and_parse_public_inputs()
     }
@@ -313,7 +326,7 @@ impl SequencerClient {
         &self,
         event_id: Uuid,
         amount: u64,
-        threshold: u64,
+        policy_limit: u64,
         public_inputs: &ves_stark_primitives::public_inputs::CompliancePublicInputs,
     ) -> Result<SubmitProofResponse> {
         use ves_stark_prover::{ComplianceProver, ComplianceWitness};
@@ -324,12 +337,12 @@ impl SequencerClient {
                     ClientError::InvalidPublicInputs(format!("invalid public inputs policy: {e}"))
                 })?;
 
-        if policy.limit() != threshold {
+        if policy.limit() != policy_limit {
             return Err(ClientError::InvalidPublicInputs(format!(
-                "Threshold mismatch for policy {}: expected {}, got {}",
+                "Policy limit mismatch for policy {}: expected {}, got {}",
                 public_inputs.policy_id,
                 policy.limit(),
-                threshold
+                policy_limit
             )));
         }
 
@@ -389,11 +402,38 @@ mod tests {
     }
 
     #[test]
+    fn test_order_total_cap_params() {
+        let params = OrderTotalCapParams::new(10000);
+        let json = params.to_json();
+        assert_eq!(json["cap"], 10000);
+    }
+
+    #[test]
+    fn test_policy_params_for_limit_supports_cap() {
+        let json = SequencerClient::policy_params_for_limit("order_total.cap", 10000).unwrap();
+        assert_eq!(json["cap"], 10000);
+    }
+
+    #[test]
+    fn test_policy_params_for_limit_rejects_unknown_policy() {
+        assert!(SequencerClient::policy_params_for_limit("unknown.policy", 10000).is_err());
+    }
+
+    #[test]
     fn test_proof_submission() {
         let event_id = Uuid::new_v4();
         let submission =
             ProofSubmission::aml_threshold(event_id, 10000, vec![1, 2, 3, 4], [0, 0, 0, 0]);
         assert_eq!(submission.policy_id, "aml.threshold");
+        assert_eq!(submission.event_id, event_id);
+    }
+
+    #[test]
+    fn test_order_total_cap_proof_submission() {
+        let event_id = Uuid::new_v4();
+        let submission =
+            ProofSubmission::order_total_cap(event_id, 10000, vec![1, 2, 3, 4], [0, 0, 0, 0]);
+        assert_eq!(submission.policy_id, "order_total.cap");
         assert_eq!(submission.event_id, event_id);
     }
 }

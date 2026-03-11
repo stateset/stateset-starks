@@ -131,9 +131,9 @@ this requires amount-to-payload binding in the surrounding protocol (or in the A
 Proof soundness and performance are determined by `ves_stark_air::options::ProofOptions`. As of
 this repository version:
 
-- `default`: `num_queries=28`, `blowup_factor=8`, `grinding_factor=16`, `field_extension=None`,
+- `default`: `num_queries=28`, `blowup_factor=16`, `grinding_factor=16`, `field_extension=None`,
   `fri_folding_factor=8`
-- `fast`: `num_queries=20`, `blowup_factor=8`, `grinding_factor=8`, `field_extension=None`,
+- `fast`: `num_queries=20`, `blowup_factor=16`, `grinding_factor=8`, `field_extension=None`,
   `fri_folding_factor=8`
 - `secure`: `num_queries=40`, `blowup_factor=16`, `grinding_factor=20`,
   `field_extension=Quadratic`, `fri_folding_factor=8`
