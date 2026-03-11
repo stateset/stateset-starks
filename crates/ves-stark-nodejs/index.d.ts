@@ -12,7 +12,7 @@ export interface JsCompliancePublicInputs {
   /** Store ID */
   storeId: string
   /** Sequence number of the event */
-  sequenceNumber: number
+  sequenceNumber: bigint
   /** Payload kind (event type discriminator) */
   payloadKind: number
   /** SHA-256 hash of plaintext payload (hex64, lowercase) */
@@ -56,7 +56,7 @@ export interface JsVerificationResult {
   /** Policy ID that was verified */
   policyId: string
   /** Policy limit that was verified against */
-  policyLimit: number
+  policyLimit: bigint
 }
 /**
  * Generate a STARK compliance proof
@@ -67,7 +67,7 @@ export interface JsVerificationResult {
  * @param policyLimit - The policy limit (threshold or cap value)
  * @returns ComplianceProof containing proof bytes and metadata
  */
-export declare function prove(amount: number, publicInputs: JsCompliancePublicInputs, policyType: string, policyLimit: number): JsComplianceProof
+export declare function prove(amount: bigint, publicInputs: JsCompliancePublicInputs, policyType: string, policyLimit: bigint): JsComplianceProof
 /**
  * Verify a STARK compliance proof
  *
@@ -97,11 +97,11 @@ export declare function computePolicyHash(policyId: string, policyParams: any): 
  * @param threshold - The AML threshold value
  * @returns Policy parameters JSON object
  */
-export declare function createAmlThresholdParams(threshold: number): any
+export declare function createAmlThresholdParams(threshold: bigint): any
 /**
  * Create policy parameters for order total cap policy
  *
  * @param cap - The order total cap value
  * @returns Policy parameters JSON object
  */
-export declare function createOrderTotalCapParams(cap: number): any
+export declare function createOrderTotalCapParams(cap: bigint): any

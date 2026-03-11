@@ -15,6 +15,7 @@ pub struct PublicInputsRequest {
 
 /// Response containing public inputs
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PublicInputsResponse {
     pub event_id: Uuid,
     pub public_inputs: serde_json::Value,
@@ -86,6 +87,7 @@ pub struct SubmitProofRequest {
 
 /// Response after submitting a proof
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SubmitProofResponse {
     pub proof_id: Uuid,
     pub event_id: Uuid,
@@ -106,6 +108,7 @@ pub struct SubmitProofResponse {
 
 /// Proof summary (when listing proofs)
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProofSummary {
     pub proof_id: Uuid,
     pub event_id: Uuid,
@@ -126,6 +129,7 @@ pub struct ProofSummary {
 
 /// Response when listing proofs for an event
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListProofsResponse {
     pub event_id: Uuid,
     pub proofs: Vec<ProofSummary>,
@@ -134,6 +138,7 @@ pub struct ListProofsResponse {
 
 /// Full proof details including the proof bytes
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProofDetails {
     pub proof_id: Uuid,
     pub event_id: Uuid,
@@ -155,6 +160,7 @@ pub struct ProofDetails {
 
 /// Verification result
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VerifyResponse {
     pub proof_id: Uuid,
     pub event_id: Uuid,
@@ -312,5 +318,57 @@ mod tests {
 
         let err = resp.validate_and_parse_public_inputs().unwrap_err();
         assert!(matches!(err, ClientError::InvalidPublicInputs(_)));
+    }
+
+    #[test]
+    fn test_response_structs_deserialize_camel_case() {
+        let proof_id = Uuid::new_v4();
+        let event_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+
+        let submit: SubmitProofResponse = serde_json::from_value(serde_json::json!({
+            "proofId": proof_id,
+            "eventId": event_id,
+            "tenantId": tenant_id,
+            "storeId": store_id,
+            "proofType": "stark",
+            "proofVersion": 1,
+            "policyId": "aml.threshold",
+            "policyParams": { "threshold": 10000 },
+            "policyHash": "ab".repeat(32),
+            "proofHash": "cd".repeat(32),
+            "witnessCommitmentHex": "ef".repeat(32),
+            "publicInputs": serde_json::Value::Null,
+            "submittedAt": "2026-03-10T00:00:00Z"
+        }))
+        .unwrap();
+        assert_eq!(submit.proof_id, proof_id);
+        assert_eq!(submit.event_id, event_id);
+        assert_eq!(submit.submitted_at, "2026-03-10T00:00:00Z");
+
+        let verify: VerifyResponse = serde_json::from_value(serde_json::json!({
+            "proofId": proof_id,
+            "eventId": event_id,
+            "tenantId": tenant_id,
+            "storeId": store_id,
+            "proofType": "stark",
+            "proofVersion": 1,
+            "policyId": "aml.threshold",
+            "policyHash": "ab".repeat(32),
+            "proofHash": "cd".repeat(32),
+            "publicInputsHash": "01".repeat(32),
+            "canonicalPublicInputsHash": "02".repeat(32),
+            "publicInputsMatch": true,
+            "witnessCommitmentHex": "ef".repeat(32),
+            "starkValid": true,
+            "starkVerificationTimeMs": 42,
+            "valid": true,
+            "reason": null
+        }))
+        .unwrap();
+        assert_eq!(verify.proof_id, proof_id);
+        assert!(verify.public_inputs_match);
+        assert_eq!(verify.stark_verification_time_ms, Some(42));
     }
 }

@@ -21,7 +21,7 @@ npm install @stateset/ves-stark
 const { prove, computePolicyHash, createAmlThresholdParams } = require('@stateset/ves-stark');
 
 // Create policy parameters
-const policyParams = createAmlThresholdParams(10000);
+const policyParams = createAmlThresholdParams(10000n);
 
 // Compute the policy hash
 const policyHash = computePolicyHash('aml.threshold', policyParams);
@@ -31,7 +31,7 @@ const publicInputs = {
   eventId: '550e8400-e29b-41d4-a716-446655440000',
   tenantId: '550e8400-e29b-41d4-a716-446655440001',
   storeId: '550e8400-e29b-41d4-a716-446655440002',
-  sequenceNumber: 12345,
+  sequenceNumber: 12345n,
   payloadKind: 1,
   payloadPlainHash: 'a'.repeat(64),  // 64-char lowercase hex
   payloadCipherHash: 'b'.repeat(64),
@@ -42,7 +42,7 @@ const publicInputs = {
 };
 
 // Generate proof (amount must be < threshold for aml.threshold)
-const proof = prove(5000, publicInputs, 'aml.threshold', 10000);
+const proof = prove(5000n, publicInputs, 'aml.threshold', 10000n);
 
 console.log(`Proof generated in ${proof.provingTimeMs}ms`);
 console.log(`Proof size: ${proof.proofSize} bytes`);
@@ -61,7 +61,7 @@ const result = verifyHex(proof.proofBytes, publicInputs, proof.witnessCommitment
 if (result.valid) {
   console.log('Proof is valid!');
   console.log(`Verified in ${result.verificationTimeMs}ms`);
-  console.log(`Policy: ${result.policyId} (limit: ${result.policyLimit})`);
+  console.log(`Policy: ${result.policyId} (limit: ${result.policyLimit}n)`);
 } else {
   console.error(`Verification failed: ${result.error}`);
 }
@@ -74,10 +74,10 @@ if (result.valid) {
 Generate a STARK compliance proof.
 
 **Parameters:**
-- `amount` (number): The amount to prove compliance for
+- `amount` (bigint): The amount to prove compliance for
 - `publicInputs` (JsCompliancePublicInputs): Public inputs including event metadata
 - `policyType` (string): Policy type - `"aml.threshold"` or `"order_total.cap"`
-- `policyLimit` (number): The policy limit value
+- `policyLimit` (bigint): The policy limit value
 
 **Returns:** `JsComplianceProof`
 - `proofBytes` (Buffer): Raw proof bytes
@@ -101,7 +101,7 @@ Verify a STARK compliance proof.
 - `verificationTimeMs` (number): Verification time in milliseconds
 - `error` (string | null): Error message if invalid
 - `policyId` (string): Verified policy ID
-- `policyLimit` (number): Verified policy limit
+- `policyLimit` (bigint): Verified policy limit
 
 ### `verifyHex(proofBytes, publicInputs, witnessCommitmentHex)`
 
@@ -129,18 +129,18 @@ Compute the canonical policy hash.
 Create policy parameters for AML threshold policy.
 
 **Parameters:**
-- `threshold` (number): The threshold value
+- `threshold` (bigint): The threshold value
 
-**Returns:** `{ threshold: number }`
+**Returns:** `{ threshold: bigint }`
 
 ### `createOrderTotalCapParams(cap)`
 
 Create policy parameters for order total cap policy.
 
 **Parameters:**
-- `cap` (number): The cap value
+- `cap` (bigint): The cap value
 
-**Returns:** `{ cap: number }`
+**Returns:** `{ cap: bigint }`
 
 ## Policy Types
 

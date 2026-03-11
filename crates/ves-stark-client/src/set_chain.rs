@@ -213,6 +213,12 @@ pub struct BatchProofVerification {
     pub state_roots_valid: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StateRootResponse {
+    state_root: Option<String>,
+}
+
 /// Client for submitting batch proofs to Set Chain via the sequencer
 pub struct SetChainClient {
     client: reqwest::Client,
@@ -518,10 +524,6 @@ impl SetChainClient {
 
         let status = response.status();
         if status.is_success() {
-            #[derive(Deserialize)]
-            struct StateRootResponse {
-                state_root: Option<String>,
-            }
             let resp: StateRootResponse = response.json().await?;
             Ok(resp.state_root)
         } else if status.as_u16() == 404 {
@@ -674,5 +676,15 @@ mod tests {
         assert!(submission.new_state_root.starts_with("0x"));
         assert!(submission.policy_hash.starts_with("0x"));
         assert!(!submission.proof_b64.is_empty());
+    }
+
+    #[test]
+    fn test_state_root_response_deserializes_camel_case() {
+        let response: StateRootResponse = serde_json::from_value(serde_json::json!({
+            "stateRoot": "0x1234"
+        }))
+        .unwrap();
+
+        assert_eq!(response.state_root.as_deref(), Some("0x1234"));
     }
 }

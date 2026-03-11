@@ -24,49 +24,66 @@ pub struct SerializableBatchProof {
     pub public_inputs: SerializableBatchPublicInputs,
 }
 
-/// Serializable batch public inputs (all values as u64 for JSON compatibility)
+/// Serializable batch public inputs.
+///
+/// Integer values are string-encoded in JSON to preserve full 64-bit precision
+/// across JavaScript and other IEEE-754-based consumers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableBatchPublicInputs {
     /// Previous batch state root (4 x u64)
+    #[serde(with = "crate::json_num::u64_array_4_strings")]
     pub prev_state_root: [u64; 4],
 
     /// New batch state root (4 x u64)
+    #[serde(with = "crate::json_num::u64_array_4_strings")]
     pub new_state_root: [u64; 4],
 
     /// Batch ID (4 x u64)
+    #[serde(with = "crate::json_num::u64_array_4_strings")]
     pub batch_id: [u64; 4],
 
     /// Tenant ID (4 x u64)
+    #[serde(with = "crate::json_num::u64_array_4_strings")]
     pub tenant_id: [u64; 4],
 
     /// Store ID (4 x u64)
+    #[serde(with = "crate::json_num::u64_array_4_strings")]
     pub store_id: [u64; 4],
 
     /// First sequence number in batch
+    #[serde(with = "crate::json_num::u64_string")]
     pub sequence_start: u64,
 
     /// Last sequence number in batch
+    #[serde(with = "crate::json_num::u64_string")]
     pub sequence_end: u64,
 
     /// Batch timestamp (Unix epoch seconds)
+    #[serde(with = "crate::json_num::u64_string")]
     pub timestamp: u64,
 
     /// Number of events in batch
+    #[serde(with = "crate::json_num::u64_string")]
     pub num_events: u64,
 
     /// All events compliant flag (1 if all pass, 0 otherwise)
+    #[serde(with = "crate::json_num::u64_string")]
     pub all_compliant: u64,
 
     /// Policy hash (8 x u64)
+    #[serde(with = "crate::json_num::u64_array_8_strings")]
     pub policy_hash: [u64; 8],
 
     /// Policy kind encoding
+    #[serde(with = "crate::json_num::u64_string")]
     pub policy_kind: u64,
 
     /// Policy limit (threshold or cap)
+    #[serde(with = "crate::json_num::u64_string")]
     pub policy_limit: u64,
 
     /// Ordered accumulator over canonical per-event public-input hashes (8 x u64)
+    #[serde(with = "crate::json_num::u64_array_8_strings")]
     pub public_inputs_accumulator: [u64; 8],
 }
 
@@ -216,12 +233,25 @@ impl SerializableBatchProof {
                 as usize;
         pos += 4;
 
-        let proof_len_end = pos + proof_len;
-        let public_inputs_end = proof_len_end + Self::PUBLIC_INPUT_BYTES;
+        let proof_len_end = pos.checked_add(proof_len).ok_or_else(|| {
+            BatchError::DeserializationFailed("proof length overflows platform usize".to_string())
+        })?;
+        let public_inputs_end = proof_len_end
+            .checked_add(Self::PUBLIC_INPUT_BYTES)
+            .ok_or_else(|| {
+                BatchError::DeserializationFailed(
+                    "public input length overflows platform usize".to_string(),
+                )
+            })?;
 
         if proof_len_end > bytes.len() || public_inputs_end > bytes.len() {
             return Err(BatchError::DeserializationFailed(
                 "Input too short for proof and public inputs".to_string(),
+            ));
+        }
+        if public_inputs_end != bytes.len() {
+            return Err(BatchError::DeserializationFailed(
+                "Input contains unexpected trailing bytes".to_string(),
             ));
         }
 
@@ -287,11 +317,7 @@ impl SerializableBatchProof {
             *val = read_u64(bytes, &mut pos)?;
         }
 
-        if pos != public_inputs_end {
-            return Err(BatchError::DeserializationFailed(
-                "Input contains unexpected trailing bytes".to_string(),
-            ));
-        }
+        debug_assert_eq!(pos, public_inputs_end);
 
         let public_inputs = SerializableBatchPublicInputs {
             prev_state_root,
@@ -650,6 +676,22 @@ mod tests {
     }
 
     #[test]
+    fn test_binary_deserialization_rejects_trailing_bytes() {
+        let proof = sample_proof();
+        let inputs = sample_public_inputs();
+        let mut bytes = SerializableBatchProof::new(proof, inputs)
+            .unwrap()
+            .to_bytes()
+            .unwrap();
+        bytes.extend_from_slice(&[9, 9, 9]);
+
+        assert!(matches!(
+            SerializableBatchProof::from_bytes(&bytes),
+            Err(BatchError::DeserializationFailed(_))
+        ));
+    }
+
+    #[test]
     fn test_binary_round_trip_recomputes_proof_hash() {
         let proof = sample_proof();
         let inputs = sample_public_inputs();
@@ -716,5 +758,39 @@ mod tests {
             SerializableBatchProof::from_json(&json),
             Err(BatchError::DeserializationFailed(_))
         ));
+    }
+
+    #[test]
+    fn test_json_serialization_stringifies_u64_fields() {
+        let large_field_value = 9_007_199_254_740_993u64;
+        let mut proof = sample_proof();
+        proof.prev_state_root = [u64::MAX, 2, 3, 4];
+        proof.new_state_root = [5, 6, 7, u64::MAX];
+        proof.metadata.proving_time_ms = u64::MAX;
+
+        let mut inputs = sample_public_inputs();
+        inputs.prev_state_root = [large_field_value, 2, 3, 4].map(felt_from_u64);
+        inputs.public_inputs_accumulator = [large_field_value; 8].map(felt_from_u64);
+
+        let serializable = SerializableBatchProof::new(proof, inputs).unwrap();
+        let json = serializable.to_json().unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            value["proof"]["prev_state_root"][0],
+            serde_json::json!(u64::MAX.to_string())
+        );
+        assert_eq!(
+            value["proof"]["metadata"]["proving_time_ms"],
+            serde_json::json!(u64::MAX.to_string())
+        );
+        assert_eq!(
+            value["public_inputs"]["prev_state_root"][0],
+            serde_json::json!(large_field_value.to_string())
+        );
+        assert_eq!(
+            value["public_inputs"]["public_inputs_accumulator"][0],
+            serde_json::json!(large_field_value.to_string())
+        );
     }
 }

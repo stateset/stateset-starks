@@ -256,11 +256,21 @@ impl BatchPublicInputs {
             return Err(error("sequence_start must be <= sequence_end".to_string()));
         }
 
+        let num_events_u64 = self.num_events.as_int();
+        if num_events_u64 == 0 {
+            if sequence_start != 0 || sequence_end != 0 {
+                return Err(error(
+                    "zero-event batches must use sequence_start = sequence_end = 0".to_string(),
+                ));
+            }
+            return usize::try_from(num_events_u64)
+                .map_err(|_| error("num_events does not fit in platform usize".to_string()));
+        }
+
         let expected_num_events = sequence_end
             .checked_sub(sequence_start)
             .and_then(|span| span.checked_add(1))
             .ok_or_else(|| error("sequence span overflows u64".to_string()))?;
-        let num_events_u64 = self.num_events.as_int();
         if expected_num_events != num_events_u64 {
             return Err(error(format!(
                 "inconsistent public inputs: expected {} events from sequence range, got {}",
@@ -418,6 +428,7 @@ mod tests {
         assert_eq!(inputs.num_events_usize(), 0);
         assert_eq!(inputs.sequence_end.as_int(), 0);
         assert_eq!(inputs.timestamp, FELT_ZERO);
+        assert_eq!(inputs.validate().unwrap(), 0);
     }
 
     #[test]

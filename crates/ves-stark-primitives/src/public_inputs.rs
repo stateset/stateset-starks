@@ -126,9 +126,18 @@ impl CompliancePublicInputs {
         compute_policy_hash(policy_id, policy_params)
     }
 
-    /// Compute the hash of these public inputs
+    /// Compute the sequencer-canonical hash of these public inputs.
+    ///
+    /// The canonical sequencer hash excludes `witnessCommitment`, which is submitted
+    /// out-of-band alongside the proof.
     pub fn compute_hash(&self) -> Result<Hash256, PublicInputsError> {
         compute_public_inputs_hash(self)
+    }
+
+    /// Compute the hash of the full local public-input object, including
+    /// `witnessCommitment` when present.
+    pub fn compute_full_hash(&self) -> Result<Hash256, PublicInputsError> {
+        compute_full_public_inputs_hash(self)
     }
 
     /// Convert to field elements for use in the AIR
@@ -325,6 +334,17 @@ pub fn compute_policy_hash(
 pub fn compute_public_inputs_hash(
     inputs: &CompliancePublicInputs,
 ) -> Result<Hash256, PublicInputsError> {
+    let mut canonical_inputs = inputs.clone();
+    canonical_inputs.witness_commitment = None;
+    let canonical = canonical_json(&serde_json::to_value(&canonical_inputs)?)?;
+    Ok(Hash256::sha256(canonical.as_bytes()))
+}
+
+/// Compute the hash of the full local public-input object, including
+/// `witnessCommitment` when present.
+pub fn compute_full_public_inputs_hash(
+    inputs: &CompliancePublicInputs,
+) -> Result<Hash256, PublicInputsError> {
     let canonical = canonical_json(&serde_json::to_value(inputs)?)?;
     Ok(Hash256::sha256(canonical.as_bytes()))
 }
@@ -477,6 +497,38 @@ mod tests {
 
         let result = inputs.to_field_elements();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_canonical_hash_ignores_witness_commitment() {
+        let witness_commitment = witness_commitment_u64_to_hex(&[1, 2, 3, 4]);
+        let inputs_without_commitment = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "1".repeat(64),
+            event_signing_hash: "2".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10000),
+            policy_hash: compute_policy_hash("aml.threshold", &PolicyParams::threshold(10000))
+                .unwrap()
+                .to_hex(),
+            witness_commitment: None,
+        };
+        let mut inputs_with_commitment = inputs_without_commitment.clone();
+        inputs_with_commitment.witness_commitment = Some(witness_commitment);
+
+        assert_eq!(
+            inputs_without_commitment.compute_hash().unwrap(),
+            inputs_with_commitment.compute_hash().unwrap()
+        );
+        assert_ne!(
+            inputs_without_commitment.compute_full_hash().unwrap(),
+            inputs_with_commitment.compute_full_hash().unwrap()
+        );
     }
 
     #[test]

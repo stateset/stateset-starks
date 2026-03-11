@@ -197,26 +197,16 @@ pub enum PublicInputsError {
 impl PublicInputs {
     /// Create new public inputs (legacy, without witness commitment)
     pub fn new(policy_limit: u64, elements: Vec<Felt>) -> Self {
-        let mut elements = elements;
-        elements.resize(cols::PUBLIC_INPUTS_LEN, FELT_ZERO);
-
-        Self {
-            policy_limit,
-            elements,
-            witness_commitment: [FELT_ZERO; 4],
-        }
+        Self::try_new(policy_limit, elements).unwrap_or_else(|err| {
+            panic!("invalid compliance public inputs: {err}");
+        })
     }
 
     /// Create new public inputs with witness commitment
     pub fn with_commitment(policy_limit: u64, elements: Vec<Felt>, commitment: [Felt; 4]) -> Self {
-        let mut elements = elements;
-        elements.resize(cols::PUBLIC_INPUTS_LEN, FELT_ZERO);
-
-        Self {
-            policy_limit,
-            elements,
-            witness_commitment: commitment,
-        }
+        Self::try_with_commitment(policy_limit, elements, commitment).unwrap_or_else(|err| {
+            panic!("invalid compliance public inputs: {err}");
+        })
     }
 
     /// Create new public inputs (legacy, without witness commitment) without panicking
@@ -842,5 +832,21 @@ mod tests {
         assert_eq!(elements[commitment_start + 1].as_int(), 200);
         assert_eq!(elements[commitment_start + 2].as_int(), 300);
         assert_eq!(elements[commitment_start + 3].as_int(), 400);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid compliance public inputs")]
+    fn test_public_inputs_new_rejects_invalid_length() {
+        let _ = PublicInputs::new(10000, vec![felt_from_u64(1); cols::PUBLIC_INPUTS_LEN - 1]);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid compliance public inputs")]
+    fn test_public_inputs_with_commitment_rejects_invalid_length() {
+        let _ = PublicInputs::with_commitment(
+            10000,
+            vec![felt_from_u64(1); cols::PUBLIC_INPUTS_LEN + 1],
+            [felt_from_u64(0); 4],
+        );
     }
 }

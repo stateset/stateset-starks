@@ -9,7 +9,7 @@ function hexZeros(bytes) {
 }
 
 const policyType = 'aml.threshold'
-const policyLimit = 10_000
+const policyLimit = 10_000n
 const policyParams = ves.createAmlThresholdParams(policyLimit)
 const policyHash = ves.computePolicyHash(policyType, policyParams)
 
@@ -17,7 +17,7 @@ const publicInputsBase = {
   eventId: '00000000-0000-0000-0000-000000000001',
   tenantId: '00000000-0000-0000-0000-000000000002',
   storeId: '00000000-0000-0000-0000-000000000003',
-  sequenceNumber: 1,
+  sequenceNumber: 1n,
   payloadKind: 1,
   payloadPlainHash: hexZeros(32),
   payloadCipherHash: hexZeros(32),
@@ -27,7 +27,7 @@ const publicInputsBase = {
   policyHash,
 }
 
-const amount = 5_000
+const amount = 5_000n
 
 const proof = ves.prove(amount, publicInputsBase, policyType, policyLimit)
 
@@ -48,9 +48,13 @@ const publicInputsBound = {
 
 const okWithNumbers = ves.verify(proof.proofBytes, publicInputsBound, proof.witnessCommitment)
 assert.strictEqual(okWithNumbers.valid, true, okWithNumbers.error || 'verification failed')
+assert.strictEqual(typeof okWithNumbers.policyLimit, 'bigint')
+assert.strictEqual(okWithNumbers.policyLimit, policyLimit)
 
 const ok = ves.verifyHex(proof.proofBytes, publicInputsBound, proof.witnessCommitmentHex)
 assert.strictEqual(ok.valid, true, ok.error || 'verification failed')
+assert.strictEqual(typeof ok.policyLimit, 'bigint')
+assert.strictEqual(ok.policyLimit, policyLimit)
 
 // Negative test: mismatch between public_inputs.witnessCommitment and provided witness commitment must fail.
 const wrongWitnessCommitmentHex =

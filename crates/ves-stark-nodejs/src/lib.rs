@@ -12,13 +12,21 @@ use ves_stark_primitives::{witness_commitment_hex_to_u64, CompliancePublicInputs
 use ves_stark_prover::{ComplianceProver, ComplianceWitness};
 use ves_stark_verifier::verify_compliance_proof_auto;
 
-fn as_non_negative_u64(value: i64, field_name: &str) -> Result<u64> {
-    u64::try_from(value).map_err(|_| {
-        Error::new(
+fn bigint_to_u64(value: &BigInt, field_name: &str) -> Result<u64> {
+    let (sign_bit, value, lossless) = value.get_u64();
+    if sign_bit {
+        return Err(Error::new(
             Status::InvalidArg,
             format!("{} must be non-negative", field_name),
-        )
-    })
+        ));
+    }
+    if !lossless {
+        return Err(Error::new(
+            Status::InvalidArg,
+            format!("{} must fit in u64", field_name),
+        ));
+    }
+    Ok(value)
 }
 
 fn parse_witness_commitment(witness_commitment: Vec<String>) -> Result<[u64; 4]> {
@@ -56,7 +64,7 @@ pub struct JsCompliancePublicInputs {
     /// Store ID
     pub store_id: String,
     /// Sequence number of the event
-    pub sequence_number: i64,
+    pub sequence_number: BigInt,
     /// Payload kind (event type discriminator)
     pub payload_kind: u32,
     /// SHA-256 hash of plaintext payload (hex64, lowercase)
@@ -104,7 +112,7 @@ pub struct JsVerificationResult {
     /// Policy ID that was verified
     pub policy_id: String,
     /// Policy limit that was verified against
-    pub policy_limit: i64,
+    pub policy_limit: BigInt,
 }
 
 /// Convert JS public inputs to Rust struct
@@ -120,7 +128,7 @@ fn convert_public_inputs(js: &JsCompliancePublicInputs) -> Result<CompliancePubl
         event_id,
         tenant_id,
         store_id,
-        sequence_number: as_non_negative_u64(js.sequence_number, "sequence_number")?,
+        sequence_number: bigint_to_u64(&js.sequence_number, "sequence_number")?,
         payload_kind: js.payload_kind,
         payload_plain_hash: js.payload_plain_hash.clone(),
         payload_cipher_hash: js.payload_cipher_hash.clone(),
@@ -141,18 +149,18 @@ fn convert_public_inputs(js: &JsCompliancePublicInputs) -> Result<CompliancePubl
 /// @returns ComplianceProof containing proof bytes and metadata
 #[napi]
 pub fn prove(
-    amount: i64,
+    amount: BigInt,
     public_inputs: JsCompliancePublicInputs,
     policy_type: String,
-    policy_limit: i64,
+    policy_limit: BigInt,
 ) -> Result<JsComplianceProof> {
-    let amount = as_non_negative_u64(amount, "amount")?;
-    let policy_limit = as_non_negative_u64(policy_limit, "policy_limit")?;
+    let amount = bigint_to_u64(&amount, "amount")?;
+    let policy_limit = bigint_to_u64(&policy_limit, "policy_limit")?;
 
     // Create policy based on type
     let policy = match policy_type.as_str() {
-        "aml.threshold" => Policy::aml_threshold(policy_limit as u64),
-        "order_total.cap" => Policy::order_total_cap(policy_limit as u64),
+        "aml.threshold" => Policy::aml_threshold(policy_limit),
+        "order_total.cap" => Policy::order_total_cap(policy_limit),
         _ => {
             return Err(Error::new(
                 Status::InvalidArg,
@@ -168,7 +176,7 @@ pub fn prove(
     let rust_inputs = convert_public_inputs(&public_inputs)?;
 
     // Create witness
-    let witness = ComplianceWitness::new(amount as u64, rust_inputs);
+    let witness = ComplianceWitness::new(amount, rust_inputs);
 
     // Create prover and generate proof
     let prover = ComplianceProver::with_policy(policy);
@@ -227,14 +235,14 @@ pub fn verify(
             verification_time_ms: verification.verification_time_ms as i64,
             error: verification.error,
             policy_id: verification.policy_id,
-            policy_limit: verification.policy_limit as i64,
+            policy_limit: BigInt::from(verification.policy_limit),
         }),
         Err(e) => Ok(JsVerificationResult {
             valid: false,
             verification_time_ms: 0,
             error: Some(format!("Verification error: {}", e)),
             policy_id: public_inputs.policy_id,
-            policy_limit: 0,
+            policy_limit: BigInt::from(0u64),
         }),
     }
 }
@@ -267,14 +275,14 @@ pub fn verify_hex(
             verification_time_ms: verification.verification_time_ms as i64,
             error: verification.error,
             policy_id: verification.policy_id,
-            policy_limit: verification.policy_limit as i64,
+            policy_limit: BigInt::from(verification.policy_limit),
         }),
         Err(e) => Ok(JsVerificationResult {
             valid: false,
             verification_time_ms: 0,
             error: Some(format!("Verification error: {}", e)),
             policy_id: public_inputs.policy_id,
-            policy_limit: 0,
+            policy_limit: BigInt::from(0u64),
         }),
     }
 }
@@ -301,14 +309,8 @@ pub fn compute_policy_hash(policy_id: String, policy_params: serde_json::Value) 
 /// @param threshold - The AML threshold value
 /// @returns Policy parameters JSON object
 #[napi]
-pub fn create_aml_threshold_params(threshold: i64) -> Result<serde_json::Value> {
-    if threshold < 0 {
-        return Err(Error::new(
-            Status::InvalidArg,
-            "Threshold must be non-negative".to_string(),
-        ));
-    }
-
+pub fn create_aml_threshold_params(threshold: BigInt) -> Result<serde_json::Value> {
+    let threshold = bigint_to_u64(&threshold, "threshold")?;
     Ok(serde_json::json!({ "threshold": threshold }))
 }
 
@@ -317,13 +319,7 @@ pub fn create_aml_threshold_params(threshold: i64) -> Result<serde_json::Value> 
 /// @param cap - The order total cap value
 /// @returns Policy parameters JSON object
 #[napi]
-pub fn create_order_total_cap_params(cap: i64) -> Result<serde_json::Value> {
-    if cap < 0 {
-        return Err(Error::new(
-            Status::InvalidArg,
-            "Cap must be non-negative".to_string(),
-        ));
-    }
-
+pub fn create_order_total_cap_params(cap: BigInt) -> Result<serde_json::Value> {
+    let cap = bigint_to_u64(&cap, "cap")?;
     Ok(serde_json::json!({ "cap": cap }))
 }

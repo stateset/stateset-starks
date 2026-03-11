@@ -83,9 +83,11 @@ pub struct BatchProof {
     pub proof_hash: String,
 
     /// Previous state root
+    #[serde(with = "crate::json_num::u64_array_4_strings")]
     pub prev_state_root: [u64; 4],
 
     /// New state root
+    #[serde(with = "crate::json_num::u64_array_4_strings")]
     pub new_state_root: [u64; 4],
 
     /// Batch metadata
@@ -99,18 +101,22 @@ pub struct BatchProofMetadata {
     pub batch_id: String,
 
     /// Number of events in batch
+    #[serde(with = "crate::json_num::usize_string")]
     pub num_events: usize,
 
     /// Whether all events were compliant
     pub all_compliant: bool,
 
     /// Time taken to generate the proof (milliseconds)
+    #[serde(with = "crate::json_num::u64_string")]
     pub proving_time_ms: u64,
 
     /// Trace length
+    #[serde(with = "crate::json_num::usize_string")]
     pub trace_length: usize,
 
     /// Proof size in bytes
+    #[serde(with = "crate::json_num::usize_string")]
     pub proof_size: usize,
 
     /// Prover version

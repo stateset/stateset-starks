@@ -57,6 +57,7 @@
 
 pub mod air;
 pub mod error;
+pub(crate) mod json_num;
 pub mod prover;
 pub mod public_inputs;
 pub mod serialization;
