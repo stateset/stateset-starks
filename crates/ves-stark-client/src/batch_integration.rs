@@ -44,10 +44,7 @@ fn parse_batch_id_from_metadata(batch_id: &str) -> Result<Uuid> {
     Ok(batch_id)
 }
 
-fn parse_legacy_batch_id_from_u64_limbs(
-    bytes: &[u8],
-    original: &str,
-) -> Result<Uuid> {
+fn parse_legacy_batch_id_from_u64_limbs(bytes: &[u8], original: &str) -> Result<Uuid> {
     if bytes.len() != 32 {
         return Err(ClientError::InvalidPublicInputs(format!(
             "Invalid batch_id '{}': expected 32 bytes",
@@ -109,9 +106,8 @@ fn validate_sequence_range(
         )));
     }
 
-    u32::try_from(num_events).map_err(|_| {
-        ClientError::InvalidPublicInputs("num_events does not fit in u32".to_string())
-    })
+    u32::try_from(num_events)
+        .map_err(|_| ClientError::InvalidPublicInputs("num_events does not fit in u32".to_string()))
 }
 
 /// Extension trait for SetChainClient to handle BatchProof from ves-stark-batch
@@ -144,11 +140,8 @@ impl SetChainClient {
     ) -> Result<BatchProofResponse> {
         // Parse batch_id from hex string
         let batch_id = parse_batch_id_from_metadata(&proof.metadata.batch_id)?;
-        let event_count = validate_sequence_range(
-            sequence_start,
-            sequence_end,
-            proof.metadata.num_events,
-        )?;
+        let event_count =
+            validate_sequence_range(sequence_start, sequence_end, proof.metadata.num_events)?;
 
         // Convert state roots from [u64; 4] to [u8; 32]
         let prev_state_root = u64_array_to_bytes(&proof.prev_state_root);
@@ -189,11 +182,8 @@ impl SetChainClient {
     ) -> Result<BatchProofResponse> {
         // Parse batch_id from hex string
         let batch_id = parse_batch_id_from_metadata(&proof.metadata.batch_id)?;
-        let event_count = validate_sequence_range(
-            sequence_start,
-            sequence_end,
-            proof.metadata.num_events,
-        )?;
+        let event_count =
+            validate_sequence_range(sequence_start, sequence_end, proof.metadata.num_events)?;
 
         let prev_state_root = u64_array_to_bytes(&proof.prev_state_root);
         let new_state_root = u64_array_to_bytes(&proof.new_state_root);
@@ -233,6 +223,11 @@ impl SetChainClient {
 
 /// Convert a 4-element u64 array to a 32-byte array
 fn u64_array_to_bytes(arr: &[u64; 4]) -> [u8; 32] {
+    u64_array_to_le_bytes(arr)
+}
+
+/// Convert a 4-element u64 array to a 32-byte little-endian array.
+fn u64_array_to_le_bytes(arr: &[u64; 4]) -> [u8; 32] {
     let mut bytes = [0u8; 32];
     for (i, &val) in arr.iter().enumerate() {
         bytes[i * 8..(i + 1) * 8].copy_from_slice(&val.to_le_bytes());
@@ -288,9 +283,7 @@ impl BatchSubmissionBuilder {
             new_state_root: Some(u64_array_to_bytes(&proof.new_state_root)),
             sequence_start: None,
             sequence_end: None,
-            event_count: Some(batch_event_count_from_metadata(
-                proof.metadata.num_events,
-            )?),
+            event_count: Some(batch_event_count_from_metadata(proof.metadata.num_events)?),
             proof_bytes: Some(proof.proof_bytes.clone()),
             policy_hash: None,
             policy_limit: None,
@@ -409,16 +402,16 @@ impl BatchSubmissionBuilder {
             message: "policy_limit is required".to_string(),
         })?;
 
-        if let (Some(sequence_start), Some(sequence_end), Some(event_count)) = (
-            self.sequence_start,
-            self.sequence_end,
-            self.event_count,
-        ) {
+        if let (Some(sequence_start), Some(sequence_end), Some(event_count)) =
+            (self.sequence_start, self.sequence_end, self.event_count)
+        {
             validate_sequence_range(
                 sequence_start,
                 sequence_end,
                 usize::try_from(event_count).map_err(|_| {
-                    ClientError::InvalidPublicInputs("event_count does not fit in platform usize".to_string())
+                    ClientError::InvalidPublicInputs(
+                        "event_count does not fit in platform usize".to_string(),
+                    )
                 })?,
             )?;
         }
@@ -489,6 +482,7 @@ mod tests {
         // Verify first u64 is correctly converted
         let recovered = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
         assert_eq!(recovered, 1u64);
+        assert_eq!(u64_array_to_le_bytes(&arr), bytes);
     }
 
     #[test]
@@ -510,12 +504,7 @@ mod tests {
 
     #[test]
     fn test_batch_submission_builder_legacy_hex_batch_id() {
-        let batch_id_limb_values = [
-            0x01020304u64,
-            0x05060708u64,
-            0x090A0B0Cu64,
-            0x0D0E0F10u64,
-        ];
+        let batch_id_limb_values = [0x01020304u64, 0x05060708u64, 0x090A0B0Cu64, 0x0D0E0F10u64];
 
         let mut proof = sample_batch_proof();
         proof.metadata.batch_id = format!(

@@ -143,8 +143,7 @@ fn test_batch_event_witness_creation() {
 fn test_batch_event_witness_non_compliant() {
     let threshold = 10000u64;
     let amount = 15000u64; // Exceeds threshold
-    let public_inputs =
-        create_public_inputs(threshold, amount, 0, Uuid::new_v4(), Uuid::new_v4());
+    let public_inputs = create_public_inputs(threshold, amount, 0, Uuid::new_v4(), Uuid::new_v4());
 
     let witness = BatchEventWitness::new(0, amount, public_inputs, threshold).unwrap();
 
@@ -159,8 +158,7 @@ fn test_batch_event_witness_non_compliant() {
 fn test_batch_event_witness_boundary() {
     let threshold = 10000u64;
     let amount = threshold; // Equal to threshold (should be non-compliant for strict <)
-    let public_inputs =
-        create_public_inputs(threshold, amount, 0, Uuid::new_v4(), Uuid::new_v4());
+    let public_inputs = create_public_inputs(threshold, amount, 0, Uuid::new_v4(), Uuid::new_v4());
 
     let witness = BatchEventWitness::new(0, amount, public_inputs, threshold).unwrap();
 
@@ -174,8 +172,7 @@ fn test_batch_event_witness_boundary() {
 fn test_batch_event_witness_amount_limbs() {
     let threshold = 10000u64;
     let amount = 0x1234567890ABCDEFu64;
-    let public_inputs =
-        create_public_inputs(threshold, amount, 0, Uuid::new_v4(), Uuid::new_v4());
+    let public_inputs = create_public_inputs(threshold, amount, 0, Uuid::new_v4(), Uuid::new_v4());
 
     let witness = BatchEventWitness::new(0, amount, public_inputs, threshold).unwrap();
     let limbs = witness.amount_limbs();
@@ -192,11 +189,10 @@ fn test_batch_event_witness_amount_limbs() {
 #[test]
 fn test_batch_event_witness_compliance_felt() {
     let threshold = 10000u64;
-    let public_inputs =
-        create_public_inputs(threshold, 5000, 0, Uuid::new_v4(), Uuid::new_v4());
+    let public_inputs = create_public_inputs(threshold, 5000, 0, Uuid::new_v4(), Uuid::new_v4());
 
-    let compliant_witness = BatchEventWitness::new(0, 5000, public_inputs.clone(), threshold)
-        .unwrap();
+    let compliant_witness =
+        BatchEventWitness::new(0, 5000, public_inputs.clone(), threshold).unwrap();
     assert_eq!(compliant_witness.compliance_felt().as_int(), 1);
 
     let non_compliant_witness = BatchEventWitness::new(0, 15000, public_inputs, threshold).unwrap();
@@ -206,12 +202,11 @@ fn test_batch_event_witness_compliance_felt() {
 #[test]
 fn test_batch_event_witness_to_event_leaf() {
     let threshold = 10000u64;
-    let public_inputs =
-        create_public_inputs(threshold, 5000, 0, Uuid::new_v4(), Uuid::new_v4());
+    let public_inputs = create_public_inputs(threshold, 5000, 0, Uuid::new_v4(), Uuid::new_v4());
     let policy_hash = create_policy_hash(threshold);
 
     let witness = BatchEventWitness::new(0, 5000, public_inputs, threshold).unwrap();
-    let leaf = witness.to_event_leaf(&policy_hash);
+    let leaf = witness.to_event_leaf(&policy_hash).unwrap();
 
     // Verify compliance flag
     assert_eq!(leaf.compliance_flag.as_int(), 1);
@@ -220,6 +215,9 @@ fn test_batch_event_witness_to_event_leaf() {
     for (leaf_limb, expected_limb) in leaf.policy_hash.iter().zip(policy_hash.iter()) {
         assert_eq!(leaf_limb.as_int(), expected_limb.as_int());
     }
+
+    // Verify the Merkle leaf commits the validated witness commitment.
+    assert_eq!(leaf.amount_commitment, witness.amount_commitment());
 }
 
 // =============================================================================
@@ -258,7 +256,7 @@ fn test_batch_witness_builder_single_event() {
         .policy_hash(policy_hash)
         .policy_limit(threshold)
         .add_event(5000, public_inputs)
-            .unwrap()
+        .unwrap()
         .build();
 
     assert!(result.is_ok());
@@ -283,10 +281,16 @@ fn test_batch_witness_builder_multiple_events() {
 
     // Add 3 events: 2 compliant, 1 non-compliant
     builder = builder
-        .add_event(5000, create_public_inputs(threshold, 5000, 0, tenant_id, store_id))
+        .add_event(
+            5000,
+            create_public_inputs(threshold, 5000, 0, tenant_id, store_id),
+        )
         .unwrap();
     builder = builder
-        .add_event(3000, create_public_inputs(threshold, 3000, 1, tenant_id, store_id))
+        .add_event(
+            3000,
+            create_public_inputs(threshold, 3000, 1, tenant_id, store_id),
+        )
         .unwrap();
     builder = builder
         .add_event(
@@ -326,8 +330,11 @@ fn test_batch_witness_builder_with_prev_state_root() {
         .policy_hash(policy_hash)
         .policy_limit(threshold)
         .prev_state_root(prev_root)
-        .add_event(5000, create_public_inputs(threshold, 5000, 0, tenant_id, store_id))
-            .unwrap()
+        .add_event(
+            5000,
+            create_public_inputs(threshold, 5000, 0, tenant_id, store_id),
+        )
+        .unwrap()
         .build();
 
     assert!(result.is_ok());
@@ -352,10 +359,10 @@ fn test_batch_witness_builder_rejects_missing_witness_commitment() {
         .policy_hash(policy_hash)
         .policy_limit(threshold)
         .add_event(5000, public_inputs)
-            .unwrap()
+        .unwrap()
         .build();
 
-    assert!(matches!(result, Err(_) ));
+    assert!(matches!(result, Err(_)));
 }
 
 #[test]
@@ -375,10 +382,10 @@ fn test_batch_witness_builder_rejects_invalid_witness_commitment() {
         .policy_hash(policy_hash)
         .policy_limit(threshold)
         .add_event(5000, public_inputs)
-            .unwrap()
+        .unwrap()
         .build();
 
-    assert!(matches!(result, Err(_) ));
+    assert!(matches!(result, Err(_)));
 }
 
 // =============================================================================
@@ -471,6 +478,7 @@ fn test_event_merkle_tree_single_leaf() {
             felt_from_u64(8),
         ],
         policy_hash: [FELT_ZERO; 8],
+        public_inputs_hash: [FELT_ZERO; 8],
         compliance_flag: FELT_ONE,
     };
 
@@ -493,6 +501,7 @@ fn test_event_merkle_tree_deterministic() {
             ],
             amount_commitment: [felt_from_u64(i * 10), FELT_ZERO, FELT_ZERO, FELT_ZERO],
             policy_hash: [FELT_ZERO; 8],
+            public_inputs_hash: [FELT_ZERO; 8],
             compliance_flag: FELT_ONE,
         })
         .collect();
@@ -518,6 +527,7 @@ fn test_event_merkle_tree_different_leaves_different_root() {
         event_id: [felt_from_u64(1), FELT_ZERO, FELT_ZERO, FELT_ZERO],
         amount_commitment: [felt_from_u64(100), FELT_ZERO, FELT_ZERO, FELT_ZERO],
         policy_hash: [FELT_ZERO; 8],
+        public_inputs_hash: [FELT_ZERO; 8],
         compliance_flag: FELT_ONE,
     }];
 
@@ -525,6 +535,7 @@ fn test_event_merkle_tree_different_leaves_different_root() {
         event_id: [felt_from_u64(2), FELT_ZERO, FELT_ZERO, FELT_ZERO], // Different
         amount_commitment: [felt_from_u64(100), FELT_ZERO, FELT_ZERO, FELT_ZERO],
         policy_hash: [FELT_ZERO; 8],
+        public_inputs_hash: [FELT_ZERO; 8],
         compliance_flag: FELT_ONE,
     }];
 

@@ -31,11 +31,11 @@ use ves_stark_prover::{ComplianceProof, ComplianceProver, ComplianceWitness, Pol
 use ves_stark_verifier::{verify_compliance_proof, MAX_PROOF_SIZE};
 
 // Batch proving imports
-use ves_stark_batch::{
-    BatchMetadata, BatchProver, BatchPublicInputs, BatchStateRoot, BatchVerifier, BatchWitnessBuilder,
-    SerializableBatchProof,
-};
 use ves_stark_batch::verifier::MAX_BATCH_PROOF_SIZE;
+use ves_stark_batch::{
+    BatchMetadata, BatchPolicyKind, BatchProver, BatchPublicInputs, BatchStateRoot, BatchVerifier,
+    BatchWitnessBuilder, SerializableBatchProof,
+};
 
 /// Policy type for CLI
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -276,14 +276,7 @@ fn main() -> Result<()> {
             limit,
             policy,
             verify,
-        } => prove_submit(
-            sequencer_url,
-            event_id,
-            amount,
-            limit,
-            policy,
-            verify,
-        ),
+        } => prove_submit(sequencer_url, event_id, amount, limit, policy, verify),
 
         Commands::Verify {
             proof,
@@ -584,7 +577,8 @@ fn verify(
             Ok(commitment)
         };
 
-        let commitment = if let Some(wc_hex) = json.get("witness_commitment_hex").and_then(|v| v.as_str()) {
+        let commitment =
+            if let Some(wc_hex) = json.get("witness_commitment_hex").and_then(|v| v.as_str()) {
                 witness_commitment_hex_to_u64(wc_hex)
                     .map_err(|e| anyhow::anyhow!("Invalid witness_commitment_hex: {e}"))?
             } else if let Some(wc) = json.get("witness_commitment") {
@@ -596,9 +590,9 @@ fn verify(
             };
 
         (bytes, commitment)
-        } else {
-            anyhow::bail!("Raw base64 proofs no longer supported - please use JSON format with witness_commitment");
-        };
+    } else {
+        anyhow::bail!("Raw base64 proofs no longer supported - please use JSON format with witness_commitment");
+    };
 
     if proof_bytes.len() > MAX_PROOF_SIZE {
         anyhow::bail!(
@@ -784,22 +778,22 @@ fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType)
 
     for i in 0..count {
         // Generate random amount that satisfies the policy
-    let amount = match policy_type {
-        PolicyType::AmlThreshold => {
-            if limit == 0 {
-                anyhow::bail!("Aml threshold limit must be greater than 0");
+        let amount = match policy_type {
+            PolicyType::AmlThreshold => {
+                if limit == 0 {
+                    anyhow::bail!("Aml threshold limit must be greater than 0");
+                }
+                let bound = max_amount.min(limit);
+                rand_u64() % bound
             }
-            let bound = max_amount.min(limit);
-            rand_u64() % bound
-        },
-        PolicyType::OrderTotalCap => {
-            let bound = max_amount.min(limit.saturating_add(1));
+            PolicyType::OrderTotalCap => {
+                let bound = max_amount.min(limit.saturating_add(1));
                 if bound == 0 {
                     0
                 } else {
                     rand_u64() % bound
                 }
-            },
+            }
         };
 
         // Generate inputs
@@ -1008,12 +1002,15 @@ fn batch_prove(num_events: usize, limit: u64, output_path: Option<PathBuf>) -> R
         witness.store_id_felts(),
         witness.metadata.sequence_start,
         witness.metadata.sequence_end,
+        witness.metadata.timestamp,
         witness.num_events(),
         witness.all_compliant(),
-        policy_hash,
+        BatchPolicyKind::AmlThreshold,
         limit,
+        witness.public_inputs_accumulator()?,
     );
-    let serializable = SerializableBatchProof::new(proof.clone(), public_inputs);
+    let serializable = SerializableBatchProof::new(proof.clone(), public_inputs)
+        .map_err(|e| anyhow::anyhow!("Failed to construct serializable batch proof: {:?}", e))?;
     let json_str = serializable
         .to_json()
         .map_err(|e| anyhow::anyhow!("Failed to serialize batch proof: {:?}", e))?;
@@ -1044,9 +1041,14 @@ fn batch_verify(proof_path: PathBuf) -> Result<()> {
         .with_context(|| format!("Failed to read proof file: {}", proof_path.display()))?;
 
     let batch_file: SerializableBatchProof = serde_json::from_str(&proof_str).map_err(|e| {
-        anyhow::anyhow!("Expected serialized batch proof JSON with `public_inputs`: {}", e)
+        anyhow::anyhow!(
+            "Expected serialized batch proof JSON with `public_inputs`: {}",
+            e
+        )
     })?;
-    let pub_inputs = batch_file.to_batch_public_inputs();
+    let pub_inputs = batch_file
+        .to_batch_public_inputs()
+        .map_err(|e| anyhow::anyhow!("Invalid batch public inputs: {:?}", e))?;
     let proof = batch_file.proof;
     let proof_bytes = proof.proof_bytes;
     let proof_hash = proof.proof_hash.clone();
@@ -1068,7 +1070,10 @@ fn batch_verify(proof_path: PathBuf) -> Result<()> {
 
     println!("Loaded proof:");
     println!("  Size: {} bytes", proof_bytes.len());
-    println!("  Hash: {}...", proof_hash.chars().take(16).collect::<String>());
+    println!(
+        "  Hash: {}...",
+        proof_hash.chars().take(16).collect::<String>()
+    );
     println!("  Prev root: {:?}", proof.prev_state_root);
     println!("  New root:  {:?}", proof.new_state_root);
     println!();
@@ -1091,8 +1096,7 @@ fn batch_verify(proof_path: PathBuf) -> Result<()> {
         println!("  Verification time: {:?}", elapsed);
         println!(
             "  State transition verified: {:?} -> {:?}",
-            proof.prev_state_root,
-            proof.new_state_root
+            proof.prev_state_root, proof.new_state_root
         );
         Ok(())
     } else {
@@ -1214,8 +1218,7 @@ fn run_sequencer(
         println!("--- Batch {} ---", batch_num);
         println!(
             "  Events: {} - {}",
-            total_events_processed,
-            batch_last_index
+            total_events_processed, batch_last_index
         );
 
         // Create metadata for this batch
@@ -1243,9 +1246,7 @@ fn run_sequencer(
             // Decide if this event should be a violation
             let is_violation = include_violations && (seq % 5 == 4); // Every 5th event
             let amount = if is_violation {
-                limit
-                    .saturating_add(1)
-                    .saturating_add(rand_u64() % 1000) // Over limit
+                limit.saturating_add(1).saturating_add(rand_u64() % 1000) // Over limit
             } else {
                 rand_u64() % limit // Under limit
             };
@@ -1303,10 +1304,12 @@ fn run_sequencer(
             witness.store_id_felts(),
             metadata.sequence_start,
             metadata.sequence_end,
+            metadata.timestamp,
             events_in_batch,
             witness.all_compliant(),
-            policy_hash,
+            BatchPolicyKind::AmlThreshold,
             limit,
+            witness.public_inputs_accumulator()?,
         );
 
         let start = Instant::now();
@@ -1331,7 +1334,7 @@ fn run_sequencer(
         // Save proof if output directory specified
         if let Some(ref dir) = output_dir {
             let proof_file = dir.join(format!("batch_{:04}.json", batch_num));
-            let serialized = SerializableBatchProof::new(proof.clone(), pub_inputs.clone());
+            let serialized = SerializableBatchProof::new(proof.clone(), pub_inputs.clone())?;
             fs::write(&proof_file, serialized.to_json()?)?;
             println!("  Saved: {}", proof_file.display());
         }

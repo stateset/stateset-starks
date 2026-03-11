@@ -17,6 +17,9 @@ pub struct EventLeaf {
     /// Policy hash as field elements (8 elements from SHA-256)
     pub policy_hash: [Felt; 8],
 
+    /// Canonical public-input hash as field elements (8 elements from SHA-256)
+    pub public_inputs_hash: [Felt; 8],
+
     /// Compliance flag (1 = compliant, 0 = not compliant)
     pub compliance_flag: Felt,
 }
@@ -27,12 +30,14 @@ impl EventLeaf {
         event_id: [Felt; 4],
         amount_commitment: [Felt; 4],
         policy_hash: [Felt; 8],
+        public_inputs_hash: [Felt; 8],
         is_compliant: bool,
     ) -> Self {
         Self {
             event_id,
             amount_commitment,
             policy_hash,
+            public_inputs_hash,
             compliance_flag: if is_compliant {
                 felt_from_u64(1)
             } else {
@@ -43,11 +48,12 @@ impl EventLeaf {
 
     /// Compute the leaf hash using Rescue
     pub fn hash(&self) -> [Felt; 4] {
-        // Concatenate all fields: 4 + 4 + 8 + 1 = 17 elements
-        let mut input = Vec::with_capacity(17);
+        // Concatenate all fields: 4 + 4 + 8 + 8 + 1 = 25 elements
+        let mut input = Vec::with_capacity(25);
         input.extend_from_slice(&self.event_id);
         input.extend_from_slice(&self.amount_commitment);
         input.extend_from_slice(&self.policy_hash);
+        input.extend_from_slice(&self.public_inputs_hash);
         input.push(self.compliance_flag);
 
         rescue_hash(&input)
@@ -250,6 +256,7 @@ mod tests {
             event_id: [felt_from_u64(index as u64); 4],
             amount_commitment: [felt_from_u64(1000 + index as u64); 4],
             policy_hash: [felt_from_u64(2000 + index as u64); 8],
+            public_inputs_hash: [felt_from_u64(3000 + index as u64); 8],
             compliance_flag: felt_from_u64(1),
         }
     }

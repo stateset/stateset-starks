@@ -40,14 +40,16 @@ impl SequencerClient {
 
         let api_key = api_key.trim();
         if api_key.is_empty() {
-            return Err(ClientError::InvalidHeader("api_key must not be empty".to_string()));
+            return Err(ClientError::InvalidHeader(
+                "api_key must not be empty".to_string(),
+            ));
         }
 
         let key = Zeroizing::new(format!("ApiKey {}", api_key));
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        let auth_value = HeaderValue::from_str(&key)
-            .map_err(|e| ClientError::InvalidHeader(e.to_string()))?;
+        let auth_value =
+            HeaderValue::from_str(&key).map_err(|e| ClientError::InvalidHeader(e.to_string()))?;
         headers.insert(AUTHORIZATION, auth_value);
         // `key` is zeroed on drop here
 
@@ -316,13 +318,11 @@ impl SequencerClient {
     ) -> Result<SubmitProofResponse> {
         use ves_stark_prover::{ComplianceProver, ComplianceWitness};
 
-        let policy = Policy::from_public_inputs(
-            &public_inputs.policy_id,
-            &public_inputs.policy_params,
-        )
-        .map_err(|e| {
-            ClientError::InvalidPublicInputs(format!("invalid public inputs policy: {e}"))
-        })?;
+        let policy =
+            Policy::from_public_inputs(&public_inputs.policy_id, &public_inputs.policy_params)
+                .map_err(|e| {
+                    ClientError::InvalidPublicInputs(format!("invalid public inputs policy: {e}"))
+                })?;
 
         if policy.limit() != threshold {
             return Err(ClientError::InvalidPublicInputs(format!(

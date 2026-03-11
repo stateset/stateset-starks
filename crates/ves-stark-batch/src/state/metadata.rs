@@ -192,14 +192,7 @@ mod tests {
 
     #[test]
     fn test_num_events_invalid_range_returns_zero() {
-        let metadata = BatchMetadata::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            10,
-            2,
-            0,
-        );
+        let metadata = BatchMetadata::new(Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), 10, 2, 0);
 
         assert_eq!(metadata.num_events(), 0);
     }

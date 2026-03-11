@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use ves_stark_primitives::felt_from_u64;
 
 use crate::error::BatchError;
 use crate::prover::BatchProof;
@@ -47,6 +48,9 @@ pub struct SerializableBatchPublicInputs {
     /// Last sequence number in batch
     pub sequence_end: u64,
 
+    /// Batch timestamp (Unix epoch seconds)
+    pub timestamp: u64,
+
     /// Number of events in batch
     pub num_events: u64,
 
@@ -56,42 +60,52 @@ pub struct SerializableBatchPublicInputs {
     /// Policy hash (8 x u64)
     pub policy_hash: [u64; 8],
 
+    /// Policy kind encoding
+    pub policy_kind: u64,
+
     /// Policy limit (threshold or cap)
     pub policy_limit: u64,
+
+    /// Ordered accumulator over canonical per-event public-input hashes (8 x u64)
+    pub public_inputs_accumulator: [u64; 8],
 }
 
 impl SerializableBatchProof {
     /// Current protocol version
-    pub const VERSION: u8 = 1;
+    pub const VERSION: u8 = 3;
 
     /// Fixed-size public input payload in bytes for compact binary serialization.
     ///
-    /// 33 u64 elements × 8 bytes.
-    const PUBLIC_INPUT_BYTES: usize = 33 * 8;
+    /// 43 u64 elements × 8 bytes.
+    const PUBLIC_INPUT_BYTES: usize = 43 * 8;
 
     /// Create a new serializable batch proof
-    pub fn new(proof: BatchProof, public_inputs: BatchPublicInputs) -> Self {
-        Self {
+    pub fn new(proof: BatchProof, public_inputs: BatchPublicInputs) -> Result<Self, BatchError> {
+        Ok(Self {
             version: Self::VERSION,
             proof,
-            public_inputs: SerializableBatchPublicInputs::from(public_inputs),
-        }
+            public_inputs: SerializableBatchPublicInputs::try_from(public_inputs)?,
+        })
     }
 
     /// Serialize to JSON
     pub fn to_json(&self) -> Result<String, BatchError> {
+        self.public_inputs.validate_for_serialization()?;
         serde_json::to_string_pretty(self)
             .map_err(|e| BatchError::SerializationFailed(format!("JSON error: {}", e)))
     }
 
     /// Deserialize from JSON
     pub fn from_json(json: &str) -> Result<Self, BatchError> {
-        serde_json::from_str(json)
-            .map_err(|e| BatchError::DeserializationFailed(format!("JSON error: {}", e)))
+        let proof: Self = serde_json::from_str(json)
+            .map_err(|e| BatchError::DeserializationFailed(format!("JSON error: {}", e)))?;
+        proof.public_inputs.validate_for_deserialization()?;
+        Ok(proof)
     }
 
     /// Serialize to compact binary format
     pub fn to_bytes(&self) -> Result<Vec<u8>, BatchError> {
+        self.public_inputs.validate_for_serialization()?;
         let mut bytes = Vec::new();
 
         // Version byte
@@ -138,6 +152,9 @@ impl SerializableBatchProof {
         // sequence_end (8 bytes)
         bytes.extend_from_slice(&self.public_inputs.sequence_end.to_le_bytes());
 
+        // timestamp (8 bytes)
+        bytes.extend_from_slice(&self.public_inputs.timestamp.to_le_bytes());
+
         // num_events (8 bytes)
         bytes.extend_from_slice(&self.public_inputs.num_events.to_le_bytes());
 
@@ -149,8 +166,16 @@ impl SerializableBatchProof {
             bytes.extend_from_slice(&val.to_le_bytes());
         }
 
+        // policy_kind (8 bytes)
+        bytes.extend_from_slice(&self.public_inputs.policy_kind.to_le_bytes());
+
         // policy_limit (8 bytes)
         bytes.extend_from_slice(&self.public_inputs.policy_limit.to_le_bytes());
+
+        // public_inputs_accumulator (64 bytes)
+        for val in &self.public_inputs.public_inputs_accumulator {
+            bytes.extend_from_slice(&val.to_le_bytes());
+        }
 
         Ok(bytes)
     }
@@ -246,6 +271,7 @@ impl SerializableBatchProof {
 
         let sequence_start = read_u64(bytes, &mut pos)?;
         let sequence_end = read_u64(bytes, &mut pos)?;
+        let timestamp = read_u64(bytes, &mut pos)?;
         let num_events = read_u64(bytes, &mut pos)?;
         let all_compliant = read_u64(bytes, &mut pos)?;
 
@@ -254,32 +280,11 @@ impl SerializableBatchProof {
             *val = read_u64(bytes, &mut pos)?;
         }
 
+        let policy_kind = read_u64(bytes, &mut pos)?;
         let policy_limit = read_u64(bytes, &mut pos)?;
-
-        if sequence_start > sequence_end {
-            return Err(BatchError::DeserializationFailed(
-                "Invalid sequence range in public inputs".to_string(),
-            ));
-        }
-
-        let expected_num_events = sequence_end
-            .checked_sub(sequence_start)
-            .and_then(|range| range.checked_add(1))
-            .ok_or_else(|| {
-                BatchError::DeserializationFailed("Sequence span overflows u64".to_string())
-            })?;
-
-        if expected_num_events != num_events {
-            return Err(BatchError::DeserializationFailed(format!(
-                "Inconsistent sequence range ({}) and num_events ({})",
-                expected_num_events, num_events
-            )));
-        }
-
-        if all_compliant > 1 {
-            return Err(BatchError::DeserializationFailed(
-                "Invalid all_compliant flag (must be 0 or 1)".to_string(),
-            ));
+        let mut public_inputs_accumulator = [0u64; 8];
+        for val in &mut public_inputs_accumulator {
+            *val = read_u64(bytes, &mut pos)?;
         }
 
         if pos != public_inputs_end {
@@ -288,11 +293,24 @@ impl SerializableBatchProof {
             ));
         }
 
-        let num_events_usize = usize::try_from(num_events).map_err(|_| {
-            BatchError::DeserializationFailed("num_events is too large for this platform".to_string())
-        })?;
-
-        let batch_id_uuid = batch_id_to_uuid_string(batch_id)?;
+        let public_inputs = SerializableBatchPublicInputs {
+            prev_state_root,
+            new_state_root,
+            batch_id,
+            tenant_id,
+            store_id,
+            sequence_start,
+            sequence_end,
+            timestamp,
+            num_events,
+            all_compliant,
+            policy_hash,
+            policy_kind,
+            policy_limit,
+            public_inputs_accumulator,
+        };
+        let validated_public_inputs = BatchPublicInputs::try_from(public_inputs.clone())?;
+        let batch_id_uuid = batch_id_to_uuid_string(public_inputs.batch_id)?;
 
         // Compute hash and size before moving proof_bytes
         let proof_hash = BatchProof::compute_hash(&proof_bytes).to_hex();
@@ -306,8 +324,8 @@ impl SerializableBatchProof {
             new_state_root,
             metadata: crate::prover::BatchProofMetadata {
                 batch_id: batch_id_uuid,
-                num_events: num_events_usize,
-                all_compliant: all_compliant == 1,
+                num_events: validated_public_inputs.num_events_usize(),
+                all_compliant: validated_public_inputs.is_all_compliant(),
                 proving_time_ms: 0,
                 trace_length: 0,
                 proof_size,
@@ -318,31 +336,24 @@ impl SerializableBatchProof {
         Ok(Self {
             version,
             proof,
-            public_inputs: SerializableBatchPublicInputs {
-                prev_state_root,
-                new_state_root,
-                batch_id,
-                tenant_id,
-                store_id,
-                sequence_start,
-                sequence_end,
-                num_events,
-                all_compliant,
-                policy_hash,
-                policy_limit,
-            },
+            public_inputs,
         })
     }
 
     /// Convert public inputs back to BatchPublicInputs
-    pub fn to_batch_public_inputs(&self) -> BatchPublicInputs {
-        self.public_inputs.clone().into()
+    pub fn to_batch_public_inputs(&self) -> Result<BatchPublicInputs, BatchError> {
+        self.public_inputs.clone().try_into()
     }
 }
 
-impl From<BatchPublicInputs> for SerializableBatchPublicInputs {
-    fn from(inputs: BatchPublicInputs) -> Self {
-        Self {
+impl TryFrom<BatchPublicInputs> for SerializableBatchPublicInputs {
+    type Error = BatchError;
+
+    fn try_from(inputs: BatchPublicInputs) -> Result<Self, Self::Error> {
+        inputs.validate()?;
+        let policy_hash = inputs.try_policy_hash()?;
+
+        Ok(Self {
             prev_state_root: [
                 inputs.prev_state_root[0].as_int(),
                 inputs.prev_state_root[1].as_int(),
@@ -375,20 +386,23 @@ impl From<BatchPublicInputs> for SerializableBatchPublicInputs {
             ],
             sequence_start: inputs.sequence_start.as_int(),
             sequence_end: inputs.sequence_end.as_int(),
+            timestamp: inputs.timestamp.as_int(),
             num_events: inputs.num_events.as_int(),
             all_compliant: inputs.all_compliant.as_int(),
             policy_hash: [
-                inputs.policy_hash[0].as_int(),
-                inputs.policy_hash[1].as_int(),
-                inputs.policy_hash[2].as_int(),
-                inputs.policy_hash[3].as_int(),
-                inputs.policy_hash[4].as_int(),
-                inputs.policy_hash[5].as_int(),
-                inputs.policy_hash[6].as_int(),
-                inputs.policy_hash[7].as_int(),
+                policy_hash[0].as_int(),
+                policy_hash[1].as_int(),
+                policy_hash[2].as_int(),
+                policy_hash[3].as_int(),
+                policy_hash[4].as_int(),
+                policy_hash[5].as_int(),
+                policy_hash[6].as_int(),
+                policy_hash[7].as_int(),
             ],
+            policy_kind: inputs.policy_kind.as_int(),
             policy_limit: inputs.policy_limit.as_int(),
-        }
+            public_inputs_accumulator: inputs.public_inputs_accumulator.map(|lane| lane.as_int()),
+        })
     }
 }
 
@@ -407,57 +421,61 @@ fn batch_id_to_uuid_string(batch_id: [u64; 4]) -> Result<String, BatchError> {
     Ok(Uuid::from_bytes(batch_id_bytes).to_string())
 }
 
-impl From<SerializableBatchPublicInputs> for BatchPublicInputs {
-    fn from(inputs: SerializableBatchPublicInputs) -> Self {
-        use ves_stark_primitives::felt_from_u64;
+impl TryFrom<SerializableBatchPublicInputs> for BatchPublicInputs {
+    type Error = BatchError;
 
-        Self {
-            prev_state_root: [
-                felt_from_u64(inputs.prev_state_root[0]),
-                felt_from_u64(inputs.prev_state_root[1]),
-                felt_from_u64(inputs.prev_state_root[2]),
-                felt_from_u64(inputs.prev_state_root[3]),
-            ],
-            new_state_root: [
-                felt_from_u64(inputs.new_state_root[0]),
-                felt_from_u64(inputs.new_state_root[1]),
-                felt_from_u64(inputs.new_state_root[2]),
-                felt_from_u64(inputs.new_state_root[3]),
-            ],
-            batch_id: [
-                felt_from_u64(inputs.batch_id[0]),
-                felt_from_u64(inputs.batch_id[1]),
-                felt_from_u64(inputs.batch_id[2]),
-                felt_from_u64(inputs.batch_id[3]),
-            ],
-            tenant_id: [
-                felt_from_u64(inputs.tenant_id[0]),
-                felt_from_u64(inputs.tenant_id[1]),
-                felt_from_u64(inputs.tenant_id[2]),
-                felt_from_u64(inputs.tenant_id[3]),
-            ],
-            store_id: [
-                felt_from_u64(inputs.store_id[0]),
-                felt_from_u64(inputs.store_id[1]),
-                felt_from_u64(inputs.store_id[2]),
-                felt_from_u64(inputs.store_id[3]),
-            ],
+    fn try_from(inputs: SerializableBatchPublicInputs) -> Result<Self, Self::Error> {
+        let public_inputs = BatchPublicInputs {
+            prev_state_root: inputs.prev_state_root.map(felt_from_u64),
+            new_state_root: inputs.new_state_root.map(felt_from_u64),
+            batch_id: inputs.batch_id.map(felt_from_u64),
+            tenant_id: inputs.tenant_id.map(felt_from_u64),
+            store_id: inputs.store_id.map(felt_from_u64),
             sequence_start: felt_from_u64(inputs.sequence_start),
             sequence_end: felt_from_u64(inputs.sequence_end),
+            timestamp: felt_from_u64(inputs.timestamp),
             num_events: felt_from_u64(inputs.num_events),
             all_compliant: felt_from_u64(inputs.all_compliant),
-            policy_hash: [
-                felt_from_u64(inputs.policy_hash[0]),
-                felt_from_u64(inputs.policy_hash[1]),
-                felt_from_u64(inputs.policy_hash[2]),
-                felt_from_u64(inputs.policy_hash[3]),
-                felt_from_u64(inputs.policy_hash[4]),
-                felt_from_u64(inputs.policy_hash[5]),
-                felt_from_u64(inputs.policy_hash[6]),
-                felt_from_u64(inputs.policy_hash[7]),
-            ],
+            policy_kind: felt_from_u64(inputs.policy_kind),
             policy_limit: felt_from_u64(inputs.policy_limit),
+            public_inputs_accumulator: inputs.public_inputs_accumulator.map(felt_from_u64),
+        };
+
+        public_inputs.validate_for_deserialization()?;
+
+        let expected_policy_hash = public_inputs
+            .try_policy_hash()
+            .map_err(|err| match err {
+                BatchError::InvalidPublicInputs(message) => {
+                    BatchError::DeserializationFailed(message)
+                }
+                other => other,
+            })?
+            .map(|lane| lane.as_int());
+        if inputs.policy_hash != expected_policy_hash {
+            return Err(BatchError::DeserializationFailed(
+                "policy_hash does not match policy_kind + policy_limit".to_string(),
+            ));
         }
+
+        Ok(public_inputs)
+    }
+}
+
+impl SerializableBatchPublicInputs {
+    fn validate_for_deserialization(&self) -> Result<(), BatchError> {
+        let _ = BatchPublicInputs::try_from(self.clone())?;
+        Ok(())
+    }
+
+    fn validate_for_serialization(&self) -> Result<(), BatchError> {
+        self.validate_for_deserialization()
+            .map_err(|err| match err {
+                BatchError::DeserializationFailed(message) => {
+                    BatchError::SerializationFailed(format!("invalid public inputs: {message}"))
+                }
+                other => other,
+            })
     }
 }
 
@@ -465,6 +483,7 @@ impl From<SerializableBatchPublicInputs> for BatchPublicInputs {
 mod tests {
     use super::*;
     use crate::prover::BatchProofMetadata;
+    use crate::public_inputs::BatchPolicyKind;
     use ves_stark_primitives::felt_from_u64;
 
     fn uuid_from_batch_id_fields(batch_id: [u64; 4]) -> Uuid {
@@ -504,10 +523,12 @@ mod tests {
             [17, 18, 19, 20].map(felt_from_u64),
             0,
             3,
+            1234567890,
             4,
             true,
-            [21, 22, 23, 24, 25, 26, 27, 28].map(felt_from_u64),
+            BatchPolicyKind::AmlThreshold,
             10_000,
+            [21, 22, 23, 24, 25, 26, 27, 28].map(felt_from_u64),
         )
     }
 
@@ -515,7 +536,7 @@ mod tests {
     fn test_json_serialization() {
         let proof = sample_proof();
         let inputs = sample_public_inputs();
-        let serializable = SerializableBatchProof::new(proof, inputs);
+        let serializable = SerializableBatchProof::new(proof, inputs).unwrap();
 
         let json = serializable.to_json().unwrap();
         let deserialized = SerializableBatchProof::from_json(&json).unwrap();
@@ -528,7 +549,7 @@ mod tests {
     fn test_binary_round_trip() {
         let proof = sample_proof();
         let inputs = sample_public_inputs();
-        let serializable = SerializableBatchProof::new(proof.clone(), inputs.clone());
+        let serializable = SerializableBatchProof::new(proof.clone(), inputs.clone()).unwrap();
 
         let bytes = serializable.to_bytes().unwrap();
         let deserialized = SerializableBatchProof::from_bytes(&bytes).unwrap();
@@ -543,6 +564,18 @@ mod tests {
             deserialized.public_inputs.new_state_root,
             serializable.public_inputs.new_state_root
         );
+        assert_eq!(
+            deserialized.public_inputs.timestamp,
+            serializable.public_inputs.timestamp
+        );
+        assert_eq!(
+            deserialized.public_inputs.policy_kind,
+            serializable.public_inputs.policy_kind
+        );
+        assert_eq!(
+            deserialized.public_inputs.public_inputs_accumulator,
+            serializable.public_inputs.public_inputs_accumulator
+        );
     }
 
     #[test]
@@ -551,7 +584,7 @@ mod tests {
         let mut inputs = sample_public_inputs();
         inputs.batch_id = [11, 22, 33, 44].map(felt_from_u64);
 
-        let serializable = SerializableBatchProof::new(proof, inputs);
+        let serializable = SerializableBatchProof::new(proof, inputs).unwrap();
         let expected_batch_id = uuid_from_batch_id_fields([11, 22, 33, 44]).to_string();
 
         let bytes = serializable.to_bytes().unwrap();
@@ -564,7 +597,10 @@ mod tests {
     fn test_binary_deserialization_rejects_short_payload() {
         let proof = sample_proof();
         let inputs = sample_public_inputs();
-        let bytes = SerializableBatchProof::new(proof, inputs).to_bytes().unwrap();
+        let bytes = SerializableBatchProof::new(proof, inputs)
+            .unwrap()
+            .to_bytes()
+            .unwrap();
 
         let short = &bytes[..bytes.len() - 1];
         assert!(matches!(
@@ -577,13 +613,14 @@ mod tests {
     fn test_binary_deserialization_rejects_invalid_all_compliant_flag() {
         let proof = sample_proof();
         let inputs = sample_public_inputs();
-        let mut bytes = SerializableBatchProof::new(proof, inputs).to_bytes().unwrap();
+        let mut bytes = SerializableBatchProof::new(proof, inputs)
+            .unwrap()
+            .to_bytes()
+            .unwrap();
 
         // all_compliant is the 4th u64 inside the fixed public input block.
-        let all_compliant_offset =
-            bytes.len() - SerializableBatchProof::PUBLIC_INPUT_BYTES + 184;
-        bytes[all_compliant_offset..all_compliant_offset + 8]
-            .copy_from_slice(&2u64.to_le_bytes());
+        let all_compliant_offset = bytes.len() - SerializableBatchProof::PUBLIC_INPUT_BYTES + 184;
+        bytes[all_compliant_offset..all_compliant_offset + 8].copy_from_slice(&2u64.to_le_bytes());
 
         assert!(matches!(
             SerializableBatchProof::from_bytes(&bytes),
@@ -602,7 +639,10 @@ mod tests {
             felt_from_u64(44),
         ];
 
-        let bytes = SerializableBatchProof::new(proof, inputs).to_bytes().unwrap();
+        let bytes = SerializableBatchProof::new(proof, inputs)
+            .unwrap()
+            .to_bytes()
+            .unwrap();
         assert!(matches!(
             SerializableBatchProof::from_bytes(&bytes),
             Err(BatchError::DeserializationFailed(_))
@@ -613,7 +653,7 @@ mod tests {
     fn test_binary_round_trip_recomputes_proof_hash() {
         let proof = sample_proof();
         let inputs = sample_public_inputs();
-        let serializable = SerializableBatchProof::new(proof.clone(), inputs);
+        let serializable = SerializableBatchProof::new(proof.clone(), inputs).unwrap();
         let bytes = serializable.to_bytes().unwrap();
 
         let deserialized = SerializableBatchProof::from_bytes(&bytes).unwrap();
@@ -626,12 +666,55 @@ mod tests {
     #[test]
     fn test_public_inputs_conversion() {
         let inputs = sample_public_inputs();
-        let serializable = SerializableBatchPublicInputs::from(inputs.clone());
-        let recovered: BatchPublicInputs = serializable.into();
+        let serializable = SerializableBatchPublicInputs::try_from(inputs.clone()).unwrap();
+        let recovered = BatchPublicInputs::try_from(serializable).unwrap();
 
         for i in 0..4 {
             assert_eq!(recovered.prev_state_root[i], inputs.prev_state_root[i]);
             assert_eq!(recovered.new_state_root[i], inputs.new_state_root[i]);
         }
+        assert_eq!(recovered.timestamp, inputs.timestamp);
+        assert_eq!(recovered.policy_kind, inputs.policy_kind);
+        assert_eq!(
+            recovered.public_inputs_accumulator,
+            inputs.public_inputs_accumulator
+        );
+    }
+
+    #[test]
+    fn test_public_inputs_conversion_rejects_mismatched_policy_hash() {
+        let inputs = sample_public_inputs();
+        let mut serializable = SerializableBatchPublicInputs::try_from(inputs).unwrap();
+        serializable.policy_hash[0] = serializable.policy_hash[0].wrapping_add(1);
+
+        assert!(BatchPublicInputs::try_from(serializable).is_err());
+    }
+
+    #[test]
+    fn test_serializable_proof_new_rejects_invalid_public_inputs() {
+        let proof = sample_proof();
+        let inputs = BatchPublicInputs {
+            policy_kind: felt_from_u64(99),
+            ..sample_public_inputs()
+        };
+
+        assert!(matches!(
+            SerializableBatchProof::new(proof, inputs),
+            Err(BatchError::InvalidPublicInputs(_))
+        ));
+    }
+
+    #[test]
+    fn test_json_deserialization_rejects_invalid_policy_kind() {
+        let proof = sample_proof();
+        let inputs = sample_public_inputs();
+        let mut serializable = SerializableBatchProof::new(proof, inputs).unwrap();
+        serializable.public_inputs.policy_kind = 99;
+
+        let json = serde_json::to_string(&serializable).unwrap();
+        assert!(matches!(
+            SerializableBatchProof::from_json(&json),
+            Err(BatchError::DeserializationFailed(_))
+        ));
     }
 }

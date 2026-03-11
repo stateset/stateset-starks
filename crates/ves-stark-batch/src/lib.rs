@@ -10,6 +10,8 @@
 //! - They bind per-event policy consistency, sequence continuity, and witness commitments.
 //! - They compute compliance/accumulator state inside the AIR and enforce Merkle and finalization hashing
 //!   in-circuit.
+//! - They expose a public ordered accumulator over canonical per-event public-input hashes so
+//!   external verifiers can bind proofs to an expected event stream.
 //!
 //! Security note: batch proofs still do not embed payload-to-amount linkage inside this crate.
 //! If protocol security requires that, that linkage must be enforced by upstream policy
@@ -63,7 +65,7 @@ pub mod verifier;
 
 // Re-exports for convenience
 pub use error::BatchError;
-pub use public_inputs::BatchPublicInputs;
+pub use public_inputs::{compute_public_inputs_accumulator, BatchPolicyKind, BatchPublicInputs};
 
 // Prover types
 pub use prover::{

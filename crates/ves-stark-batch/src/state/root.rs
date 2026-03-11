@@ -63,6 +63,12 @@ impl BatchStateRoot {
 
     /// Convert to hex string for display
     pub fn to_hex(&self) -> String {
+        self.to_hex_le()
+    }
+
+    /// Convert state root to a 32-byte little-endian hex string.
+    /// Each 64-bit limb is serialized in native u64 little-endian byte order.
+    pub fn to_hex_le(&self) -> String {
         let bytes: Vec<u8> = self
             .root
             .iter()
@@ -73,6 +79,12 @@ impl BatchStateRoot {
 
     /// Parse from hex string
     pub fn from_hex(hex_str: &str) -> Result<Self, String> {
+        Self::from_hex_le(hex_str)
+    }
+
+    /// Parse from a 32-byte little-endian hex string.
+    /// Each 64-bit limb is expected in u64 little-endian byte order.
+    pub fn from_hex_le(hex_str: &str) -> Result<Self, String> {
         let bytes = hex::decode(hex_str).map_err(|e| e.to_string())?;
         if bytes.len() != 32 {
             return Err(format!("Expected 32 bytes, got {}", bytes.len()));
@@ -121,6 +133,7 @@ mod tests {
             event_id: [felt_from_u64(index as u64); 4],
             amount_commitment: [felt_from_u64(1000 + index as u64); 4],
             policy_hash: [felt_from_u64(2000 + index as u64); 8],
+            public_inputs_hash: [felt_from_u64(3000 + index as u64); 8],
             compliance_flag: felt_from_u64(1),
         }
     }

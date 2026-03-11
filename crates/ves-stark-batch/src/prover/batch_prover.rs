@@ -13,11 +13,11 @@ use ves_stark_air::options::ProofOptions;
 use ves_stark_primitives::{Felt, Hash256};
 
 use crate::air::batch_air::BatchComplianceAir;
-use crate::error::{BatchError, BatchResult};
 use crate::air::trace_layout::MAX_BATCH_SIZE;
+use crate::error::{BatchError, BatchResult};
 use crate::prover::batch_trace::BatchTraceBuilder;
 use crate::prover::witness::BatchWitness;
-use crate::public_inputs::BatchPublicInputs;
+use crate::public_inputs::{BatchPolicyKind, BatchPublicInputs};
 use crate::state::BatchStateRoot;
 
 /// Type alias for the hash function used
@@ -202,6 +202,7 @@ impl BatchProver {
         let trace_length = trace.length();
 
         // Build public inputs
+        let policy_kind = witness_policy_kind(witness)?;
         let pub_inputs = BatchPublicInputs::new(
             prev_state_root.root,
             new_state_root.root,
@@ -210,10 +211,12 @@ impl BatchProver {
             witness.store_id_felts(),
             witness.metadata.sequence_start,
             witness.metadata.sequence_end,
+            witness.metadata.timestamp,
             witness.num_events(),
             all_compliant,
-            witness.policy_hash,
+            policy_kind,
             witness.policy_limit,
+            witness.public_inputs_accumulator()?,
         );
 
         // Create internal prover
@@ -287,6 +290,16 @@ impl Default for BatchProver {
     }
 }
 
+fn witness_policy_kind(witness: &BatchWitness) -> BatchResult<BatchPolicyKind> {
+    let first_event = witness.events.first().ok_or(BatchError::EmptyBatch)?;
+    BatchPolicyKind::from_policy_id(&first_event.public_inputs.policy_id).ok_or_else(|| {
+        BatchError::InvalidWitness(format!(
+            "Unsupported batch policy id: {}",
+            first_event.public_inputs.policy_id
+        ))
+    })
+}
+
 /// Internal Winterfell prover implementation for batch proofs
 struct VesBatchProver {
     options: winter_air::ProofOptions,
@@ -295,6 +308,7 @@ struct VesBatchProver {
 
 impl VesBatchProver {
     fn try_new(options: ProofOptions, pub_inputs: BatchPublicInputs) -> BatchResult<Self> {
+        pub_inputs.validate()?;
         let options = options
             .try_to_winterfell()
             .map_err(|e| BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}")))?;
@@ -427,21 +441,30 @@ mod tests {
         hash_to_felts(&hash)
     }
 
+    fn sample_policy_kind() -> BatchPolicyKind {
+        BatchPolicyKind::AmlThreshold
+    }
+
     #[test]
     fn test_batch_prove_and_verify_all_compliant() {
         let threshold = 10_000u64;
         let tenant_id = Uuid::new_v4();
         let store_id = Uuid::new_v4();
-        let metadata =
-            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 1);
+        let metadata = BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 1);
 
         let witness = BatchWitnessBuilder::new()
             .metadata(metadata)
             .policy_hash(sample_policy_hash(threshold))
             .policy_limit(threshold)
-            .add_event(5_000, sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id))
+            .add_event(
+                5_000,
+                sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id),
+            )
             .unwrap()
-            .add_event(9_999, sample_public_inputs(threshold, 9_999, 1, tenant_id, store_id))
+            .add_event(
+                9_999,
+                sample_public_inputs(threshold, 9_999, 1, tenant_id, store_id),
+            )
             .unwrap()
             .build()
             .unwrap();
@@ -459,10 +482,12 @@ mod tests {
             witness.store_id_felts(),
             witness.metadata.sequence_start,
             witness.metadata.sequence_end,
+            witness.metadata.timestamp,
             witness.num_events(),
             witness.all_compliant(),
-            witness.policy_hash,
+            sample_policy_kind(),
             witness.policy_limit,
+            witness.public_inputs_accumulator().unwrap(),
         );
 
         let result = verify_batch_proof(&proof.proof_bytes, &pub_inputs).unwrap();
@@ -475,20 +500,30 @@ mod tests {
     }
 
     #[test]
-    fn test_batch_verifier_rejects_tampered_public_inputs() {
+    fn test_batch_prove_and_verify_non_power_of_two_batch() {
         let threshold = 10_000u64;
         let tenant_id = Uuid::new_v4();
         let store_id = Uuid::new_v4();
-        let metadata =
-            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 1);
+        let metadata = BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 2);
 
         let witness = BatchWitnessBuilder::new()
             .metadata(metadata)
             .policy_hash(sample_policy_hash(threshold))
             .policy_limit(threshold)
-            .add_event(5_000, sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id))
+            .add_event(
+                4_000,
+                sample_public_inputs(threshold, 4_000, 0, tenant_id, store_id),
+            )
             .unwrap()
-            .add_event(9_999, sample_public_inputs(threshold, 9_999, 1, tenant_id, store_id))
+            .add_event(
+                6_500,
+                sample_public_inputs(threshold, 6_500, 1, tenant_id, store_id),
+            )
+            .unwrap()
+            .add_event(
+                9_000,
+                sample_public_inputs(threshold, 9_000, 2, tenant_id, store_id),
+            )
             .unwrap()
             .build()
             .unwrap();
@@ -506,10 +541,165 @@ mod tests {
             witness.store_id_felts(),
             witness.metadata.sequence_start,
             witness.metadata.sequence_end,
+            witness.metadata.timestamp,
             witness.num_events(),
             witness.all_compliant(),
-            witness.policy_hash,
+            sample_policy_kind(),
             witness.policy_limit,
+            witness.public_inputs_accumulator().unwrap(),
+        );
+
+        let result = verify_batch_proof(&proof.proof_bytes, &pub_inputs).unwrap();
+        assert!(
+            result.valid,
+            "non-power-of-two batch proof should verify: {:?}",
+            result.error
+        );
+        assert!(result.all_compliant);
+    }
+
+    #[test]
+    fn test_batch_prove_and_verify_single_event() {
+        let threshold = 10_000u64;
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata = BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
+
+        let witness = BatchWitnessBuilder::new()
+            .metadata(metadata)
+            .policy_hash(sample_policy_hash(threshold))
+            .policy_limit(threshold)
+            .add_event(
+                5_000,
+                sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let prover = BatchProver::with_config(
+            BatchProverConfig::default().with_options(ProofOptions::fast()),
+        );
+        let proof = prover.prove(&witness).unwrap();
+
+        let pub_inputs = BatchPublicInputs::new(
+            witness.prev_state_root.root,
+            witness.compute_new_state_root().unwrap().root,
+            witness.batch_id_felts(),
+            witness.tenant_id_felts(),
+            witness.store_id_felts(),
+            witness.metadata.sequence_start,
+            witness.metadata.sequence_end,
+            witness.metadata.timestamp,
+            witness.num_events(),
+            witness.all_compliant(),
+            sample_policy_kind(),
+            witness.policy_limit,
+            witness.public_inputs_accumulator().unwrap(),
+        );
+
+        let result = verify_batch_proof(&proof.proof_bytes, &pub_inputs).unwrap();
+        assert!(
+            result.valid,
+            "single-event batch proof should verify: {:?}",
+            result.error
+        );
+        assert!(result.all_compliant);
+    }
+
+    #[test]
+    fn test_batch_prove_and_verify_single_event_high_limb_amount() {
+        let threshold = (1u64 << 32) + 10_000;
+        let amount = (1u64 << 32) + 9_999;
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata = BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
+
+        let witness = BatchWitnessBuilder::new()
+            .metadata(metadata)
+            .policy_hash(sample_policy_hash(threshold))
+            .policy_limit(threshold)
+            .add_event(
+                amount,
+                sample_public_inputs(threshold, amount, 0, tenant_id, store_id),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let prover = BatchProver::with_config(
+            BatchProverConfig::default().with_options(ProofOptions::fast()),
+        );
+        let proof = prover.prove(&witness).unwrap();
+
+        let pub_inputs = BatchPublicInputs::new(
+            witness.prev_state_root.root,
+            witness.compute_new_state_root().unwrap().root,
+            witness.batch_id_felts(),
+            witness.tenant_id_felts(),
+            witness.store_id_felts(),
+            witness.metadata.sequence_start,
+            witness.metadata.sequence_end,
+            witness.metadata.timestamp,
+            witness.num_events(),
+            witness.all_compliant(),
+            sample_policy_kind(),
+            witness.policy_limit,
+            witness.public_inputs_accumulator().unwrap(),
+        );
+
+        let result = verify_batch_proof(&proof.proof_bytes, &pub_inputs).unwrap();
+        assert!(
+            result.valid,
+            "single-event high-limb batch proof should verify: {:?}",
+            result.error
+        );
+        assert!(result.all_compliant);
+    }
+
+    #[test]
+    fn test_batch_verifier_rejects_tampered_public_inputs() {
+        let threshold = 10_000u64;
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata = BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 1);
+
+        let witness = BatchWitnessBuilder::new()
+            .metadata(metadata)
+            .policy_hash(sample_policy_hash(threshold))
+            .policy_limit(threshold)
+            .add_event(
+                5_000,
+                sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id),
+            )
+            .unwrap()
+            .add_event(
+                9_999,
+                sample_public_inputs(threshold, 9_999, 1, tenant_id, store_id),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let prover = BatchProver::with_config(
+            BatchProverConfig::default().with_options(ProofOptions::fast()),
+        );
+        let proof = prover.prove(&witness).unwrap();
+
+        let pub_inputs = BatchPublicInputs::new(
+            witness.prev_state_root.root,
+            witness.compute_new_state_root().unwrap().root,
+            witness.batch_id_felts(),
+            witness.tenant_id_felts(),
+            witness.store_id_felts(),
+            witness.metadata.sequence_start,
+            witness.metadata.sequence_end,
+            witness.metadata.timestamp,
+            witness.num_events(),
+            witness.all_compliant(),
+            sample_policy_kind(),
+            witness.policy_limit,
+            witness.public_inputs_accumulator().unwrap(),
         );
 
         // Tamper with public inputs that are bound into the AIR via boundary assertions.
@@ -520,10 +710,10 @@ mod tests {
                     ves_stark_primitives::felt_from_u64(t.policy_limit.as_int().wrapping_add(1));
                 t
             }),
-            ("policy_hash", {
+            ("policy_kind", {
                 let mut t = pub_inputs.clone();
-                t.policy_hash[0] =
-                    ves_stark_primitives::felt_from_u64(t.policy_hash[0].as_int().wrapping_add(1));
+                t.policy_kind =
+                    ves_stark_primitives::felt_from_u64(t.policy_kind.as_int().wrapping_add(1));
                 t
             }),
             ("batch_id", {
@@ -538,10 +728,23 @@ mod tests {
                     ves_stark_primitives::felt_from_u64(t.sequence_end.as_int().wrapping_add(1));
                 t
             }),
+            ("timestamp", {
+                let mut t = pub_inputs.clone();
+                t.timestamp =
+                    ves_stark_primitives::felt_from_u64(t.timestamp.as_int().wrapping_add(1));
+                t
+            }),
             ("num_events", {
                 let mut t = pub_inputs.clone();
                 t.num_events =
                     ves_stark_primitives::felt_from_u64(t.num_events.as_int().wrapping_add(1));
+                t
+            }),
+            ("public_inputs_accumulator", {
+                let mut t = pub_inputs.clone();
+                t.public_inputs_accumulator[0] = ves_stark_primitives::felt_from_u64(
+                    t.public_inputs_accumulator[0].as_int().wrapping_add(1),
+                );
                 t
             }),
         ] {
@@ -562,16 +765,21 @@ mod tests {
         let threshold = 10_000u64;
         let tenant_id = Uuid::new_v4();
         let store_id = Uuid::new_v4();
-        let metadata =
-            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 1);
+        let metadata = BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 1);
 
         let witness = BatchWitnessBuilder::new()
             .metadata(metadata)
             .policy_hash(sample_policy_hash(threshold))
             .policy_limit(threshold)
-            .add_event(5_000, sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id))
+            .add_event(
+                5_000,
+                sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id),
+            )
             .unwrap()
-            .add_event(15_000, sample_public_inputs(threshold, 15_000, 1, tenant_id, store_id)) // non-compliant
+            .add_event(
+                15_000,
+                sample_public_inputs(threshold, 15_000, 1, tenant_id, store_id),
+            ) // non-compliant
             .unwrap()
             .build()
             .unwrap();
@@ -589,10 +797,12 @@ mod tests {
             witness.store_id_felts(),
             witness.metadata.sequence_start,
             witness.metadata.sequence_end,
+            witness.metadata.timestamp,
             witness.num_events(),
             witness.all_compliant(),
-            witness.policy_hash,
+            sample_policy_kind(),
             witness.policy_limit,
+            witness.public_inputs_accumulator().unwrap(),
         );
 
         let result = verify_batch_proof(&proof.proof_bytes, &pub_inputs).unwrap();

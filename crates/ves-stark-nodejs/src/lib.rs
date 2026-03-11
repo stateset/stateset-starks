@@ -34,9 +34,12 @@ fn parse_witness_commitment(witness_commitment: Vec<String>) -> Result<[u64; 4]>
 
     let mut commitment = [0u64; 4];
     for (idx, value) in witness_commitment.iter().enumerate() {
-        let parsed = value
-            .parse::<u64>()
-            .map_err(|_| Error::new(Status::InvalidArg, "Invalid witness commitment element".to_string()))?;
+        let parsed = value.parse::<u64>().map_err(|_| {
+            Error::new(
+                Status::InvalidArg,
+                "Invalid witness commitment element".to_string(),
+            )
+        })?;
         commitment[idx] = parsed;
     }
 
@@ -316,7 +319,10 @@ pub fn create_aml_threshold_params(threshold: i64) -> Result<serde_json::Value> 
 #[napi]
 pub fn create_order_total_cap_params(cap: i64) -> Result<serde_json::Value> {
     if cap < 0 {
-        return Err(Error::new(Status::InvalidArg, "Cap must be non-negative".to_string()));
+        return Err(Error::new(
+            Status::InvalidArg,
+            "Cap must be non-negative".to_string(),
+        ));
     }
 
     Ok(serde_json::json!({ "cap": cap }))

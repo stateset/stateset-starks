@@ -8,7 +8,7 @@ use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
 use winter_verifier::{verify, AcceptableOptions};
 
 use ves_stark_air::options::ProofOptions;
-use ves_stark_primitives::{felt_from_u64, Felt, Hash256, FELT_ONE, FELT_ZERO};
+use ves_stark_primitives::{felt_from_u64, Felt, Hash256};
 
 use crate::air::batch_air::BatchComplianceAir;
 use crate::error::BatchError;
@@ -91,37 +91,7 @@ pub fn verify_batch_proof(
         });
     }
 
-    if public_inputs.all_compliant != FELT_ZERO && public_inputs.all_compliant != FELT_ONE {
-        return Err(BatchError::InvalidPublicInputs(
-            "all_compliant must be 0 or 1".to_string(),
-        ));
-    }
-
-    let sequence_start = public_inputs.sequence_start.as_int();
-    let sequence_end = public_inputs.sequence_end.as_int();
-    if sequence_start > sequence_end {
-        return Err(BatchError::InvalidPublicInputs(
-            "sequence_start must be <= sequence_end".to_string(),
-        ));
-    }
-
-    let expected_num_events = sequence_end
-        .checked_sub(sequence_start)
-        .and_then(|span| span.checked_add(1))
-        .ok_or_else(|| {
-            BatchError::InvalidPublicInputs("sequence span overflows u64".to_string())
-        })?;
-    let num_events_u64 = public_inputs.num_events.as_int();
-    if expected_num_events != num_events_u64 {
-        return Err(BatchError::InvalidPublicInputs(format!(
-            "inconsistent public inputs: expected {} events from sequence range, got {}",
-            expected_num_events, num_events_u64
-        )));
-    }
-
-    let num_events = usize::try_from(num_events_u64).map_err(|_| {
-        BatchError::InvalidPublicInputs("num_events does not fit in platform usize".to_string())
-    })?;
+    let num_events = public_inputs.validate()?;
 
     // Deserialize proof
     let proof = winter_verifier::Proof::from_bytes(proof_bytes)
@@ -230,6 +200,9 @@ impl BatchVerifier {
             // Verify chain continuity (except for first proof)
             if i > 0 {
                 let prev_result: &BatchVerificationResult = &results[i - 1];
+                let prev_inputs = &proofs[i - 1].1;
+                Self::validate_sequence_continuity(prev_inputs, pub_inputs, i)?;
+
                 if result.prev_state_root != prev_result.new_state_root {
                     return Err(BatchError::InvalidStateChain {
                         batch_index: i,
@@ -274,6 +247,32 @@ impl BatchVerifier {
         let result = self.verify(proof_bytes, public_inputs)?;
         Ok(result.valid)
     }
+
+    fn validate_sequence_continuity(
+        prev_inputs: &BatchPublicInputs,
+        curr_inputs: &BatchPublicInputs,
+        batch_index: usize,
+    ) -> Result<(), BatchError> {
+        let expected_sequence_start = prev_inputs
+            .sequence_end
+            .as_int()
+            .checked_add(1)
+            .ok_or_else(|| {
+                BatchError::InvalidPublicInputs(
+                    "sequence range overflows u64 while checking chain continuity".to_string(),
+                )
+            })?;
+
+        let current_sequence_start = curr_inputs.sequence_start.as_int();
+        if current_sequence_start != expected_sequence_start {
+            return Err(BatchError::InvalidPublicInputs(format!(
+                "Invalid batch sequence continuity at batch {}: expected sequence_start {}, got {}",
+                batch_index, expected_sequence_start, current_sequence_start
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for BatchVerifier {
@@ -285,6 +284,7 @@ impl Default for BatchVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::public_inputs::BatchPolicyKind;
 
     #[test]
     fn test_verifier_creation() {
@@ -326,5 +326,71 @@ mod tests {
         assert_eq!(new_felts[1].as_int(), 6);
         assert_eq!(new_felts[2].as_int(), 7);
         assert_eq!(new_felts[3].as_int(), 8);
+    }
+
+    #[test]
+    fn test_sequence_continuity_check() {
+        let mut prev_inputs = BatchPublicInputs {
+            sequence_start: felt_from_u64(10),
+            sequence_end: felt_from_u64(19),
+            ..Default::default()
+        };
+
+        let next_inputs = BatchPublicInputs {
+            sequence_start: felt_from_u64(20),
+            sequence_end: felt_from_u64(29),
+            ..Default::default()
+        };
+
+        assert!(BatchVerifier::validate_sequence_continuity(&prev_inputs, &next_inputs, 1).is_ok());
+
+        prev_inputs.sequence_end = felt_from_u64(u64::MAX);
+        let overflow_err =
+            BatchVerifier::validate_sequence_continuity(&prev_inputs, &next_inputs, 1)
+                .expect_err("overflow should be reported");
+        assert!(matches!(overflow_err, BatchError::InvalidPublicInputs(_)));
+    }
+
+    #[test]
+    fn test_sequence_continuity_check_with_gap() {
+        let prev_inputs = BatchPublicInputs {
+            sequence_start: felt_from_u64(10),
+            sequence_end: felt_from_u64(19),
+            ..Default::default()
+        };
+
+        let next_inputs = BatchPublicInputs {
+            sequence_start: felt_from_u64(22),
+            sequence_end: felt_from_u64(30),
+            ..Default::default()
+        };
+
+        let err = BatchVerifier::validate_sequence_continuity(&prev_inputs, &next_inputs, 1)
+            .expect_err("sequence gap should fail");
+        assert!(matches!(err, BatchError::InvalidPublicInputs(_)));
+    }
+
+    #[test]
+    fn test_verify_batch_proof_rejects_invalid_policy_kind_before_deserializing_proof() {
+        let mut public_inputs = BatchPublicInputs::new(
+            [felt_from_u64(1); 4],
+            [felt_from_u64(2); 4],
+            [felt_from_u64(3); 4],
+            [felt_from_u64(4); 4],
+            [felt_from_u64(5); 4],
+            0,
+            0,
+            123,
+            1,
+            true,
+            BatchPolicyKind::AmlThreshold,
+            10_000,
+            [felt_from_u64(9); 8],
+        );
+        public_inputs.policy_kind = felt_from_u64(99);
+
+        let err = verify_batch_proof(b"not-a-proof", &public_inputs)
+            .expect_err("invalid policy kind should be rejected before proof parsing");
+        assert!(matches!(err, BatchError::InvalidPublicInputs(_)));
     }
 }

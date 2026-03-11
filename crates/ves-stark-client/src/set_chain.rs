@@ -256,8 +256,8 @@ impl SetChainClient {
         let key = Zeroizing::new(format!("Bearer {}", api_key));
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        let auth_value = HeaderValue::from_str(&key)
-            .map_err(|e| ClientError::InvalidHeader(e.to_string()))?;
+        let auth_value =
+            HeaderValue::from_str(&key).map_err(|e| ClientError::InvalidHeader(e.to_string()))?;
         headers.insert(AUTHORIZATION, auth_value);
         // `key` is zeroed on drop here
 
