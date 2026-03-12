@@ -33,6 +33,20 @@ impl SequencerClient {
             .unwrap_or_else(|e| format!("<failed to read response body: {e}>"))
     }
 
+    /// Create a new sequencer client from the `STATESET_API_KEY` environment variable.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_url` - The base URL of the sequencer (e.g., "http://localhost:8080")
+    pub fn from_env(base_url: &str) -> Result<Self> {
+        let api_key = std::env::var("STATESET_API_KEY").map_err(|_| {
+            ClientError::InvalidHeader(
+                "STATESET_API_KEY environment variable not set".to_string(),
+            )
+        })?;
+        Self::new(base_url, &api_key)
+    }
+
     /// Create a new sequencer client.
     ///
     /// # Arguments

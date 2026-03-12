@@ -767,7 +767,7 @@ pub fn rescue_hash(input: &[Felt]) -> [Felt; 4] {
         rescue_permutation(&mut state);
     }
 
-    // Squeeze phase: return capacity elements as output
+    // Squeeze phase: return first 4 elements of rate as output
     [state[0], state[1], state[2], state[3]]
 }
 

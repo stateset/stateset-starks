@@ -544,7 +544,7 @@ This is a non-zero polynomial of degree ≤ N-1 in γ (assuming at least one val
 
 **Important caveat:** In the current implementation, γ = 11 is a fixed, publicly known constant — not a random challenge. This means the Schwartz-Zippel bound models *accidental* collisions, not adaptive algebraic forgery. A malicious prover who knows γ = 11 in advance could, in principle, solve the degree-(N-1) polynomial to find a substitution `value'_k` that produces the same accumulator value. However, this attack is constrained by two factors:
 
-1. **STARK enforcement.** The prover must produce a valid STARK proof for the entire trace. The accumulator values are trace columns subject to transition constraints. The attacker cannot freely choose accumulator values — they must be consistent with a low-degree trace that passes all 505 constraints. Stream accumulator forgery alone does not break soundness; the attacker must *simultaneously* forge the accumulator and produce a valid STARK proof, which requires breaking FRI soundness.
+1. **STARK enforcement.** The prover must produce a valid STARK proof for the entire trace. The accumulator values are trace columns subject to transition constraints. The attacker cannot freely choose accumulator values — they must be consistent with a low-degree trace that passes all 636 constraints. Stream accumulator forgery alone does not break soundness; the attacker must *simultaneously* forge the accumulator and produce a valid STARK proof, which requires breaking FRI soundness.
 
 2. **Practical difficulty.** Solving a degree-127 polynomial equation over the Goldilocks field to find a specific root is feasible in isolation (~2^7 work), but the solution must satisfy all other transition and boundary constraints in the AIR, making the combined attack intractable under STARK soundness assumptions.
 
@@ -566,12 +566,12 @@ All constraints are gated by the `EVENTS_DONE == 0` selector, deactivating them 
 
 | Module | Constraints | Max Degree | Description |
 |--------|-------------|-----------|-------------|
-| Base structural | 54 | 2–3 | Phase control, event indexing, column carry-overs |
-| Merkle + finalization | 47 | 7–10 | In-circuit Rescue transitions, tree traversal, root binding |
+| Base structural | 55 | 2–3 | Phase control, event indexing, column carry-overs |
+| Merkle + finalization | 177 | 7–10 | In-circuit Rescue transitions, tree traversal, root binding, linkage accumulators, commitment hashing |
 | Leaf hashing | 104 | 7–10 | In-circuit Rescue for leaf preimage absorption |
 | Leaf binding | 151 | 2–3 | Stream accumulators linking events to leaves |
 | Compliance binding | 149 | 2–3 | Amount decomposition, subtraction gadget, flag derivation |
-| **Total transitions** | **505** | **10** | |
+| **Total transitions** | **636** | **10** | |
 | **Boundary assertions** | **145** | — | State roots, metadata, policy, accumulators |
 
 ### 6.9 Batch Public Inputs (35 field elements)
@@ -787,14 +787,15 @@ client.submit_proof(ProofSubmission::aml_threshold(
 )).await?;
 ```
 
-API keys are stored in `Zeroizing<String>` wrappers (zeroed on drop) and support environment variable loading (`STATESET_API_KEY`). A `dev` feature flag disables authentication for local development.
+API keys are stored in `Zeroizing<String>` wrappers (zeroed on drop). The client supports explicit key passing via `SequencerClient::new(base_url, api_key)` or environment variable loading via `SequencerClient::from_env(base_url)` (reads `STATESET_API_KEY`). A `dev` feature flag disables authentication for local development.
 
 ### 10.2 Set Chain Submission
 
 Batch proofs are submitted to Set Chain's `SetRegistry` contract for on-chain state anchoring:
 
 ```rust
-let chain_client = SetChainClient::new(chain_url, registry_address);
+let config = SetChainConfig { rpc_url, chain_id, registry_address, .. };
+let chain_client = SetChainClient::new(base_url, api_key, config)?;
 chain_client.submit_batch_proof(batch_proof).await?;
 ```
 
@@ -805,15 +806,17 @@ The `new_state_root` from each batch becomes the `prev_state_root` for the next,
 ```bash
 # Per-event operations
 ves-stark-cli prove --amount 5000 --policy aml.threshold --limit 10000
-ves-stark-cli verify --proof proof.bin --inputs inputs.json
+ves-stark-cli verify --proof proof.bin --inputs inputs.json --limit 10000
 
 # Batch operations
 ves-stark-cli batch-prove --events events.json --policy aml.threshold --limit 10000
-ves-stark-cli batch-verify --proof batch_proof.bin --inputs batch_inputs.json
+ves-stark-cli batch-prove --num-events 8 --policy aml.threshold --limit 10000  # random events
+ves-stark-cli batch-verify --proof batch_proof.json
+ves-stark-cli batch-verify --proof batch_proof.json --inputs batch_inputs.json
 
 # Utilities
-ves-stark-cli inspect --proof proof.bin    # Display proof metadata
-ves-stark-cli gen-inputs                   # Generate test public inputs
+ves-stark-cli inspect --proof proof.bin           # Display proof metadata
+ves-stark-cli gen-inputs --limit 10000            # Generate test public inputs
 ```
 
 ### 10.4 Language Bindings
@@ -821,7 +824,7 @@ ves-stark-cli gen-inputs                   # Generate test public inputs
 **Node.js (NAPI-RS):**
 ```javascript
 const { prove, verify } = require('ves-stark-nodejs');
-const proof = prove(amount, publicInputs, policy);
+const proof = prove(amount, publicInputs, policyType, policyLimit);
 const result = verify(proof.proofBytes, publicInputs, proof.witnessCommitment);
 ```
 
@@ -864,7 +867,7 @@ result = verify(proof.proof_bytes, public_inputs, proof.witness_commitment)
 
 ## 12. Conclusion
 
-StateSet STARK demonstrates that practical, privacy-preserving compliance is achievable with current zero-knowledge technology. By combining STARKs' transparency and post-quantum security with a carefully designed constraint system — 157 per-event constraints and 505 batch constraints enforcing range validity, witness binding, Merkle integrity, and compliance accumulation — the system enables commerce platforms to prove regulatory compliance without exposing sensitive transaction data.
+StateSet STARK demonstrates that practical, privacy-preserving compliance is achievable with current zero-knowledge technology. By combining STARKs' transparency and post-quantum security with a carefully designed constraint system — 157 per-event constraints and 636 batch constraints enforcing range validity, witness binding, Merkle integrity, and compliance accumulation — the system enables commerce platforms to prove regulatory compliance without exposing sensitive transaction data.
 
 The batch proving mode extends this to production-scale event processing, producing chainable Merkle state roots that form a cryptographically verifiable audit trail anchored on Set Chain. The modular Rust architecture, with bindings for Node.js and Python, provides a clear path from proof generation to production deployment.
 

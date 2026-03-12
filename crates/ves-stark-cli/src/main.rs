@@ -211,13 +211,21 @@ enum Commands {
     /// Generate a batch state transition proof (zkRollup-style)
     #[command(name = "batch-prove")]
     BatchProve {
-        /// Number of events in the batch
+        /// Number of events to generate randomly (ignored if --events is provided)
         #[arg(short = 'n', long, default_value = "8")]
         num_events: usize,
 
         /// Policy limit (threshold)
         #[arg(short, long, default_value = "10000")]
         limit: u64,
+
+        /// Policy type
+        #[arg(short, long, value_enum, default_value = "aml.threshold")]
+        policy: PolicyType,
+
+        /// Path to events JSON file (array of {amount, publicInputs} objects)
+        #[arg(short, long)]
+        events: Option<PathBuf>,
 
         /// Output file for the proof
         #[arg(short, long)]
@@ -230,6 +238,10 @@ enum Commands {
         /// Path to the batch proof file
         #[arg(short = 'f', long)]
         proof: PathBuf,
+
+        /// Path to batch public inputs JSON file (optional; extracted from proof file if omitted)
+        #[arg(short, long)]
+        inputs: Option<PathBuf>,
     },
 
     /// Run a sequencer simulation (end-to-end test)
@@ -303,10 +315,12 @@ fn main() -> Result<()> {
         Commands::BatchProve {
             num_events,
             limit,
+            policy,
+            events,
             output,
-        } => batch_prove(num_events, limit, output),
+        } => batch_prove(num_events, limit, policy, events, output),
 
-        Commands::BatchVerify { proof } => batch_verify(proof),
+        Commands::BatchVerify { proof, inputs } => batch_verify(proof, inputs),
 
         Commands::Sequencer {
             num_events,
@@ -902,56 +916,102 @@ fn ensure_experimental_batch_enabled() -> Result<()> {
     }
 }
 
-fn batch_prove(num_events: usize, limit: u64, output_path: Option<PathBuf>) -> Result<()> {
+/// A single event entry in a batch events JSON file
+#[derive(Debug, serde::Deserialize)]
+struct BatchEventEntry {
+    amount: u64,
+    #[serde(rename = "publicInputs")]
+    public_inputs: CompliancePublicInputs,
+}
+
+fn batch_prove(
+    num_events: usize,
+    limit: u64,
+    policy_type: PolicyType,
+    events_path: Option<PathBuf>,
+    output_path: Option<PathBuf>,
+) -> Result<()> {
     ensure_experimental_batch_enabled()?;
 
-    if num_events == 0 {
-        anyhow::bail!("num_events must be at least 1");
-    }
     if limit == 0 {
         anyhow::bail!("limit must be greater than 0");
     }
 
-    println!("Batch Proof Generation");
-    println!("======================");
-    println!("  Events: {}", num_events);
-    println!("  Policy: aml.threshold");
-    println!("  Limit: {}", limit);
-    println!();
-
-    // Generate policy hash
-    let policy_id = "aml.threshold";
-    let params = PolicyParams::threshold(limit);
+    let policy_id = policy_type.policy_id();
+    let params = policy_type.create_policy_params(limit);
     let policy_hash_obj = compute_policy_hash(policy_id, &params)?;
     let policy_hash = hash_to_felts(&policy_hash_obj);
 
+    let batch_policy_kind = match policy_type {
+        PolicyType::AmlThreshold => BatchPolicyKind::AmlThreshold,
+        PolicyType::OrderTotalCap => BatchPolicyKind::OrderTotalCap,
+    };
+
+    // Load events from file or generate randomly
+    let (event_entries, tenant_id, store_id) = if let Some(ref path) = events_path {
+        let contents = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read events file: {}", path.display()))?;
+        let entries: Vec<BatchEventEntry> = serde_json::from_str(&contents)
+            .with_context(|| "Failed to parse events JSON")?;
+        if entries.is_empty() {
+            anyhow::bail!("events file must contain at least one event");
+        }
+        let tid = entries[0].public_inputs.tenant_id;
+        let sid = entries[0].public_inputs.store_id;
+        (entries, tid, sid)
+    } else {
+        if num_events == 0 {
+            anyhow::bail!("num_events must be at least 1");
+        }
+        let tid = Uuid::new_v4();
+        let sid = Uuid::new_v4();
+        let mut entries = Vec::with_capacity(num_events);
+        for i in 0..num_events {
+            let amount = rand_u64() % limit;
+            let inputs = generate_batch_public_inputs(limit, policy_type, i, tid, sid)?;
+            entries.push(BatchEventEntry {
+                amount,
+                public_inputs: inputs,
+            });
+        }
+        (entries, tid, sid)
+    };
+
+    let actual_num_events = event_entries.len();
+
+    println!("Batch Proof Generation");
+    println!("======================");
+    println!("  Events: {}", actual_num_events);
+    println!("  Policy: {}", policy_id);
+    println!("  Limit: {}", limit);
+    if events_path.is_some() {
+        println!("  Source: events file");
+    }
+    println!();
+
     // Create metadata
-    let tenant_id = Uuid::new_v4();
-    let store_id = Uuid::new_v4();
     let metadata = BatchMetadata::with_ids(
         Uuid::new_v4(),
         tenant_id,
         store_id,
         0,
-        (num_events - 1) as u64,
+        (actual_num_events - 1) as u64,
     );
 
     println!("Batch ID: {}", metadata.batch_id);
     println!("Tenant ID: {}", tenant_id);
     println!();
 
-    // Build witness with random compliant events
+    // Build witness
     let mut builder = BatchWitnessBuilder::new()
         .metadata(metadata)
         .policy_hash(policy_hash)
         .policy_limit(limit);
 
-    println!("Generating {} events...", num_events);
-    for i in 0..num_events {
-        let amount = rand_u64() % limit;
-        let inputs = generate_batch_public_inputs(limit, i, tenant_id, store_id)?;
+    println!("Loading {} events...", actual_num_events);
+    for (i, entry) in event_entries.into_iter().enumerate() {
         builder = builder
-            .add_event(amount, inputs)
+            .add_event(entry.amount, entry.public_inputs)
             .map_err(|e| anyhow::anyhow!("Failed to add event {i}: {e}"))?;
         print!(".");
         io::stdout().flush()?;
@@ -1005,7 +1065,7 @@ fn batch_prove(num_events: usize, limit: u64, output_path: Option<PathBuf>) -> R
         witness.metadata.timestamp,
         witness.num_events(),
         witness.all_compliant(),
-        BatchPolicyKind::AmlThreshold,
+        batch_policy_kind,
         limit,
         witness.public_inputs_accumulator()?,
     );
@@ -1029,7 +1089,7 @@ fn batch_prove(num_events: usize, limit: u64, output_path: Option<PathBuf>) -> R
     Ok(())
 }
 
-fn batch_verify(proof_path: PathBuf) -> Result<()> {
+fn batch_verify(proof_path: PathBuf, inputs_path: Option<PathBuf>) -> Result<()> {
     ensure_experimental_batch_enabled()?;
 
     println!("Batch Proof Verification");
@@ -1040,18 +1100,48 @@ fn batch_verify(proof_path: PathBuf) -> Result<()> {
     let proof_str = fs::read_to_string(&proof_path)
         .with_context(|| format!("Failed to read proof file: {}", proof_path.display()))?;
 
-    let batch_file: SerializableBatchProof = serde_json::from_str(&proof_str).map_err(|e| {
-        anyhow::anyhow!(
-            "Expected serialized batch proof JSON with `public_inputs`: {}",
-            e
-        )
-    })?;
-    let pub_inputs = batch_file
-        .to_batch_public_inputs()
-        .map_err(|e| anyhow::anyhow!("Invalid batch public inputs: {:?}", e))?;
-    let proof = batch_file.proof;
-    let proof_bytes = proof.proof_bytes;
-    let proof_hash = proof.proof_hash.clone();
+    let (proof_bytes, proof_hash, pub_inputs, prev_root_dbg, new_root_dbg) =
+        if let Some(ref ip) = inputs_path {
+            // Load public inputs from separate file
+            let inputs_str = fs::read_to_string(ip)
+                .with_context(|| format!("Failed to read inputs file: {}", ip.display()))?;
+            let ser_inputs: ves_stark_batch::SerializableBatchPublicInputs =
+                serde_json::from_str(&inputs_str)
+                    .with_context(|| "Failed to parse batch inputs JSON")?;
+            let prev_dbg = format!("{:?}", ser_inputs.prev_state_root);
+            let new_dbg = format!("{:?}", ser_inputs.new_state_root);
+            let pi: BatchPublicInputs = ser_inputs
+                .try_into()
+                .map_err(|e| anyhow::anyhow!("Invalid batch public inputs: {:?}", e))?;
+            // Load proof - try JSON first, fall back to raw bytes
+            let raw_proof = fs::read(&proof_path)
+                .with_context(|| format!("Failed to read proof file: {}", proof_path.display()))?;
+            let (bytes, hash) = if let Ok(batch_file) =
+                serde_json::from_slice::<SerializableBatchProof>(&raw_proof)
+            {
+                (batch_file.proof.proof_bytes, batch_file.proof.proof_hash)
+            } else {
+                let h = ves_stark_batch::BatchProof::compute_hash(&raw_proof).to_hex();
+                (raw_proof, h)
+            };
+            (bytes, hash, pi, prev_dbg, new_dbg)
+        } else {
+            // Extract public inputs from the proof JSON file
+            let batch_file: SerializableBatchProof =
+                serde_json::from_str(&proof_str).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Expected serialized batch proof JSON with `public_inputs`: {}",
+                        e
+                    )
+                })?;
+            let prev_dbg = format!("{:?}", batch_file.proof.prev_state_root);
+            let new_dbg = format!("{:?}", batch_file.proof.new_state_root);
+            let pi = batch_file
+                .to_batch_public_inputs()
+                .map_err(|e| anyhow::anyhow!("Invalid batch public inputs: {:?}", e))?;
+            let proof = batch_file.proof;
+            (proof.proof_bytes, proof.proof_hash, pi, prev_dbg, new_dbg)
+        };
 
     if proof_bytes.len() > MAX_BATCH_PROOF_SIZE {
         anyhow::bail!(
@@ -1074,8 +1164,8 @@ fn batch_verify(proof_path: PathBuf) -> Result<()> {
         "  Hash: {}...",
         proof_hash.chars().take(16).collect::<String>()
     );
-    println!("  Prev root: {:?}", proof.prev_state_root);
-    println!("  New root:  {:?}", proof.new_state_root);
+    println!("  Prev root: {}", prev_root_dbg);
+    println!("  New root:  {}", new_root_dbg);
     println!();
 
     // Verify proof
@@ -1095,8 +1185,8 @@ fn batch_verify(proof_path: PathBuf) -> Result<()> {
         println!("Batch Proof VALID!");
         println!("  Verification time: {:?}", elapsed);
         println!(
-            "  State transition verified: {:?} -> {:?}",
-            proof.prev_state_root, proof.new_state_root
+            "  State transition verified: {} -> {}",
+            prev_root_dbg, new_root_dbg
         );
         Ok(())
     } else {
@@ -1117,12 +1207,13 @@ fn array_to_felts(arr: &[u64; 4]) -> [Felt; 4] {
 
 fn generate_batch_public_inputs(
     limit: u64,
+    policy_type: PolicyType,
     seq: usize,
     tenant_id: Uuid,
     store_id: Uuid,
 ) -> Result<CompliancePublicInputs> {
-    let policy_id = "aml.threshold";
-    let params = PolicyParams::threshold(limit);
+    let policy_id = policy_type.policy_id();
+    let params = policy_type.create_policy_params(limit);
     let hash = compute_policy_hash(policy_id, &params)?;
 
     Ok(CompliancePublicInputs {
@@ -1251,7 +1342,7 @@ fn run_sequencer(
                 rand_u64() % limit // Under limit
             };
 
-            let inputs = generate_batch_public_inputs(limit, seq, tenant_id, store_id)?;
+            let inputs = generate_batch_public_inputs(limit, PolicyType::AmlThreshold, seq, tenant_id, store_id)?;
             builder = builder
                 .add_event(amount, inputs)
                 .map_err(|e| anyhow::anyhow!("Failed to add event {seq}: {e}"))?;
