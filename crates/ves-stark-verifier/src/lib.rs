@@ -7,10 +7,10 @@
 //! # Usage
 //!
 //! ```ignore
-//! use ves_stark_verifier::verify_compliance_proof_auto_bound;
+//! use ves_stark_verifier::verify_compliance_proof_auto_bound_strict;
 //!
 //! // Requires `public_inputs.witnessCommitment` to be present.
-//! let result = verify_compliance_proof_auto_bound(&proof_bytes, &public_inputs)?;
+//! let result = verify_compliance_proof_auto_bound_strict(&proof_bytes, &public_inputs)?;
 //! assert!(result.valid);
 //! ```
 
@@ -20,5 +20,6 @@ mod verify;
 pub use error::{validate_hex_string, VerifierError, MAX_PROOF_SIZE, PROOF_VERSION};
 pub use verify::{
     verify_compliance_proof, verify_compliance_proof_auto, verify_compliance_proof_auto_bound,
-    ComplianceVerifier, VerificationResult,
+    verify_compliance_proof_auto_bound_strict, verify_compliance_proof_auto_strict,
+    verify_compliance_proof_strict, ComplianceVerifier, VerificationResult,
 };

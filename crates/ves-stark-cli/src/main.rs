@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 use uuid::Uuid;
@@ -149,13 +149,18 @@ enum Commands {
 
     /// Verify a compliance proof
     Verify {
-        /// Path to the proof file (or - for stdin)
+        /// Path to the proof file (or `-` for stdin)
         #[arg(short = 'f', long)]
         proof: PathBuf,
 
         /// Path to public inputs JSON file
         #[arg(short, long)]
         inputs: PathBuf,
+
+        /// Witness commitment hex for raw base64 proofs. If omitted, the CLI
+        /// falls back to `public_inputs.witnessCommitment`.
+        #[arg(long)]
+        witness_commitment_hex: Option<String>,
 
         /// The limit value used for the proof
         #[arg(short, long)]
@@ -293,9 +298,10 @@ fn main() -> Result<()> {
         Commands::Verify {
             proof,
             inputs,
+            witness_commitment_hex,
             limit,
             policy,
-        } => verify(proof, inputs, limit, policy),
+        } => verify(proof, inputs, witness_commitment_hex, limit, policy),
 
         Commands::Inspect { proof } => inspect(proof),
 
@@ -335,6 +341,19 @@ fn main() -> Result<()> {
             include_violations,
             output_dir,
         ),
+    }
+}
+
+fn read_text_input(path: &PathBuf, label: &str) -> Result<String> {
+    if path.to_string_lossy() == "-" {
+        let mut buf = String::new();
+        io::stdin()
+            .read_to_string(&mut buf)
+            .with_context(|| format!("Failed to read {label} from stdin"))?;
+        Ok(buf)
+    } else {
+        fs::read_to_string(path)
+            .with_context(|| format!("Failed to read {label} file: {}", path.display()))
     }
 }
 
@@ -394,6 +413,9 @@ fn prove(
     eprintln!("Proof generated in {:?}", elapsed);
     eprintln!("  Proof size: {} bytes", proof.proof_bytes.len());
     eprintln!("  Proof hash: {}", &proof.proof_hash[..16]);
+    if let Some(hex) = proof.witness_commitment_hex.as_deref() {
+        eprintln!("  Witness commitment (hex): {}", hex);
+    }
 
     // Output proof
     if json_output {
@@ -539,18 +561,17 @@ fn prove_submit(
 fn verify(
     proof_path: PathBuf,
     inputs_path: PathBuf,
+    witness_commitment_hex: Option<String>,
     limit: u64,
     policy_type: PolicyType,
 ) -> Result<()> {
     // Load public inputs
-    let inputs_str = fs::read_to_string(&inputs_path)
-        .with_context(|| format!("Failed to read inputs file: {}", inputs_path.display()))?;
+    let inputs_str = read_text_input(&inputs_path, "inputs")?;
     let public_inputs: CompliancePublicInputs =
         serde_json::from_str(&inputs_str).with_context(|| "Failed to parse public inputs JSON")?;
 
     // Load proof
-    let proof_str = fs::read_to_string(&proof_path)
-        .with_context(|| format!("Failed to read proof file: {}", proof_path.display()))?;
+    let proof_str = read_text_input(&proof_path, "proof")?;
 
     // Try to parse as JSON first, then as raw base64
     let (proof_bytes, witness_commitment): (Vec<u8>, [u64; 4]) = if proof_str
@@ -605,7 +626,25 @@ fn verify(
 
         (bytes, commitment)
     } else {
-        anyhow::bail!("Raw base64 proofs no longer supported - please use JSON format with witness_commitment");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(proof_str.trim())
+            .context("Failed to decode raw base64 proof")?;
+
+        let commitment = if let Some(hex) = witness_commitment_hex.as_deref() {
+            witness_commitment_hex_to_u64(hex)
+                .map_err(|e| anyhow::anyhow!("Invalid --witness-commitment-hex: {e}"))?
+        } else if let Some(commitment) = public_inputs
+            .witness_commitment_u64()
+            .map_err(|e| anyhow::anyhow!("Invalid witnessCommitment in public inputs: {e}"))?
+        {
+            commitment
+        } else {
+            anyhow::bail!(
+                "Raw base64 proofs require --witness-commitment-hex or inputs.witnessCommitment"
+            );
+        };
+
+        (bytes, commitment)
     };
 
     if proof_bytes.len() > MAX_PROOF_SIZE {
@@ -951,8 +990,8 @@ fn batch_prove(
     let (event_entries, tenant_id, store_id) = if let Some(ref path) = events_path {
         let contents = fs::read_to_string(path)
             .with_context(|| format!("Failed to read events file: {}", path.display()))?;
-        let entries: Vec<BatchEventEntry> = serde_json::from_str(&contents)
-            .with_context(|| "Failed to parse events JSON")?;
+        let entries: Vec<BatchEventEntry> =
+            serde_json::from_str(&contents).with_context(|| "Failed to parse events JSON")?;
         if entries.is_empty() {
             anyhow::bail!("events file must contain at least one event");
         }
@@ -1100,48 +1139,47 @@ fn batch_verify(proof_path: PathBuf, inputs_path: Option<PathBuf>) -> Result<()>
     let proof_str = fs::read_to_string(&proof_path)
         .with_context(|| format!("Failed to read proof file: {}", proof_path.display()))?;
 
-    let (proof_bytes, proof_hash, pub_inputs, prev_root_dbg, new_root_dbg) =
-        if let Some(ref ip) = inputs_path {
-            // Load public inputs from separate file
-            let inputs_str = fs::read_to_string(ip)
-                .with_context(|| format!("Failed to read inputs file: {}", ip.display()))?;
-            let ser_inputs: ves_stark_batch::SerializableBatchPublicInputs =
-                serde_json::from_str(&inputs_str)
-                    .with_context(|| "Failed to parse batch inputs JSON")?;
-            let prev_dbg = format!("{:?}", ser_inputs.prev_state_root);
-            let new_dbg = format!("{:?}", ser_inputs.new_state_root);
-            let pi: BatchPublicInputs = ser_inputs
-                .try_into()
-                .map_err(|e| anyhow::anyhow!("Invalid batch public inputs: {:?}", e))?;
-            // Load proof - try JSON first, fall back to raw bytes
-            let raw_proof = fs::read(&proof_path)
-                .with_context(|| format!("Failed to read proof file: {}", proof_path.display()))?;
-            let (bytes, hash) = if let Ok(batch_file) =
-                serde_json::from_slice::<SerializableBatchProof>(&raw_proof)
-            {
+    let (proof_bytes, proof_hash, pub_inputs, prev_root_dbg, new_root_dbg) = if let Some(ref ip) =
+        inputs_path
+    {
+        // Load public inputs from separate file
+        let inputs_str = fs::read_to_string(ip)
+            .with_context(|| format!("Failed to read inputs file: {}", ip.display()))?;
+        let ser_inputs: ves_stark_batch::SerializableBatchPublicInputs =
+            serde_json::from_str(&inputs_str)
+                .with_context(|| "Failed to parse batch inputs JSON")?;
+        let prev_dbg = format!("{:?}", ser_inputs.prev_state_root);
+        let new_dbg = format!("{:?}", ser_inputs.new_state_root);
+        let pi: BatchPublicInputs = ser_inputs
+            .try_into()
+            .map_err(|e| anyhow::anyhow!("Invalid batch public inputs: {:?}", e))?;
+        // Load proof - try JSON first, fall back to raw bytes
+        let raw_proof = fs::read(&proof_path)
+            .with_context(|| format!("Failed to read proof file: {}", proof_path.display()))?;
+        let (bytes, hash) =
+            if let Ok(batch_file) = serde_json::from_slice::<SerializableBatchProof>(&raw_proof) {
                 (batch_file.proof.proof_bytes, batch_file.proof.proof_hash)
             } else {
                 let h = ves_stark_batch::BatchProof::compute_hash(&raw_proof).to_hex();
                 (raw_proof, h)
             };
-            (bytes, hash, pi, prev_dbg, new_dbg)
-        } else {
-            // Extract public inputs from the proof JSON file
-            let batch_file: SerializableBatchProof =
-                serde_json::from_str(&proof_str).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Expected serialized batch proof JSON with `public_inputs`: {}",
-                        e
-                    )
-                })?;
-            let prev_dbg = format!("{:?}", batch_file.proof.prev_state_root);
-            let new_dbg = format!("{:?}", batch_file.proof.new_state_root);
-            let pi = batch_file
-                .to_batch_public_inputs()
-                .map_err(|e| anyhow::anyhow!("Invalid batch public inputs: {:?}", e))?;
-            let proof = batch_file.proof;
-            (proof.proof_bytes, proof.proof_hash, pi, prev_dbg, new_dbg)
-        };
+        (bytes, hash, pi, prev_dbg, new_dbg)
+    } else {
+        // Extract public inputs from the proof JSON file
+        let batch_file: SerializableBatchProof = serde_json::from_str(&proof_str).map_err(|e| {
+            anyhow::anyhow!(
+                "Expected serialized batch proof JSON with `public_inputs`: {}",
+                e
+            )
+        })?;
+        let prev_dbg = format!("{:?}", batch_file.proof.prev_state_root);
+        let new_dbg = format!("{:?}", batch_file.proof.new_state_root);
+        let pi = batch_file
+            .to_batch_public_inputs()
+            .map_err(|e| anyhow::anyhow!("Invalid batch public inputs: {:?}", e))?;
+        let proof = batch_file.proof;
+        (proof.proof_bytes, proof.proof_hash, pi, prev_dbg, new_dbg)
+    };
 
     if proof_bytes.len() > MAX_BATCH_PROOF_SIZE {
         anyhow::bail!(
@@ -1342,7 +1380,13 @@ fn run_sequencer(
                 rand_u64() % limit // Under limit
             };
 
-            let inputs = generate_batch_public_inputs(limit, PolicyType::AmlThreshold, seq, tenant_id, store_id)?;
+            let inputs = generate_batch_public_inputs(
+                limit,
+                PolicyType::AmlThreshold,
+                seq,
+                tenant_id,
+                store_id,
+            )?;
             builder = builder
                 .add_event(amount, inputs)
                 .map_err(|e| anyhow::anyhow!("Failed to add event {seq}: {e}"))?;

@@ -55,8 +55,13 @@ console.log(`Witness commitment (hex): ${proof.witnessCommitmentHex}`);
 ```javascript
 const { verifyHex } = require('@stateset/ves-stark');
 
+const publicInputsBound = {
+  ...publicInputs,
+  witnessCommitment: proof.witnessCommitmentHex,
+};
+
 // Use the hex form to avoid u64 round-trip issues in JavaScript.
-const result = verifyHex(proof.proofBytes, publicInputs, proof.witnessCommitmentHex);
+const result = verifyHex(proof.proofBytes, publicInputsBound, proof.witnessCommitmentHex);
 
 if (result.valid) {
   console.log('Proof is valid!');
@@ -93,7 +98,8 @@ Verify a STARK compliance proof.
 
 **Parameters:**
 - `proofBytes` (Buffer): Raw proof bytes from `prove()`
-- `publicInputs` (JsCompliancePublicInputs): Must match proving inputs
+- `publicInputs` (JsCompliancePublicInputs): Must match proving inputs and
+  include `witnessCommitment` when using canonical bound verification
 - `witnessCommitment` (string[]): 4-element decimal array from proof
 
 **Returns:** `JsVerificationResult`
@@ -109,7 +115,8 @@ Verify a STARK compliance proof using the witness commitment hex string.
 
 **Parameters:**
 - `proofBytes` (Buffer): Raw proof bytes from `prove()`
-- `publicInputs` (JsCompliancePublicInputs): Must match proving inputs
+- `publicInputs` (JsCompliancePublicInputs): Must match proving inputs and
+  include `witnessCommitment` when using canonical bound verification
 - `witnessCommitmentHex` (string): 64-character lowercase hex commitment (recommended)
 
 **Returns:** `JsVerificationResult`

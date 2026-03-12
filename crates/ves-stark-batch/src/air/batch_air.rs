@@ -1175,13 +1175,57 @@ impl Air for BatchComplianceAir {
 mod tests {
     use super::*;
     use crate::air::BATCH_TRACE_WIDTH;
+    use crate::prover::{BatchTraceBuilder, BatchWitnessBuilder};
     use crate::public_inputs::BatchPolicyKind;
+    use crate::state::BatchMetadata;
+    use uuid::Uuid;
+    use ves_stark_primitives::public_inputs::{
+        compute_policy_hash, witness_commitment_u64_to_hex, CompliancePublicInputs, PolicyParams,
+    };
+    use ves_stark_primitives::rescue::rescue_hash;
+    use winter_prover::Trace;
+
+    fn sample_public_inputs(
+        threshold: u64,
+        amount: u64,
+        idx: usize,
+        tenant_id: Uuid,
+        store_id: Uuid,
+    ) -> CompliancePublicInputs {
+        let hash =
+            compute_policy_hash("aml.threshold", &PolicyParams::threshold(threshold)).unwrap();
+        let mut amount_limbs = [FELT_ZERO; 8];
+        amount_limbs[0] = felt_from_u64(amount & 0xFFFFFFFF);
+        amount_limbs[1] = felt_from_u64(amount >> 32);
+        let commitment = rescue_hash(&amount_limbs);
+        let commitment_u64 = [
+            commitment[0].as_int(),
+            commitment[1].as_int(),
+            commitment[2].as_int(),
+            commitment[3].as_int(),
+        ];
+
+        CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id,
+            store_id,
+            sequence_number: idx as u64,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "0".repeat(64),
+            event_signing_hash: "0".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(threshold),
+            policy_hash: hash.to_hex(),
+            witness_commitment: Some(witness_commitment_u64_to_hex(&commitment_u64)),
+        }
+    }
 
     #[test]
     fn test_air_creation() {
         let trace_info = TraceInfo::new(BATCH_TRACE_WIDTH, 256);
         let pub_inputs = BatchPublicInputs::default();
-        let options = ves_stark_air::options::ProofOptions::default()
+        let options = ves_stark_air::options::ProofOptions::fast()
             .try_to_winterfell()
             .unwrap();
 
@@ -1231,5 +1275,147 @@ mod tests {
         let assertions = air.get_assertions();
 
         assert_eq!(assertions.len(), num_batch_assertions(1));
+    }
+
+    #[test]
+    fn test_single_event_finalize_output_transition_constraints_zero() {
+        let threshold = 10_000u64;
+        let hash =
+            compute_policy_hash("aml.threshold", &PolicyParams::threshold(threshold)).unwrap();
+        let policy_hash = ves_stark_primitives::hash_to_felts(&hash);
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata = BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
+
+        let witness = BatchWitnessBuilder::new()
+            .metadata(metadata)
+            .policy_hash(policy_hash)
+            .policy_limit(threshold)
+            .add_event(
+                5_000,
+                sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let trace = BatchTraceBuilder::new(witness.clone()).build().unwrap();
+        let new_state_root = witness.compute_new_state_root().unwrap();
+        let pub_inputs = BatchPublicInputs::new(
+            witness.prev_state_root.root,
+            new_state_root.root,
+            witness.batch_id_felts(),
+            witness.tenant_id_felts(),
+            witness.store_id_felts(),
+            witness.metadata.sequence_start,
+            witness.metadata.sequence_end,
+            witness.metadata.timestamp,
+            witness.num_events(),
+            witness.all_compliant(),
+            BatchPolicyKind::AmlThreshold,
+            witness.policy_limit,
+            witness.public_inputs_accumulator().unwrap(),
+        );
+        let options = ves_stark_air::options::ProofOptions::fast()
+            .try_to_winterfell()
+            .unwrap();
+        let air = BatchComplianceAir::new(trace.info().clone(), pub_inputs, options);
+        trace.validate::<BatchComplianceAir, Felt>(&air, None);
+        let periodic_columns = air.get_periodic_column_values();
+
+        let finalize_output_row = 94usize;
+        let current = (0..trace.width())
+            .map(|col| trace.get(col, finalize_output_row))
+            .collect::<Vec<_>>();
+        let next = (0..trace.width())
+            .map(|col| trace.get(col, finalize_output_row + 1))
+            .collect::<Vec<_>>();
+        let frame = EvaluationFrame::from_rows(current, next);
+        let periodic_values = periodic_columns
+            .iter()
+            .map(|column| column[finalize_output_row])
+            .collect::<Vec<_>>();
+        let mut result = vec![FELT_ZERO; NUM_BATCH_CONSTRAINTS];
+
+        air.evaluate_transition(&frame, &periodic_values, &mut result);
+
+        let non_zero = result
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, value)| (*value != FELT_ZERO).then_some((idx, value.as_int())))
+            .collect::<Vec<_>>();
+
+        assert!(non_zero.is_empty(), "{non_zero:?}");
+    }
+
+    #[test]
+    fn test_single_event_trace_satisfies_all_transition_constraints() {
+        let threshold = 10_000u64;
+        let hash =
+            compute_policy_hash("aml.threshold", &PolicyParams::threshold(threshold)).unwrap();
+        let policy_hash = ves_stark_primitives::hash_to_felts(&hash);
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata = BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
+
+        let witness = BatchWitnessBuilder::new()
+            .metadata(metadata)
+            .policy_hash(policy_hash)
+            .policy_limit(threshold)
+            .add_event(
+                5_000,
+                sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let trace = BatchTraceBuilder::new(witness.clone()).build().unwrap();
+        let new_state_root = witness.compute_new_state_root().unwrap();
+        let pub_inputs = BatchPublicInputs::new(
+            witness.prev_state_root.root,
+            new_state_root.root,
+            witness.batch_id_felts(),
+            witness.tenant_id_felts(),
+            witness.store_id_felts(),
+            witness.metadata.sequence_start,
+            witness.metadata.sequence_end,
+            witness.metadata.timestamp,
+            witness.num_events(),
+            witness.all_compliant(),
+            BatchPolicyKind::AmlThreshold,
+            witness.policy_limit,
+            witness.public_inputs_accumulator().unwrap(),
+        );
+        let options = ves_stark_air::options::ProofOptions::default()
+            .try_to_winterfell()
+            .unwrap();
+        let air = BatchComplianceAir::new(trace.info().clone(), pub_inputs, options);
+        let periodic_columns = air.get_periodic_column_values();
+
+        for row in 0..(trace.length() - 1) {
+            let current = (0..trace.width())
+                .map(|col| trace.get(col, row))
+                .collect::<Vec<_>>();
+            let next = (0..trace.width())
+                .map(|col| trace.get(col, row + 1))
+                .collect::<Vec<_>>();
+            let frame = EvaluationFrame::from_rows(current, next);
+            let periodic_values = periodic_columns
+                .iter()
+                .map(|column| column[row])
+                .collect::<Vec<_>>();
+            let mut result = vec![FELT_ZERO; NUM_BATCH_CONSTRAINTS];
+
+            air.evaluate_transition(&frame, &periodic_values, &mut result);
+
+            if let Some((idx, value)) = result
+                .iter()
+                .enumerate()
+                .find(|(_, value)| **value != FELT_ZERO)
+            {
+                panic!("row {row} constraint {idx} value {}", value.as_int());
+            }
+        }
     }
 }

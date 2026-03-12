@@ -69,4 +69,25 @@ const bad = ves.verifyHex(proof.proofBytes, publicInputsWrong, proof.witnessComm
 assert.strictEqual(bad.valid, false)
 assert.ok(bad.error && bad.error.length > 0, 'expected an error message')
 
+const capPolicyType = 'order_total.cap'
+const capPolicyLimit = 10_000n
+const capPolicyParams = ves.createOrderTotalCapParams(capPolicyLimit)
+const capPolicyHash = ves.computePolicyHash(capPolicyType, capPolicyParams)
+
+const capInputsBase = {
+  ...publicInputsBase,
+  policyId: capPolicyType,
+  policyParams: capPolicyParams,
+  policyHash: capPolicyHash,
+}
+
+const capProof = ves.prove(capPolicyLimit, capInputsBase, capPolicyType, capPolicyLimit)
+const capInputsBound = {
+  ...capInputsBase,
+  witnessCommitment: capProof.witnessCommitmentHex,
+}
+const capOk = ves.verifyHex(capProof.proofBytes, capInputsBound, capProof.witnessCommitmentHex)
+assert.strictEqual(capOk.valid, true, capOk.error || 'cap verification failed')
+assert.strictEqual(capOk.policyLimit, capPolicyLimit)
+
 console.log('ok')

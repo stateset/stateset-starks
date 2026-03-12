@@ -452,7 +452,7 @@ mod tests {
             let decoded = hex::decode(encoded).expect("valid 16-byte hex string");
             bytes[index * 4..index * 4 + 4].copy_from_slice(&decoded[4..]);
         }
-        Uuid::from_bytes(bytes).unwrap()
+        Uuid::from_bytes(bytes)
     }
 
     fn sample_batch_proof() -> BatchProof {

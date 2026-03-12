@@ -48,7 +48,7 @@ use ves_stark_primitives::public_inputs::{
 };
 use ves_stark_primitives::rescue::{rescue_hash, rescue_hash_pair};
 use ves_stark_prover::{ComplianceProver, ComplianceWitness, Policy};
-use ves_stark_verifier::verify_compliance_proof;
+use ves_stark_verifier::verify_compliance_proof_strict;
 
 /// Create sample public inputs for AML threshold policy
 fn sample_aml_inputs(threshold: u64) -> CompliancePublicInputs {
@@ -189,7 +189,7 @@ fn bench_verification(c: &mut Criterion) {
             ),
             |b, (proof_bytes, commitment, inputs, policy)| {
                 b.iter(|| {
-                    verify_compliance_proof(
+                    verify_compliance_proof_strict(
                         black_box(proof_bytes),
                         black_box(inputs),
                         black_box(policy),

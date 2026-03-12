@@ -144,8 +144,8 @@ cargo build --release
 ## Testing
 
 ```bash
-cargo test
-cargo test --release  # For faster proof generation
+cargo test --workspace --all-features
+cargo test --release --workspace --all-features  # Faster proof generation
 ```
 
 ## Benchmarking

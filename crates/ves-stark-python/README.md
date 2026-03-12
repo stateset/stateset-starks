@@ -55,7 +55,26 @@ print(f"Witness commitment (hex): {proof.witness_commitment_hex}")
 ```python
 import ves_stark
 
-result = ves_stark.verify(proof.proof_bytes, public_inputs, proof.witness_commitment)
+public_inputs_bound = ves_stark.CompliancePublicInputs(
+    event_id=public_inputs.event_id,
+    tenant_id=public_inputs.tenant_id,
+    store_id=public_inputs.store_id,
+    sequence_number=public_inputs.sequence_number,
+    payload_kind=public_inputs.payload_kind,
+    payload_plain_hash=public_inputs.payload_plain_hash,
+    payload_cipher_hash=public_inputs.payload_cipher_hash,
+    event_signing_hash=public_inputs.event_signing_hash,
+    policy_id=public_inputs.policy_id,
+    policy_params=public_inputs.policy_params,
+    policy_hash=public_inputs.policy_hash,
+    witness_commitment=proof.witness_commitment_hex,
+)
+
+result = ves_stark.verify(
+    proof.proof_bytes,
+    public_inputs_bound,
+    proof.witness_commitment,
+)
 
 if result.valid:
     print("Proof is valid!")
@@ -181,13 +200,14 @@ result = ves_stark.verify(
 
 **Parameters:**
 - `proof_bytes` (bytes): Raw proof bytes from `prove()`
-- `public_inputs` (CompliancePublicInputs): Must match proving inputs
+- `public_inputs` (CompliancePublicInputs): Must match proving inputs and
+  include `witness_commitment` when using canonical bound verification
 - `witness_commitment` (list[int]): 4-element list from proof
 
 **Returns:** `VerificationResult`
 
 **Raises:**
-- `ValueError`: If inputs are invalid
+- `ValueError`: If arguments are malformed
 
 #### `compute_policy_hash(policy_id, policy_params)`
 

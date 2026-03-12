@@ -40,9 +40,7 @@ impl SequencerClient {
     /// * `base_url` - The base URL of the sequencer (e.g., "http://localhost:8080")
     pub fn from_env(base_url: &str) -> Result<Self> {
         let api_key = std::env::var("STATESET_API_KEY").map_err(|_| {
-            ClientError::InvalidHeader(
-                "STATESET_API_KEY environment variable not set".to_string(),
-            )
+            ClientError::InvalidHeader("STATESET_API_KEY environment variable not set".to_string())
         })?;
         Self::new(base_url, &api_key)
     }
@@ -344,6 +342,13 @@ impl SequencerClient {
         public_inputs: &ves_stark_primitives::public_inputs::CompliancePublicInputs,
     ) -> Result<SubmitProofResponse> {
         use ves_stark_prover::{ComplianceProver, ComplianceWitness};
+
+        if public_inputs.event_id != event_id {
+            return Err(ClientError::InvalidPublicInputs(format!(
+                "event_id mismatch: submission targets {}, but public inputs are for {}",
+                event_id, public_inputs.event_id
+            )));
+        }
 
         let policy =
             Policy::from_public_inputs(&public_inputs.policy_id, &public_inputs.policy_params)

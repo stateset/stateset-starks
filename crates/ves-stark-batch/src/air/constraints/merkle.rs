@@ -13,6 +13,9 @@ use ves_stark_primitives::{
 };
 use winter_math::FieldElement;
 
+const STATE_ROOT_MIX_COEFF_1: u64 = 13;
+const STATE_ROOT_MIX_COEFF_2: u64 = 37;
+
 /// Number of constraints produced by `evaluate_merkle_constraints`.
 pub const NUM_MERKLE_CONSTRAINTS: usize = 177;
 
@@ -349,7 +352,7 @@ pub fn evaluate_merkle_constraints<E: FieldElement<BaseField = Felt>>(
         } else if i < 8 {
             current[batch_cols::metadata_hash(i - 4)]
         } else {
-            E::ZERO
+            current[batch_cols::prev_state_root(i - 8)]
         };
         let expected = is_pair_hash * merkle_input + is_finalize * finalize_input;
 
@@ -375,23 +378,17 @@ pub fn evaluate_merkle_constraints<E: FieldElement<BaseField = Felt>>(
         idx += 1;
     }
 
-    // 70-73) Output row for finalize hash equals new state root.
-    result[idx] = is_output_row
-        * is_finalize
-        * (current[batch_cols::merkle_rescue_state(0)] - current[batch_cols::new_state_root(0)]);
-    idx += 1;
-    result[idx] = is_output_row
-        * is_finalize
-        * (current[batch_cols::merkle_rescue_state(1)] - current[batch_cols::new_state_root(1)]);
-    idx += 1;
-    result[idx] = is_output_row
-        * is_finalize
-        * (current[batch_cols::merkle_rescue_state(2)] - current[batch_cols::new_state_root(2)]);
-    idx += 1;
-    result[idx] = is_output_row
-        * is_finalize
-        * (current[batch_cols::merkle_rescue_state(3)] - current[batch_cols::new_state_root(3)]);
-    idx += 1;
+    // 70-73) The exported state root is a fixed linear fold of the final 12-lane Rescue state.
+    let coeff_1 = felt_to_ext::<E>(STATE_ROOT_MIX_COEFF_1);
+    let coeff_2 = felt_to_ext::<E>(STATE_ROOT_MIX_COEFF_2);
+    for i in 0..4 {
+        let folded_root = current[batch_cols::merkle_rescue_state(i)]
+            + current[batch_cols::merkle_rescue_state(4 + i)] * coeff_1
+            + current[batch_cols::merkle_rescue_state(8 + i)] * coeff_2;
+        result[idx] =
+            is_output_row * is_finalize * (folded_root - current[batch_cols::new_state_root(i)]);
+        idx += 1;
+    }
 
     // 74-77) Active output rows bind state to event-tree node output / final root.
     result[idx] = is_output_row

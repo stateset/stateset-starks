@@ -172,6 +172,10 @@ jobs:
   nodejs:
     name: Node.js Bindings
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "22"]
     steps:
       - uses: actions/checkout@v4
 
@@ -194,7 +198,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ matrix.node-version }}
           cache: "npm"
           cache-dependency-path: crates/ves-stark-nodejs/package-lock.json
 
@@ -213,6 +217,10 @@ jobs:
   python:
     name: Python Bindings
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
@@ -235,7 +243,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: "pip"
           cache-dependency-path: crates/ves-stark-python/pyproject.toml
 

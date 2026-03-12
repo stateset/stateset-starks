@@ -56,3 +56,44 @@ def test_prove_verify_bound_smoke() -> None:
     bad = ves_stark.verify(proof.proof_bytes, inputs_wrong, proof.witness_commitment)
     assert not bad.valid
     assert bad.error
+
+
+def test_prove_verify_order_total_cap_smoke() -> None:
+    policy_id = "order_total.cap"
+    policy_params = {"cap": 10_000}
+    policy_hash = ves_stark.compute_policy_hash(policy_id, policy_params)
+
+    inputs = ves_stark.CompliancePublicInputs(
+        event_id=str(uuid.UUID(int=11)),
+        tenant_id=str(uuid.UUID(int=12)),
+        store_id=str(uuid.UUID(int=13)),
+        sequence_number=1,
+        payload_kind=1,
+        payload_plain_hash=_hex_zeros(32),
+        payload_cipher_hash=_hex_zeros(32),
+        event_signing_hash=_hex_zeros(32),
+        policy_id=policy_id,
+        policy_params=policy_params,
+        policy_hash=policy_hash,
+    )
+
+    policy = ves_stark.Policy.order_total_cap(10_000)
+    proof = ves_stark.prove(10_000, inputs, policy)
+
+    bound_inputs = ves_stark.CompliancePublicInputs(
+        event_id=inputs.event_id,
+        tenant_id=inputs.tenant_id,
+        store_id=inputs.store_id,
+        sequence_number=inputs.sequence_number,
+        payload_kind=inputs.payload_kind,
+        payload_plain_hash=inputs.payload_plain_hash,
+        payload_cipher_hash=inputs.payload_cipher_hash,
+        event_signing_hash=inputs.event_signing_hash,
+        policy_id=inputs.policy_id,
+        policy_params=inputs.policy_params,
+        policy_hash=inputs.policy_hash,
+        witness_commitment=proof.witness_commitment_hex,
+    )
+
+    ok = ves_stark.verify(proof.proof_bytes, bound_inputs, proof.witness_commitment)
+    assert ok.valid, ok.error

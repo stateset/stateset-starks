@@ -1103,7 +1103,7 @@ impl BatchTraceBuilder {
     /// Fill finalization rows (ROWS_PER_MERKLE_NODE rows).
     ///
     /// The finalization phase represents:
-    ///   new_state_root = Rescue(event_tree_root || metadata_hash)
+    ///   new_state_root = Rescue(event_tree_root || metadata_hash || prev_state_root)
     /// where `metadata_hash = Rescue(prev_state_root || batch_metadata)`.
     #[allow(clippy::too_many_arguments)]
     fn fill_finalize_trace(
@@ -1132,6 +1132,7 @@ impl BatchTraceBuilder {
         for i in 0..4 {
             hash_state[i] = event_tree.root()[i];
             hash_state[4 + i] = metadata_hash[i];
+            hash_state[8 + i] = prev_state_root.root[i];
         }
         let trace_rows = rescue_permutation_trace(&hash_state);
 
@@ -1357,8 +1358,9 @@ fn fill_public_inputs_hash_columns(trace: &mut [Vec<Felt>], row: usize, leaf: Op
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::air::trace_layout::{commitment_hash_row_count, merkle_row_count};
     use crate::prover::witness::BatchWitnessBuilder;
-    use crate::state::BatchMetadata;
+    use crate::state::{BatchMetadata, BatchStateRoot};
     use uuid::Uuid;
     use ves_stark_primitives::public_inputs::{
         compute_policy_hash, witness_commitment_u64_to_hex, CompliancePublicInputs, PolicyParams,
@@ -1621,5 +1623,53 @@ mod tests {
 
         let final_acc = trace.get(batch_cols::COMPLIANCE_ACCUMULATOR, trace.length() - 1);
         assert_eq!(final_acc, FELT_ONE);
+    }
+
+    #[test]
+    fn test_single_event_finalize_output_matches_new_state_root() {
+        let threshold = 10_000u64;
+        let policy_hash = sample_policy_hash(threshold);
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata = BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
+
+        let witness = BatchWitnessBuilder::new()
+            .metadata(metadata)
+            .policy_hash(policy_hash)
+            .policy_limit(threshold)
+            .add_event(
+                5_000,
+                sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let new_root = witness.compute_new_state_root().unwrap();
+        let trace = BatchTraceBuilder::new(witness).build().unwrap();
+        let finalize_output_row = ROWS_PER_EVENT
+            + leaf_row_count(1)
+            + leaf_hash_row_count(1)
+            + commitment_hash_row_count(1)
+            + merkle_row_count(1)
+            + FINALIZE_ROWS
+            - 1;
+
+        let mut finalize_state = [FELT_ZERO; RESCUE_STATE_WIDTH];
+        for (lane, slot) in finalize_state.iter_mut().enumerate() {
+            *slot = trace.get(batch_cols::merkle_rescue_state(lane), finalize_output_row);
+        }
+
+        assert_eq!(
+            BatchStateRoot::collapse_finalize_state(&finalize_state),
+            new_root.root
+        );
+        for (lane, expected) in new_root.root.iter().enumerate() {
+            assert_eq!(
+                trace.get(batch_cols::new_state_root(lane), finalize_output_row),
+                *expected,
+                "lane {lane} mismatch at finalize output row {finalize_output_row}"
+            );
+        }
     }
 }

@@ -350,7 +350,9 @@ pub fn prove(
         proving_time_ms: proof.metadata.proving_time_ms,
         proof_size: proof.metadata.proof_size,
         witness_commitment_vec: proof.witness_commitment.to_vec(),
-        witness_commitment_hex: proof.witness_commitment_hex.unwrap_or_default(),
+        witness_commitment_hex: proof.witness_commitment_hex.ok_or_else(|| {
+            PyRuntimeError::new_err("Missing witness_commitment_hex in proof".to_string())
+        })?,
     })
 }
 

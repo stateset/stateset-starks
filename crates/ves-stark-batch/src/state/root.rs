@@ -4,14 +4,26 @@
 //! - Event Merkle tree root (commitment to all events)
 //! - A chained metadata hash (commitment to the previous state root and batch identity/sequence)
 
-use super::merkle::{rescue_hash_pair, EventMerkleTree};
+use super::merkle::EventMerkleTree;
 use super::metadata::BatchMetadata;
-use ves_stark_primitives::{felt_from_u64, Felt, FELT_ZERO};
+use ves_stark_primitives::{
+    felt_from_u64,
+    rescue::{rescue_permutation, STATE_WIDTH as RESCUE_STATE_WIDTH},
+    Felt, FELT_ZERO,
+};
+
+const STATE_ROOT_MIX_COEFF_1: u64 = 13;
+const STATE_ROOT_MIX_COEFF_2: u64 = 37;
 
 /// The state root for a batch of compliance events
 ///
-/// Computed as: `Rescue_Hash(event_tree_root || metadata_hash)`, where
+/// Computed from a single Rescue permutation over
+/// `event_tree_root || metadata_hash || prev_state_root`, where
 /// `metadata_hash = Rescue_Hash(prev_state_root || batch_metadata)`.
+///
+/// The final 12-lane Rescue state is folded into the exported 4-lane root with
+/// fixed non-zero mixing coefficients so the state root depends on the full
+/// permutation output rather than only the first four lanes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BatchStateRoot {
     /// The 4-element state root (256 bits as 4x64-bit field elements)
@@ -33,18 +45,36 @@ impl BatchStateRoot {
         let event_root = event_tree.root();
         let metadata_hash = metadata.to_chained_rescue_hash(&prev_state_root.root);
 
-        let state_root = rescue_hash_pair(&event_root, &metadata_hash);
-
-        Self { root: state_root }
+        Self::from_components(&event_root, &metadata_hash, &prev_state_root.root)
     }
 
-    /// Compute state root from a pre-computed event root and metadata hash.
+    /// Compute state root from pre-computed event and metadata commitments.
     ///
     /// Callers are responsible for ensuring `metadata_hash` already binds the
     /// previous state root if they require chained-state semantics.
-    pub fn from_components(event_root: &[Felt; 4], metadata_hash: &[Felt; 4]) -> Self {
-        let state_root = rescue_hash_pair(event_root, metadata_hash);
-        Self { root: state_root }
+    pub fn from_components(
+        event_root: &[Felt; 4],
+        metadata_hash: &[Felt; 4],
+        prev_state_root: &[Felt; 4],
+    ) -> Self {
+        let mut input = [FELT_ZERO; RESCUE_STATE_WIDTH];
+        input[..4].copy_from_slice(event_root);
+        input[4..8].copy_from_slice(metadata_hash);
+        input[8..12].copy_from_slice(prev_state_root);
+        rescue_permutation(&mut input);
+        Self {
+            root: Self::collapse_finalize_state(&input),
+        }
+    }
+
+    pub(crate) fn collapse_finalize_state(state: &[Felt; RESCUE_STATE_WIDTH]) -> [Felt; 4] {
+        let coeff_1 = felt_from_u64(STATE_ROOT_MIX_COEFF_1);
+        let coeff_2 = felt_from_u64(STATE_ROOT_MIX_COEFF_2);
+        let mut root = [FELT_ZERO; 4];
+        for i in 0..4 {
+            root[i] = state[i] + state[4 + i] * coeff_1 + state[8 + i] * coeff_2;
+        }
+        root
     }
 
     /// Create a zero/genesis state root
@@ -235,10 +265,13 @@ mod tests {
         let metadata = BatchMetadata::with_sequence(Uuid::new_v4(), Uuid::new_v4(), 0, 3);
         let prev_root_a = BatchStateRoot::new([felt_from_u64(1); 4]);
         let prev_root_b = BatchStateRoot::new([felt_from_u64(2); 4]);
+        let metadata_hash_a = metadata.to_chained_rescue_hash(&prev_root_a.root);
+        let metadata_hash_b = metadata.to_chained_rescue_hash(&prev_root_b.root);
 
         let root_a = BatchStateRoot::compute(&prev_root_a, &tree, &metadata);
         let root_b = BatchStateRoot::compute(&prev_root_b, &tree, &metadata);
 
+        assert_ne!(metadata_hash_a, metadata_hash_b);
         assert_ne!(root_a, root_b);
     }
 }

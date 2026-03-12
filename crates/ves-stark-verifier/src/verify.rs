@@ -40,18 +40,47 @@ pub struct VerificationResult {
     pub policy_limit: u64,
 }
 
-/// Verify a compliance proof
-///
-/// This is the main entry point for proof verification. It takes raw proof
-/// bytes, public inputs, policy, and the witness commitment from the proof.
-///
-/// The witness commitment is a Rescue hash of the private amount, included
-/// in the proof to bind the private witness to the public proof.
-pub fn verify_compliance_proof(
+impl VerificationResult {
+    /// Convert an invalid verification result into an error for callers that
+    /// want a strict success boundary.
+    pub fn ensure_valid(self) -> Result<Self, VerifierError> {
+        if self.valid {
+            Ok(self)
+        } else {
+            Err(VerifierError::verification_failed(
+                self.error
+                    .unwrap_or_else(|| "proof failed verification".to_string()),
+            ))
+        }
+    }
+}
+
+fn default_acceptable_options() -> Result<AcceptableOptions, VerifierError> {
+    Ok(AcceptableOptions::OptionSet(vec![
+        ves_stark_air::options::ProofOptions::default()
+            .try_to_winterfell()
+            .map_err(|e| {
+                VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
+            })?,
+        ves_stark_air::options::ProofOptions::fast()
+            .try_to_winterfell()
+            .map_err(|e| {
+                VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
+            })?,
+        ves_stark_air::options::ProofOptions::secure()
+            .try_to_winterfell()
+            .map_err(|e| {
+                VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
+            })?,
+    ]))
+}
+
+fn verify_compliance_proof_with_options(
     proof_bytes: &[u8],
     public_inputs: &CompliancePublicInputs,
     policy: &Policy,
     witness_commitment: &[u64; 4],
+    acceptable_options: &AcceptableOptions,
 ) -> Result<VerificationResult, VerifierError> {
     let start = Instant::now();
 
@@ -148,30 +177,11 @@ pub fn verify_compliance_proof(
     )
     .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?;
 
-    // Define acceptable proof options
-    let acceptable_options = AcceptableOptions::OptionSet(vec![
-        ves_stark_air::options::ProofOptions::default()
-            .try_to_winterfell()
-            .map_err(|e| {
-                VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
-            })?,
-        ves_stark_air::options::ProofOptions::fast()
-            .try_to_winterfell()
-            .map_err(|e| {
-                VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
-            })?,
-        ves_stark_air::options::ProofOptions::secure()
-            .try_to_winterfell()
-            .map_err(|e| {
-                VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
-            })?,
-    ]);
-
     // Verify the proof
     let result = verify::<ComplianceAir, Hasher, RandCoin, VectorCommit>(
         proof,
         pub_inputs,
-        &acceptable_options,
+        acceptable_options,
     );
 
     let verification_time = start.elapsed();
@@ -194,6 +204,39 @@ pub fn verify_compliance_proof(
     }
 }
 
+/// Verify a compliance proof
+///
+/// This is the main entry point for proof verification. It takes raw proof
+/// bytes, public inputs, policy, and the witness commitment from the proof.
+///
+/// The witness commitment is a Rescue hash of the private amount, included
+/// in the proof to bind the private witness to the public proof.
+pub fn verify_compliance_proof(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    policy: &Policy,
+    witness_commitment: &[u64; 4],
+) -> Result<VerificationResult, VerifierError> {
+    let acceptable_options = default_acceptable_options()?;
+    verify_compliance_proof_with_options(
+        proof_bytes,
+        public_inputs,
+        policy,
+        witness_commitment,
+        &acceptable_options,
+    )
+}
+
+/// Verify a compliance proof and return an error on invalid proofs.
+pub fn verify_compliance_proof_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    policy: &Policy,
+    witness_commitment: &[u64; 4],
+) -> Result<VerificationResult, VerifierError> {
+    verify_compliance_proof(proof_bytes, public_inputs, policy, witness_commitment)?.ensure_valid()
+}
+
 /// Verify a compliance proof using policy parameters from the public inputs.
 pub fn verify_compliance_proof_auto(
     proof_bytes: &[u8],
@@ -203,6 +246,16 @@ pub fn verify_compliance_proof_auto(
     let policy = Policy::from_public_inputs(&public_inputs.policy_id, &public_inputs.policy_params)
         .map_err(|e| VerifierError::PublicInputMismatch(format!("Invalid policy params: {e}")))?;
     verify_compliance_proof(proof_bytes, public_inputs, &policy, witness_commitment)
+}
+
+/// Verify a compliance proof using policy parameters from the public inputs and
+/// return an error on invalid proofs.
+pub fn verify_compliance_proof_auto_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    witness_commitment: &[u64; 4],
+) -> Result<VerificationResult, VerifierError> {
+    verify_compliance_proof_auto(proof_bytes, public_inputs, witness_commitment)?.ensure_valid()
 }
 
 /// Verify a compliance proof using policy parameters and witness commitment from the public inputs.
@@ -221,6 +274,15 @@ pub fn verify_compliance_proof_auto_bound(
             )
         })?;
     verify_compliance_proof_auto(proof_bytes, public_inputs, &witness_commitment)
+}
+
+/// Verify a compliance proof using policy parameters and witness commitment from
+/// public inputs and return an error on invalid proofs.
+pub fn verify_compliance_proof_auto_bound_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+) -> Result<VerificationResult, VerifierError> {
+    verify_compliance_proof_auto_bound(proof_bytes, public_inputs)?.ensure_valid()
 }
 
 /// Stateless compliance proof verifier
@@ -262,23 +324,7 @@ impl ComplianceVerifier {
     /// Create a new verifier with default options without panicking
     pub fn try_new() -> Result<Self, VerifierError> {
         Ok(Self {
-            acceptable_options: AcceptableOptions::OptionSet(vec![
-                ves_stark_air::options::ProofOptions::default()
-                    .try_to_winterfell()
-                    .map_err(|e| {
-                        VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
-                    })?,
-                ves_stark_air::options::ProofOptions::fast()
-                    .try_to_winterfell()
-                    .map_err(|e| {
-                        VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
-                    })?,
-                ves_stark_air::options::ProofOptions::secure()
-                    .try_to_winterfell()
-                    .map_err(|e| {
-                        VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
-                    })?,
-            ]),
+            acceptable_options: default_acceptable_options()?,
         })
     }
 
@@ -297,7 +343,13 @@ impl ComplianceVerifier {
         policy: &Policy,
         witness_commitment: &[u64; 4],
     ) -> Result<VerificationResult, VerifierError> {
-        verify_compliance_proof(proof_bytes, public_inputs, policy, witness_commitment)
+        verify_compliance_proof_with_options(
+            proof_bytes,
+            public_inputs,
+            policy,
+            witness_commitment,
+            &self.acceptable_options,
+        )
     }
 
     /// Verify a proof using policy parameters from the public inputs.
@@ -307,7 +359,18 @@ impl ComplianceVerifier {
         public_inputs: &CompliancePublicInputs,
         witness_commitment: &[u64; 4],
     ) -> Result<VerificationResult, VerifierError> {
-        verify_compliance_proof_auto(proof_bytes, public_inputs, witness_commitment)
+        let policy =
+            Policy::from_public_inputs(&public_inputs.policy_id, &public_inputs.policy_params)
+                .map_err(|e| {
+                    VerifierError::PublicInputMismatch(format!("Invalid policy params: {e}"))
+                })?;
+        verify_compliance_proof_with_options(
+            proof_bytes,
+            public_inputs,
+            &policy,
+            witness_commitment,
+            &self.acceptable_options,
+        )
     }
 
     /// Verify a proof using policy parameters and witness commitment from the public inputs.
@@ -316,7 +379,27 @@ impl ComplianceVerifier {
         proof_bytes: &[u8],
         public_inputs: &CompliancePublicInputs,
     ) -> Result<VerificationResult, VerifierError> {
-        verify_compliance_proof_auto_bound(proof_bytes, public_inputs)
+        let witness_commitment = public_inputs
+            .witness_commitment_u64()
+            .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?
+            .ok_or_else(|| {
+                VerifierError::PublicInputMismatch(
+                    "missing witnessCommitment in public inputs".to_string(),
+                )
+            })?;
+        self.verify_auto(proof_bytes, public_inputs, &witness_commitment)
+    }
+
+    /// Verify a proof and return an error on invalid proofs.
+    pub fn verify_strict(
+        &self,
+        proof_bytes: &[u8],
+        public_inputs: &CompliancePublicInputs,
+        policy: &Policy,
+        witness_commitment: &[u64; 4],
+    ) -> Result<VerificationResult, VerifierError> {
+        self.verify(proof_bytes, public_inputs, policy, witness_commitment)?
+            .ensure_valid()
     }
 
     /// Verify proof hash matches
@@ -383,7 +466,48 @@ mod tests {
             AcceptableOptions::OptionSet(vec![ves_stark_air::options::ProofOptions::secure()
                 .try_to_winterfell()
                 .unwrap()]);
-        let _verifier = ComplianceVerifier::with_options(options);
+        let verifier = ComplianceVerifier::with_options(options);
+        assert!(std::mem::size_of_val(&verifier) > 0);
+    }
+
+    #[test]
+    fn test_verifier_with_custom_options_rejects_fast_proof() {
+        use ves_stark_prover::{ComplianceProver, ComplianceWitness};
+        use winter_verifier::AcceptableOptions;
+
+        let threshold = 10000u64;
+        let amount = 5000u64;
+        let inputs = sample_inputs(threshold);
+        let witness = ComplianceWitness::new(amount, inputs.clone());
+        let policy = Policy::aml_threshold(threshold);
+
+        let prover = ComplianceProver::with_policy(policy.clone())
+            .with_options(ves_stark_air::options::ProofOptions::fast());
+        let proof = prover.prove(&witness).unwrap();
+
+        let verifier = ComplianceVerifier::with_options(AcceptableOptions::OptionSet(vec![
+            ves_stark_air::options::ProofOptions::secure()
+                .try_to_winterfell()
+                .unwrap(),
+        ]));
+
+        let result = verifier
+            .verify(
+                &proof.proof_bytes,
+                &inputs,
+                &policy,
+                &proof.witness_commitment,
+            )
+            .unwrap();
+        assert!(!result.valid);
+        assert!(verifier
+            .verify_strict(
+                &proof.proof_bytes,
+                &inputs,
+                &policy,
+                &proof.witness_commitment
+            )
+            .is_err());
     }
 
     // =========================================================================
