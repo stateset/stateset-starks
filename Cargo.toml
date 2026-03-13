@@ -49,7 +49,7 @@ repository = "https://github.com/stateset/stateset-stark"
 # Winterfell STARK framework
 winterfell = "0.10"
 winter-air = "0.10"
-winter-prover = "0.10"
+winter-prover = "0.13"
 winter-verifier = "0.10"
 winter-math = "0.10"
 winter-crypto = "0.10"
