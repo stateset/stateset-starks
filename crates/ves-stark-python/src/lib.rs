@@ -11,7 +11,7 @@ use uuid::Uuid;
 use ves_stark_air::Policy as RustPolicy;
 use ves_stark_primitives::{CompliancePublicInputs as RustCompliancePublicInputs, PolicyParams};
 use ves_stark_prover::{ComplianceProver, ComplianceWitness};
-use ves_stark_verifier::verify_compliance_proof_auto;
+use ves_stark_verifier::{verify_compliance_proof_auto, VerifierError};
 
 /// Policy type for compliance proofs
 #[pyclass]
@@ -130,6 +130,7 @@ impl CompliancePublicInputs {
     ///     policy_hash: Policy hash (hex64, lowercase)
     ///     witness_commitment: Optional witness commitment (hex64, lowercase)
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (event_id, tenant_id, store_id, sequence_number, payload_kind, payload_plain_hash, payload_cipher_hash, event_signing_hash, policy_id, policy_params, policy_hash, witness_commitment=None))]
     pub fn new(
         event_id: String,
@@ -194,6 +195,25 @@ impl CompliancePublicInputs {
             "CompliancePublicInputs(event_id='{}', policy_id='{}')",
             self.event_id, self.policy_id
         )
+    }
+}
+
+fn verifier_error_to_py(err: VerifierError) -> PyErr {
+    let message = format!("Verification error: {}", err);
+    match err {
+        VerifierError::PublicInputMismatch(_)
+        | VerifierError::InvalidHexFormat { .. }
+        | VerifierError::DeserializationError(_)
+        | VerifierError::InvalidPolicyHash { .. }
+        | VerifierError::PolicyMismatch { .. }
+        | VerifierError::LimitMismatch { .. }
+        | VerifierError::WitnessCommitmentMismatch
+        | VerifierError::ProofTooLarge { .. }
+        | VerifierError::UnsupportedProofVersion { .. } => PyValueError::new_err(message),
+        VerifierError::InvalidProofStructure(_)
+        | VerifierError::FriVerificationFailed(_)
+        | VerifierError::ConstraintCheckFailed(_)
+        | VerifierError::VerificationFailed(_) => PyRuntimeError::new_err(message),
     }
 }
 
@@ -367,7 +387,7 @@ pub fn prove(
 ///     VerificationResult indicating if proof is valid
 ///
 /// Raises:
-///     ValueError: If inputs are invalid
+///     ValueError: If public inputs, proof bytes, or witness commitment are malformed
 ///
 /// Example:
 ///     >>> result = verify(proof.proof_bytes, public_inputs, proof.witness_commitment)
@@ -407,13 +427,7 @@ pub fn verify(
             policy_id: verification.policy_id,
             policy_limit: verification.policy_limit,
         }),
-        Err(e) => Ok(VerificationResult {
-            valid: false,
-            verification_time_ms: 0,
-            error: Some(format!("Verification error: {}", e)),
-            policy_id: public_inputs.policy_id.clone(),
-            policy_limit: 0,
-        }),
+        Err(e) => Err(verifier_error_to_py(e)),
     }
 }
 

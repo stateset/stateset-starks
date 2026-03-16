@@ -712,7 +712,7 @@ mod tests {
         let json = serde_json::to_string(&result).unwrap();
         let recovered: VerificationResult = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(recovered.valid, true);
+        assert!(recovered.valid);
         assert_eq!(recovered.verification_time_ms, 150);
         assert!(recovered.error.is_none());
         assert_eq!(recovered.policy_id, "aml.threshold");
@@ -732,7 +732,7 @@ mod tests {
         let json = serde_json::to_string(&result).unwrap();
         let recovered: VerificationResult = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(recovered.valid, false);
+        assert!(!recovered.valid);
         assert!(recovered.error.is_some());
         assert_eq!(recovered.error.unwrap(), "Constraint check failed");
     }

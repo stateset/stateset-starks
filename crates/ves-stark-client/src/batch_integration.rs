@@ -127,6 +127,7 @@ impl SetChainClient {
     /// * `sequence_end` - Last sequence number
     /// * `policy_hash` - Policy hash (32 bytes)
     /// * `policy_limit` - Policy limit/threshold
+    #[allow(clippy::too_many_arguments)]
     pub async fn submit_batch_proof_from_batch(
         &self,
         proof: &ves_stark_batch::prover::BatchProof,
@@ -169,6 +170,7 @@ impl SetChainClient {
     /// Submit a batch proof with combined batch commitment
     ///
     /// This is more gas-efficient as it commits the batch and proof in one transaction.
+    #[allow(clippy::too_many_arguments)]
     pub async fn submit_batch_proof_from_batch_combined(
         &self,
         proof: &ves_stark_batch::prover::BatchProof,

@@ -589,10 +589,10 @@ mod tests {
         let trace = builder.build().unwrap();
 
         // Verify Rescue output state columns contain the witness commitment
-        for i in 0..4 {
+        for (i, expected_lane) in expected_commitment.iter().enumerate() {
             let trace_value = trace.get(cols::RESCUE_STATE_START + i, rescue_output_row);
             assert_eq!(
-                trace_value, expected_commitment[i],
+                trace_value, *expected_lane,
                 "Rescue commitment column {} mismatch at output row",
                 i
             );
@@ -600,10 +600,10 @@ mod tests {
 
         // Verify commitment is constant across rows after the output row
         for row in rescue_output_row..trace.length() {
-            for i in 0..4 {
+            for (i, expected_lane) in expected_commitment.iter().enumerate() {
                 let trace_value = trace.get(cols::RESCUE_STATE_START + i, row);
                 assert_eq!(
-                    trace_value, expected_commitment[i],
+                    trace_value, *expected_lane,
                     "Rescue commitment column {} changed at row {}",
                     i, row
                 );

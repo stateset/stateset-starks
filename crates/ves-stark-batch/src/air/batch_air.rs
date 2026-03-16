@@ -1143,11 +1143,11 @@ impl Air for BatchComplianceAir {
                     break;
                 }
 
-                if step < (ROWS_PER_MERKLE_NODE - 1) {
+                if let Some(round_constants) = ROUND_CONSTANTS.get(step) {
                     rescue_active[row] = FELT_ONE;
                     rescue_is_forward[row] = if step % 2 == 0 { FELT_ONE } else { FELT_ZERO };
-                    for col in 0..RESCUE_STATE_WIDTH {
-                        round_columns[col][row] = felt_from_u64(ROUND_CONSTANTS[step][col]);
+                    for (col, round_column) in round_columns.iter_mut().enumerate() {
+                        round_column[row] = felt_from_u64(round_constants[col]);
                     }
                 }
 

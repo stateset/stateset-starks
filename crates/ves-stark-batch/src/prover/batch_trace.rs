@@ -115,13 +115,20 @@ impl LeafFieldAccumulators {
     }
 
     fn append_padding(&mut self, gamma: Felt, policy_hash: &[Felt; 8]) {
-        for i in 0..4 {
-            self.commitment[i] *= gamma;
-            self.event_id[i] *= gamma;
+        for (commitment_lane, event_id_lane) in
+            self.commitment.iter_mut().zip(self.event_id.iter_mut())
+        {
+            *commitment_lane *= gamma;
+            *event_id_lane *= gamma;
         }
-        for i in 0..8 {
-            self.policy_hash[i] = self.policy_hash[i] * gamma + policy_hash[i];
-            self.public_inputs_hash[i] *= gamma;
+        for ((policy_lane, public_inputs_lane), policy_hash_lane) in self
+            .policy_hash
+            .iter_mut()
+            .zip(self.public_inputs_hash.iter_mut())
+            .zip(policy_hash.iter())
+        {
+            *policy_lane = *policy_lane * gamma + *policy_hash_lane;
+            *public_inputs_lane *= gamma;
         }
         for (i, tag) in AMOUNT_STREAM_LANE_TAGS.iter().enumerate() {
             self.amount[i] = self.amount[i] * gamma + felt_from_u64(*tag);
@@ -224,9 +231,9 @@ impl BatchTraceBuilder {
             let mut updated_event_leaf_acc = event_leaf_acc;
             let mut updated_event_field_acc = event_field_acc;
             updated_event_field_acc.append_leaf(event_leaf, &amount_limbs, leaf_gamma);
-            for i in 0..4 {
+            for (i, leaf_hash_lane) in event_trace.leaf_hash.iter().enumerate() {
                 updated_event_leaf_acc[i] =
-                    updated_event_leaf_acc[i] * leaf_gamma + event_trace.leaf_hash[i];
+                    updated_event_leaf_acc[i] * leaf_gamma + *leaf_hash_lane;
             }
 
             for row_in_event in 0..ROWS_PER_EVENT {
@@ -739,14 +746,14 @@ impl BatchTraceBuilder {
             let chunk_traces = [chunk0_trace, chunk1_trace, chunk2_trace, chunk3_trace];
 
             for (chunk_idx, trace_rows) in chunk_traces.iter().enumerate() {
-                for step in 0..ROWS_PER_MERKLE_NODE {
+                for (step, trace_row) in trace_rows.iter().enumerate() {
                     let row = current_row + chunk_idx * ROWS_PER_MERKLE_NODE + step;
                     if row >= self.trace_length {
                         break;
                     }
 
-                    for i in 0..RESCUE_STATE_WIDTH {
-                        trace[batch_cols::merkle_rescue_state(i)][row] = trace_rows[step][i];
+                    for (i, lane) in trace_row.iter().enumerate() {
+                        trace[batch_cols::merkle_rescue_state(i)][row] = *lane;
                     }
                     trace[batch_cols::MERKLE_HASH_STEP][row] = felt_from_u64(step as u64);
                     trace[batch_cols::IS_FINALIZE_HASH][row] = FELT_ZERO;
@@ -875,14 +882,14 @@ impl BatchTraceBuilder {
             hash_state[..8].copy_from_slice(&amount_limbs);
             let trace_rows = rescue_permutation_trace(&hash_state);
 
-            for step in 0..ROWS_PER_COMMITMENT_HASH {
+            for (step, trace_row) in trace_rows.iter().enumerate().take(ROWS_PER_COMMITMENT_HASH) {
                 let row = current_row + step;
                 if row >= self.trace_length {
                     break;
                 }
 
-                for i in 0..RESCUE_STATE_WIDTH {
-                    trace[batch_cols::merkle_rescue_state(i)][row] = trace_rows[step][i];
+                for (i, lane) in trace_row.iter().enumerate() {
+                    trace[batch_cols::merkle_rescue_state(i)][row] = *lane;
                 }
                 trace[batch_cols::MERKLE_HASH_STEP][row] = felt_from_u64(step as u64);
                 trace[batch_cols::IS_FINALIZE_HASH][row] = FELT_ZERO;
@@ -1002,20 +1009,18 @@ impl BatchTraceBuilder {
                     };
 
                 let mut hash_state = [FELT_ZERO; 12];
-                for i in 0..4 {
-                    hash_state[i] = left_child[i];
-                    hash_state[4 + i] = right_child[i];
-                }
+                hash_state[..4].copy_from_slice(&left_child);
+                hash_state[4..8].copy_from_slice(&right_child);
                 let trace_rows = rescue_permutation_trace(&hash_state);
 
-                for step in 0..ROWS_PER_MERKLE_NODE {
+                for (step, trace_row) in trace_rows.iter().enumerate() {
                     let row = current_row + step;
                     if row >= self.trace_length {
                         break;
                     }
 
-                    for i in 0..RESCUE_STATE_WIDTH {
-                        trace[batch_cols::merkle_rescue_state(i)][row] = trace_rows[step][i];
+                    for (i, lane) in trace_row.iter().enumerate() {
+                        trace[batch_cols::merkle_rescue_state(i)][row] = *lane;
                     }
                     trace[batch_cols::MERKLE_HASH_STEP][row] = felt_from_u64(step as u64);
                     trace[batch_cols::IS_FINALIZE_HASH][row] = FELT_ZERO;
@@ -1128,22 +1133,21 @@ impl BatchTraceBuilder {
             [FELT_ZERO; 4]
         };
 
+        let event_tree_root = event_tree.root();
         let mut hash_state = [FELT_ZERO; RESCUE_STATE_WIDTH];
-        for i in 0..4 {
-            hash_state[i] = event_tree.root()[i];
-            hash_state[4 + i] = metadata_hash[i];
-            hash_state[8 + i] = prev_state_root.root[i];
-        }
+        hash_state[..4].copy_from_slice(&event_tree_root);
+        hash_state[4..8].copy_from_slice(metadata_hash);
+        hash_state[8..12].copy_from_slice(&prev_state_root.root);
         let trace_rows = rescue_permutation_trace(&hash_state);
 
-        for step in 0..FINALIZE_ROWS {
+        for (step, trace_row) in trace_rows.iter().enumerate().take(FINALIZE_ROWS) {
             let row = current_row;
             if row >= self.trace_length {
                 break;
             }
 
-            for i in 0..RESCUE_STATE_WIDTH {
-                trace[batch_cols::merkle_rescue_state(i)][row] = trace_rows[step][i];
+            for (i, lane) in trace_row.iter().enumerate() {
+                trace[batch_cols::merkle_rescue_state(i)][row] = *lane;
             }
             for i in 0..4 {
                 trace[batch_cols::merkle_output(i)][row] = new_state_root.root[i];

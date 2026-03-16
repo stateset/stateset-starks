@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn test_state_root_computation() {
-        let leaves: Vec<EventLeaf> = (0..4).map(|i| create_test_leaf(i)).collect();
+        let leaves: Vec<EventLeaf> = (0..4).map(create_test_leaf).collect();
         let tree = EventMerkleTree::from_leaves(leaves).unwrap();
         let prev_root = BatchStateRoot::genesis();
 
@@ -206,7 +206,7 @@ mod tests {
 
     #[test]
     fn test_state_root_deterministic() {
-        let leaves: Vec<EventLeaf> = (0..4).map(|i| create_test_leaf(i)).collect();
+        let leaves: Vec<EventLeaf> = (0..4).map(create_test_leaf).collect();
         let tree = EventMerkleTree::from_leaves(leaves).unwrap();
         let prev_root = BatchStateRoot::genesis();
 
@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn test_hex_roundtrip() {
-        let leaves: Vec<EventLeaf> = (0..4).map(|i| create_test_leaf(i)).collect();
+        let leaves: Vec<EventLeaf> = (0..4).map(create_test_leaf).collect();
         let tree = EventMerkleTree::from_leaves(leaves).unwrap();
         let prev_root = BatchStateRoot::genesis();
 
@@ -242,8 +242,8 @@ mod tests {
 
     #[test]
     fn test_different_events_different_roots() {
-        let leaves1: Vec<EventLeaf> = (0..4).map(|i| create_test_leaf(i)).collect();
-        let leaves2: Vec<EventLeaf> = (10..14).map(|i| create_test_leaf(i)).collect();
+        let leaves1: Vec<EventLeaf> = (0..4).map(create_test_leaf).collect();
+        let leaves2: Vec<EventLeaf> = (10..14).map(create_test_leaf).collect();
 
         let tree1 = EventMerkleTree::from_leaves(leaves1).unwrap();
         let tree2 = EventMerkleTree::from_leaves(leaves2).unwrap();
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_different_prev_roots_different_state_roots() {
-        let leaves: Vec<EventLeaf> = (0..4).map(|i| create_test_leaf(i)).collect();
+        let leaves: Vec<EventLeaf> = (0..4).map(create_test_leaf).collect();
         let tree = EventMerkleTree::from_leaves(leaves).unwrap();
 
         let metadata = BatchMetadata::with_sequence(Uuid::new_v4(), Uuid::new_v4(), 0, 3);

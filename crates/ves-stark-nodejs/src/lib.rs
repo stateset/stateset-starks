@@ -10,7 +10,7 @@ use uuid::Uuid;
 use ves_stark_air::Policy;
 use ves_stark_primitives::{witness_commitment_hex_to_u64, CompliancePublicInputs, PolicyParams};
 use ves_stark_prover::{ComplianceProver, ComplianceWitness};
-use ves_stark_verifier::verify_compliance_proof_auto;
+use ves_stark_verifier::{verify_compliance_proof_auto, VerifierError};
 
 fn bigint_to_u64(value: &BigInt, field_name: &str) -> Result<u64> {
     let (sign_bit, value, lossless) = value.get_u64();
@@ -52,6 +52,26 @@ fn parse_witness_commitment(witness_commitment: Vec<String>) -> Result<[u64; 4]>
     }
 
     Ok(commitment)
+}
+
+fn verifier_error_to_napi(err: VerifierError) -> Error {
+    let status = match err {
+        VerifierError::PublicInputMismatch(_)
+        | VerifierError::InvalidHexFormat { .. }
+        | VerifierError::DeserializationError(_)
+        | VerifierError::InvalidPolicyHash { .. }
+        | VerifierError::PolicyMismatch { .. }
+        | VerifierError::LimitMismatch { .. }
+        | VerifierError::WitnessCommitmentMismatch
+        | VerifierError::ProofTooLarge { .. }
+        | VerifierError::UnsupportedProofVersion { .. } => Status::InvalidArg,
+        VerifierError::InvalidProofStructure(_)
+        | VerifierError::FriVerificationFailed(_)
+        | VerifierError::ConstraintCheckFailed(_)
+        | VerifierError::VerificationFailed(_) => Status::GenericFailure,
+    };
+
+    Error::new(status, format!("Verification error: {}", err))
 }
 
 /// Public inputs for compliance proof generation/verification
@@ -219,6 +239,9 @@ pub fn prove(
 /// @param publicInputs - Public inputs (must match those used for proving)
 /// @param witnessCommitment - Witness commitment from the proof
 /// @returns VerificationResult indicating if proof is valid
+///
+/// Malformed public inputs, malformed proof encodings, or witness-commitment binding
+/// mismatches are reported as thrown errors rather than `valid = false`.
 #[napi]
 pub fn verify(
     proof_bytes: Buffer,
@@ -241,19 +264,15 @@ pub fn verify(
             policy_id: verification.policy_id,
             policy_limit: BigInt::from(verification.policy_limit),
         }),
-        Err(e) => Ok(JsVerificationResult {
-            valid: false,
-            verification_time_ms: 0,
-            error: Some(format!("Verification error: {}", e)),
-            policy_id: public_inputs.policy_id,
-            policy_limit: BigInt::from(0u64),
-        }),
+        Err(e) => Err(verifier_error_to_napi(e)),
     }
 }
 
 /// Verify a STARK compliance proof using the witness commitment hex string.
 ///
 /// This avoids `u64` round-trip issues in JavaScript.
+/// Malformed public inputs, malformed proof encodings, or witness-commitment binding
+/// mismatches are reported as thrown errors rather than `valid = false`.
 #[napi]
 pub fn verify_hex(
     proof_bytes: Buffer,
@@ -281,13 +300,7 @@ pub fn verify_hex(
             policy_id: verification.policy_id,
             policy_limit: BigInt::from(verification.policy_limit),
         }),
-        Err(e) => Ok(JsVerificationResult {
-            valid: false,
-            verification_time_ms: 0,
-            error: Some(format!("Verification error: {}", e)),
-            policy_id: public_inputs.policy_id,
-            policy_limit: BigInt::from(0u64),
-        }),
+        Err(e) => Err(verifier_error_to_napi(e)),
     }
 }
 

@@ -928,8 +928,8 @@ mod tests {
     fn test_mds_inverse_property() {
         // Check that MDS_INV * MDS == I for a few sample states
         let mut state = [FELT_ZERO; STATE_WIDTH];
-        for i in 0..STATE_WIDTH {
-            state[i] = felt_from_u64((i as u64 + 1) * 1234567);
+        for (i, lane) in state.iter_mut().enumerate() {
+            *lane = felt_from_u64((i as u64 + 1) * 1234567);
         }
 
         let mixed = mds_multiply(&state);
@@ -951,13 +951,7 @@ mod tests {
         let hash = rescue_hash(&input);
 
         // Should produce non-zero output
-        let mut any_nonzero = false;
-        for i in 0..4 {
-            if felt_to_u64(hash[i]) != 0 {
-                any_nonzero = true;
-                break;
-            }
-        }
+        let any_nonzero = hash.iter().take(4).any(|&lane| felt_to_u64(lane) != 0);
         assert!(any_nonzero, "Hash of single element should be non-zero");
     }
 
@@ -1022,8 +1016,8 @@ mod tests {
     #[test]
     fn test_state_zero() {
         let state = state_zero();
-        for i in 0..STATE_WIDTH {
-            assert_eq!(felt_to_u64(state[i]), 0, "Zero state should be all zeros");
+        for lane in state.iter().take(STATE_WIDTH) {
+            assert_eq!(felt_to_u64(*lane), 0, "Zero state should be all zeros");
         }
     }
 
@@ -1226,13 +1220,7 @@ mod proptests {
             let result = mds_multiply(&state);
 
             // At least one output element should be non-zero
-            let mut any_nonzero = false;
-            for i in 0..STATE_WIDTH {
-                if felt_to_u64(result[i]) != 0 {
-                    any_nonzero = true;
-                    break;
-                }
-            }
+            let any_nonzero = result.iter().any(|&lane| felt_to_u64(lane) != 0);
             prop_assert!(any_nonzero, "MDS should preserve non-zero inputs");
         }
 

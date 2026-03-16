@@ -1,6 +1,7 @@
 import uuid
 from typing import Optional
 
+import pytest
 import ves_stark
 
 
@@ -53,9 +54,8 @@ def test_prove_verify_bound_smoke() -> None:
     # Negative test: mismatch between public_inputs.witnessCommitment and provided witness commitment must fail.
     wrong = proof.witness_commitment_hex[:-1] + ("1" if proof.witness_commitment_hex.endswith("0") else "0")
     inputs_wrong = _mk_public_inputs(witness_commitment=wrong)
-    bad = ves_stark.verify(proof.proof_bytes, inputs_wrong, proof.witness_commitment)
-    assert not bad.valid
-    assert bad.error
+    with pytest.raises(ValueError, match="Verification error: Witness commitment mismatch"):
+        ves_stark.verify(proof.proof_bytes, inputs_wrong, proof.witness_commitment)
 
 
 def test_prove_verify_order_total_cap_smoke() -> None:

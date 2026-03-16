@@ -278,8 +278,8 @@ mod tests {
         assert_eq!(limbs[0].as_int(), 0xFFFFFFFF);
         assert_eq!(limbs[1].as_int(), 0xFFFFFFFF);
         // Upper limbs should be zero for u64
-        for i in 2..8 {
-            assert_eq!(limbs[i].as_int(), 0);
+        for limb in limbs.iter().skip(2) {
+            assert_eq!(limb.as_int(), 0);
         }
     }
 
@@ -399,8 +399,8 @@ mod proptests {
             let witness = ComplianceWitness::new(amount, inputs);
             let limbs = witness.amount_limbs();
 
-            for i in 2..8 {
-                prop_assert_eq!(limbs[i].as_int(), 0, "Limb {} should be zero", i);
+            for (i, limb) in limbs.iter().enumerate().skip(2) {
+                prop_assert_eq!(limb.as_int(), 0, "Limb {} should be zero", i);
             }
         }
 

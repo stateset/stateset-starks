@@ -59,13 +59,17 @@ export interface JsVerificationResult {
   policyLimit: bigint
 }
 /**
- * Generate a STARK compliance proof
+ * Generate a STARK compliance proof for the provided amount witness.
  *
  * @param amount - The amount to prove compliance for (must be less than policy limit)
  * @param publicInputs - Public inputs including event metadata and policy info
  * @param policyType - Policy type: "aml.threshold" or "order_total.cap"
  * @param policyLimit - The policy limit (threshold or cap value)
  * @returns ComplianceProof containing proof bytes and metadata
+ *
+ * Note: this proves a statement about the supplied `amount` witness. Binding that
+ * witness back to encrypted payload contents is the responsibility of the
+ * surrounding pipeline, not this library.
  */
 export declare function prove(amount: bigint, publicInputs: JsCompliancePublicInputs, policyType: string, policyLimit: bigint): JsComplianceProof
 /**
@@ -75,12 +79,17 @@ export declare function prove(amount: bigint, publicInputs: JsCompliancePublicIn
  * @param publicInputs - Public inputs (must match those used for proving)
  * @param witnessCommitment - Witness commitment from the proof
  * @returns VerificationResult indicating if proof is valid
+ *
+ * Malformed public inputs, malformed proof encodings, or witness-commitment binding
+ * mismatches are reported as thrown errors rather than `valid = false`.
  */
 export declare function verify(proofBytes: Buffer, publicInputs: JsCompliancePublicInputs, witnessCommitment: Array<string>): JsVerificationResult
 /**
  * Verify a STARK compliance proof using the witness commitment hex string.
  *
  * This avoids `u64` round-trip issues in JavaScript.
+ * Malformed public inputs, malformed proof encodings, or witness-commitment binding
+ * mismatches are reported as thrown errors rather than `valid = false`.
  */
 export declare function verifyHex(proofBytes: Buffer, publicInputs: JsCompliancePublicInputs, witnessCommitmentHex: string): JsVerificationResult
 /**

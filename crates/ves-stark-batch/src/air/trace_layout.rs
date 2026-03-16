@@ -623,6 +623,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_trace_width() {
         assert_eq!(BATCH_TRACE_WIDTH, BASE_TRACE_WIDTH + BATCH_EXTENSION_WIDTH);
         assert!(BATCH_TRACE_WIDTH > BASE_TRACE_WIDTH);
@@ -630,6 +631,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_column_indices_non_overlapping() {
         // Verify key column ranges don't overlap
         assert!(batch_cols::BASE_TRACE_END <= batch_cols::EVENT_INDEX);

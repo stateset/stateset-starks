@@ -195,18 +195,18 @@ pub enum PublicInputsError {
 }
 
 impl PublicInputs {
-    /// Create new public inputs (legacy, without witness commitment)
-    pub fn new(policy_limit: u64, elements: Vec<Felt>) -> Self {
-        Self::try_new(policy_limit, elements).unwrap_or_else(|err| {
-            panic!("invalid compliance public inputs: {err}");
-        })
+    /// Create new public inputs (without witness commitment).
+    pub fn new(policy_limit: u64, elements: Vec<Felt>) -> Result<Self, PublicInputsError> {
+        Self::try_new(policy_limit, elements)
     }
 
-    /// Create new public inputs with witness commitment
-    pub fn with_commitment(policy_limit: u64, elements: Vec<Felt>, commitment: [Felt; 4]) -> Self {
-        Self::try_with_commitment(policy_limit, elements, commitment).unwrap_or_else(|err| {
-            panic!("invalid compliance public inputs: {err}");
-        })
+    /// Create new public inputs with witness commitment.
+    pub fn with_commitment(
+        policy_limit: u64,
+        elements: Vec<Felt>,
+        commitment: [Felt; 4],
+    ) -> Result<Self, PublicInputsError> {
+        Self::try_with_commitment(policy_limit, elements, commitment)
     }
 
     /// Create new public inputs (legacy, without witness commitment) without panicking
@@ -835,18 +835,24 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invalid compliance public inputs")]
     fn test_public_inputs_new_rejects_invalid_length() {
-        let _ = PublicInputs::new(10000, vec![felt_from_u64(1); cols::PUBLIC_INPUTS_LEN - 1]);
+        let result = PublicInputs::new(10000, vec![felt_from_u64(1); cols::PUBLIC_INPUTS_LEN - 1]);
+        assert!(matches!(
+            result,
+            Err(PublicInputsError::LengthMismatch { .. })
+        ));
     }
 
     #[test]
-    #[should_panic(expected = "invalid compliance public inputs")]
     fn test_public_inputs_with_commitment_rejects_invalid_length() {
-        let _ = PublicInputs::with_commitment(
+        let result = PublicInputs::with_commitment(
             10000,
             vec![felt_from_u64(1); cols::PUBLIC_INPUTS_LEN + 1],
             [felt_from_u64(0); 4],
         );
+        assert!(matches!(
+            result,
+            Err(PublicInputsError::LengthMismatch { .. })
+        ));
     }
 }

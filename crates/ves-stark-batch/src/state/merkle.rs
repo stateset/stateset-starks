@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_merkle_tree_power_of_two() {
-        let leaves: Vec<EventLeaf> = (0..8).map(|i| create_test_leaf(i)).collect();
+        let leaves: Vec<EventLeaf> = (0..8).map(create_test_leaf).collect();
         let tree = EventMerkleTree::from_leaves(leaves).unwrap();
 
         assert_eq!(tree.num_leaves(), 8);
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_merkle_tree_non_power_of_two() {
-        let leaves: Vec<EventLeaf> = (0..5).map(|i| create_test_leaf(i)).collect();
+        let leaves: Vec<EventLeaf> = (0..5).map(create_test_leaf).collect();
         let tree = EventMerkleTree::from_leaves(leaves).unwrap();
 
         assert_eq!(tree.num_leaves(), 5);
@@ -307,13 +307,13 @@ mod tests {
 
     #[test]
     fn test_merkle_proof_verification() {
-        let leaves: Vec<EventLeaf> = (0..8).map(|i| create_test_leaf(i)).collect();
+        let leaves: Vec<EventLeaf> = (0..8).map(create_test_leaf).collect();
         let tree = EventMerkleTree::from_leaves(leaves.clone()).unwrap();
 
         // Verify proof for each leaf
-        for i in 0..8 {
+        for (i, leaf) in leaves.iter().enumerate() {
             let proof = tree.get_proof(i).unwrap();
-            let leaf_hash = leaves[i].hash();
+            let leaf_hash = leaf.hash();
             assert!(
                 EventMerkleTree::verify_proof(&tree.root(), &leaf_hash, &proof),
                 "Proof verification failed for leaf {}",
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn test_merkle_proof_invalid_leaf() {
-        let leaves: Vec<EventLeaf> = (0..8).map(|i| create_test_leaf(i)).collect();
+        let leaves: Vec<EventLeaf> = (0..8).map(create_test_leaf).collect();
         let tree = EventMerkleTree::from_leaves(leaves).unwrap();
 
         let proof = tree.get_proof(0).unwrap();
@@ -338,8 +338,8 @@ mod tests {
 
     #[test]
     fn test_root_changes_with_different_leaves() {
-        let leaves1: Vec<EventLeaf> = (0..4).map(|i| create_test_leaf(i)).collect();
-        let leaves2: Vec<EventLeaf> = (10..14).map(|i| create_test_leaf(i)).collect();
+        let leaves1: Vec<EventLeaf> = (0..4).map(create_test_leaf).collect();
+        let leaves2: Vec<EventLeaf> = (10..14).map(create_test_leaf).collect();
 
         let tree1 = EventMerkleTree::from_leaves(leaves1).unwrap();
         let tree2 = EventMerkleTree::from_leaves(leaves2).unwrap();

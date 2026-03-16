@@ -4,7 +4,7 @@ STARK proving system for VES (Verifiable Event Sync) compliance proofs.
 
 ## Overview
 
-`stateset-stark` provides cryptographic proofs that a private amount witness satisfies compliance policies without revealing the amount itself. Built on [Winterfell](https://github.com/facebook/winterfell), it uses STARKs (Scalable Transparent ARguments of Knowledge) for transparent, post-quantum secure proofs.
+`stateset-stark` provides witness-level cryptographic proofs that a private amount satisfies compliance policies without revealing the amount itself. Built on [Winterfell](https://github.com/facebook/winterfell), it uses STARKs (Scalable Transparent ARguments of Knowledge) for transparent, post-quantum secure proofs.
 
 ## Phase 1: Per-Event Compliance Proofs
 

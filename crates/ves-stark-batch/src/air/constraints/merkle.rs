@@ -92,9 +92,10 @@ pub fn evaluate_merkle_constraints<E: FieldElement<BaseField = Felt>>(
     let rescue_is_forward = periodic_values[PERIODIC_RESCUE_IS_FORWARD_IDX];
 
     let mut round_const = [E::ZERO; RESCUE_STATE_WIDTH];
-    for i in 0..RESCUE_STATE_WIDTH {
-        round_const[i] = periodic_values[PERIODIC_RESCUE_CONST_START_IDX + i];
-    }
+    round_const.copy_from_slice(
+        &periodic_values
+            [PERIODIC_RESCUE_CONST_START_IDX..PERIODIC_RESCUE_CONST_START_IDX + RESCUE_STATE_WIDTH],
+    );
 
     let is_hash_row_active = is_hash_row * rescue_active;
     let is_output_row = is_hash_row * (E::ONE - rescue_active);

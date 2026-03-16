@@ -362,7 +362,7 @@ fn test_batch_witness_builder_rejects_missing_witness_commitment() {
         .unwrap()
         .build();
 
-    assert!(matches!(result, Err(_)));
+    assert!(result.is_err());
 }
 
 #[test]
@@ -385,7 +385,7 @@ fn test_batch_witness_builder_rejects_invalid_witness_commitment() {
         .unwrap()
         .build();
 
-    assert!(matches!(result, Err(_)));
+    assert!(result.is_err());
 }
 
 // =============================================================================

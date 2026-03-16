@@ -223,7 +223,7 @@ fn bench_end_to_end(c: &mut Criterion) {
             let witness = ComplianceWitness::new(amount, inputs.clone());
 
             let proof = prover.prove(&witness).expect("proof generation failed");
-            verify_compliance_proof(
+            verify_compliance_proof_strict(
                 &proof.proof_bytes,
                 &inputs,
                 &policy,

@@ -65,9 +65,10 @@ const publicInputsWrong = {
   witnessCommitment: wrongWitnessCommitmentHex,
 }
 
-const bad = ves.verifyHex(proof.proofBytes, publicInputsWrong, proof.witnessCommitmentHex)
-assert.strictEqual(bad.valid, false)
-assert.ok(bad.error && bad.error.length > 0, 'expected an error message')
+assert.throws(
+  () => ves.verifyHex(proof.proofBytes, publicInputsWrong, proof.witnessCommitmentHex),
+  /Verification error: Witness commitment mismatch/
+)
 
 const capPolicyType = 'order_total.cap'
 const capPolicyLimit = 10_000n

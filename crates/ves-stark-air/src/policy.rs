@@ -226,8 +226,8 @@ mod tests {
 
         assert_eq!(limbs[0].as_int(), 0x9ABCDEF0);
         assert_eq!(limbs[1].as_int(), 0x12345678);
-        for i in 2..8 {
-            assert_eq!(limbs[i].as_int(), 0);
+        for limb in limbs.iter().skip(2) {
+            assert_eq!(limb.as_int(), 0);
         }
     }
 }

@@ -5,9 +5,9 @@
 //!
 //! # Overview
 //!
-//! The VES STARK system allows proving compliance with policies (e.g., AML
-//! thresholds) without revealing sensitive data. It uses the Winterfell
-//! STARK library for proof generation and verification.
+//! The VES STARK system allows proving witness-level compliance with policies
+//! (e.g., AML thresholds) without revealing sensitive data. It uses the
+//! Winterfell STARK library for proof generation and verification.
 //!
 //! # Crates
 //!
