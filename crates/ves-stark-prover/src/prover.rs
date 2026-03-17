@@ -8,6 +8,8 @@
 //! The prover supports multiple policy types through the unified [`Policy`] enum:
 //! - `aml.threshold`: Proves amount < threshold (strict less-than)
 //! - `order_total.cap`: Proves amount <= cap (less-than-or-equal)
+//! - `agent.authorization.v1`: Proves amount <= maxTotal while committing an
+//!   intentHash through the policy hash
 //!
 //! ```ignore
 //! use ves_stark_prover::{ComplianceProver, Policy};
@@ -362,6 +364,7 @@ mod tests {
             policy_params: params,
             policy_hash: policy_hash.to_hex(),
             witness_commitment: None,
+            authorization_receipt_hash: None,
         };
         // Force a mismatch: this commitment does not correspond to the amount below.
         inputs.witness_commitment = Some(witness_commitment_u64_to_hex(&[0u64; 4]));

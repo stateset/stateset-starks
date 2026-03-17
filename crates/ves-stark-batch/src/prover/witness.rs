@@ -95,11 +95,11 @@ impl BatchEventWitness {
     /// Compute the canonical hash of the event's public inputs.
     pub fn canonical_public_inputs_hash(&self) -> Result<[Felt; 8], BatchError> {
         self.public_inputs
-            .compute_hash()
+            .compute_bound_hash()
             .map(|hash| hash_to_felts(&hash))
             .map_err(|e| {
                 BatchError::InvalidWitness(format!(
-                    "Event {} canonical public-input hash computation failed: {e}",
+                    "Event {} bound public-input hash computation failed: {e}",
                     self.event_index
                 ))
             })
@@ -659,6 +659,7 @@ mod tests {
             policy_params: params,
             policy_hash: hash.to_hex(),
             witness_commitment: Some(witness_commitment_u64_to_hex(&commitment)),
+            authorization_receipt_hash: None,
         }
     }
 
@@ -891,7 +892,7 @@ mod tests {
         let gamma = Felt::new(crate::air::trace_layout::MERKLE_LINK_GAMMA);
         let mut expected = [FELT_ZERO; 8];
         for inputs in [&input0, &input1] {
-            let hash = hash_to_felts(&inputs.compute_hash().unwrap());
+            let hash = hash_to_felts(&inputs.compute_bound_hash().unwrap());
             for i in 0..8 {
                 expected[i] = expected[i] * gamma + hash[i];
             }

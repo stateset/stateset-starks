@@ -357,7 +357,7 @@ impl ToElements<Felt> for BatchPublicInputs {
     }
 }
 
-/// Compute the ordered accumulator over canonical per-event public-input hashes.
+/// Compute the ordered accumulator over witness-bound per-event public-input hashes.
 pub fn compute_public_inputs_accumulator(
     public_inputs: &[CompliancePublicInputs],
 ) -> BatchResult<[Felt; 8]> {
@@ -366,11 +366,11 @@ pub fn compute_public_inputs_accumulator(
 
     for (event_index, inputs) in public_inputs.iter().enumerate() {
         let public_inputs_hash = inputs
-            .compute_hash()
+            .compute_bound_hash()
             .map(|hash| hash_to_felts(&hash))
             .map_err(|err| {
                 BatchError::InvalidPublicInputs(format!(
-                    "event {event_index} canonical public-input hash computation failed: {err}"
+                    "event {event_index} bound public-input hash computation failed: {err}"
                 ))
             })?;
         for i in 0..8 {
@@ -535,6 +535,7 @@ mod tests {
                 .unwrap()
                 .to_hex(),
             witness_commitment: Some(witness_commitment.clone()),
+            authorization_receipt_hash: None,
         };
         let inputs1 = CompliancePublicInputs {
             event_id: Uuid::new_v4(),
@@ -549,12 +550,13 @@ mod tests {
             policy_params: PolicyParams::threshold(10_000),
             policy_hash: inputs0.policy_hash.clone(),
             witness_commitment: Some(witness_commitment),
+            authorization_receipt_hash: None,
         };
 
         let gamma = Felt::new(crate::air::trace_layout::MERKLE_LINK_GAMMA);
         let mut expected = [FELT_ZERO; 8];
         for inputs in [&inputs0, &inputs1] {
-            let hash = hash_to_felts(&inputs.compute_hash().unwrap());
+            let hash = hash_to_felts(&inputs.compute_bound_hash().unwrap());
             for i in 0..8 {
                 expected[i] = expected[i] * gamma + hash[i];
             }

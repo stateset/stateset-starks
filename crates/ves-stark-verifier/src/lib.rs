@@ -19,6 +19,10 @@ mod verify;
 
 pub use error::{validate_hex_string, VerifierError, MAX_PROOF_SIZE, PROOF_VERSION};
 pub use verify::{
+    verify_agent_authorization_proof, verify_agent_authorization_proof_auto,
+    verify_agent_authorization_proof_auto_bound,
+    verify_agent_authorization_proof_auto_bound_strict,
+    verify_agent_authorization_proof_auto_strict, verify_agent_authorization_proof_strict,
     verify_compliance_proof, verify_compliance_proof_auto, verify_compliance_proof_auto_bound,
     verify_compliance_proof_auto_bound_strict, verify_compliance_proof_auto_strict,
     verify_compliance_proof_strict, ComplianceVerifier, VerificationResult,

@@ -13,7 +13,8 @@ Phase 1 implements per-event compliance proofs for:
 - **Policy**: Proves that a private order amount is strictly less than a threshold
   - `aml.threshold`: amount < threshold (strict)
   - `order_total.cap`: amount <= cap (non-strict)
-- **Use Case**: AML or order-cap compliance for an amount witness derived by a trusted VES pipeline
+  - `agent.authorization.v1`: amount <= maxTotal for a delegated commerce intent hash
+- **Use Case**: AML, order-cap, or delegated agent-authorization compliance for an amount witness derived by a trusted VES pipeline
 - **Integration**: Works with `stateset-sequencer` proof registry
 
 Note: The current AIR does **not** prove that the private `amount` equals a value decrypted or
@@ -25,6 +26,11 @@ In the `stateset-sequencer` integration, the sequencer does **not** include `wit
 canonical public inputs (it can't derive it pre-proof). Instead, the prover submits
 `witnessCommitment` alongside the proof, and the sequencer stores it and uses it during
 verification to bind the proof to the witness.
+
+High-level local surfaces in this repository now default to witness-bound verification: the CLI,
+Node, and Python bindings bind `witnessCommitment` into the public-input object before
+verification, and local proof artifacts can compute a bound public-input hash that includes that
+binding.
 
 ## Architecture
 
@@ -62,11 +68,10 @@ let proof = prover.prove(&witness)?;
 ### Verify a Proof
 
 ```rust
-use ves_stark_verifier::verify_compliance_proof_auto;
+use ves_stark_verifier::verify_compliance_proof_auto_bound_strict;
 
-// The witness commitment is provided out-of-band (e.g., stored alongside the proof in the sequencer).
-let witness_commitment: [u64; 4] = proof.witness_commitment;
-let result = verify_compliance_proof_auto(&proof.proof_bytes, &public_inputs, &witness_commitment)?;
+// Recommended: carry `witnessCommitment` in canonical public inputs and use strict verification.
+let result = verify_compliance_proof_auto_bound_strict(&proof.proof_bytes, &public_inputs)?;
 assert!(result.valid);
 ```
 
@@ -119,6 +124,14 @@ Canonical public inputs (RFC 8785 JCS canonicalized):
 
 `witnessCommitment` is optional in the public inputs format. The sequencer integration submits it
 alongside the proof instead of embedding it in canonical public inputs.
+
+For local artifacts, `compute_bound_hash()` and the batch public-input accumulator include
+`witnessCommitment` when present so hashed event streams commit to the proved witness as well as the
+event metadata.
+
+Default verifier helpers accept the repository's `default` and `secure` proof profiles. The
+lower-security `fast` profile is still available for tests and benchmarks, but verifiers must opt
+into it explicitly with custom acceptable options.
 
 ## Cryptographic Details
 

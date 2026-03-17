@@ -29,6 +29,36 @@ fn normalize_set_chain_batch_proof_hash(expected_hash: &str) -> String {
     }
 }
 
+fn decode_fixed_hex<const N: usize>(label: &str, value: &str) -> Result<[u8; N]> {
+    let trimmed = value.trim();
+    let hex_value = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .ok_or_else(|| {
+            ClientError::InvalidPublicInputs(format!("{label} must be 0x-prefixed hex"))
+        })?;
+
+    if hex_value.len() != N * 2 {
+        return Err(ClientError::InvalidPublicInputs(format!(
+            "{label} must be {} bytes of hex",
+            N
+        )));
+    }
+
+    let bytes = hex::decode(hex_value)
+        .map_err(|e| ClientError::InvalidPublicInputs(format!("{label} is not valid hex: {e}")))?;
+
+    bytes.try_into().map_err(|_| {
+        ClientError::InvalidPublicInputs(format!("{label} must be {} bytes of hex", N))
+    })
+}
+
+fn normalize_and_validate_set_chain_batch_proof_hash(expected_hash: &str) -> Result<String> {
+    let normalized = normalize_set_chain_batch_proof_hash(expected_hash);
+    let _ = decode_fixed_hex::<32>("expected_proof_hash", &normalized)?;
+    Ok(normalized)
+}
+
 /// Set Chain configuration
 #[derive(Debug, Clone)]
 pub struct SetChainConfig {
@@ -154,13 +184,54 @@ impl BatchProofSubmission {
     }
 
     /// Get proof size in bytes.
+    pub fn try_proof_size(&self) -> Result<u64> {
+        let proof_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&self.proof_b64)
+            .map_err(|e| ClientError::InvalidPublicInputs(format!("invalid proof base64: {e}")))?;
+        u64::try_from(proof_bytes.len()).map_err(|_| {
+            ClientError::InvalidPublicInputs("proof is too large to fit in u64".to_string())
+        })
+    }
+
+    /// Get proof size in bytes.
     ///
     /// Returns 0 if the base64-encoded proof is invalid.
     pub fn proof_size(&self) -> u64 {
-        base64::engine::general_purpose::STANDARD
-            .decode(&self.proof_b64)
-            .map(|b| b.len() as u64)
-            .unwrap_or(0)
+        self.try_proof_size().unwrap_or(0)
+    }
+
+    /// Validate that the submission is internally consistent before sending it.
+    pub fn validate(&self) -> Result<()> {
+        let _ = decode_fixed_hex::<32>("events_root", &self.events_root)?;
+        let _ = decode_fixed_hex::<32>("prev_state_root", &self.prev_state_root)?;
+        let _ = decode_fixed_hex::<32>("new_state_root", &self.new_state_root)?;
+        let _ = decode_fixed_hex::<32>("policy_hash", &self.policy_hash)?;
+
+        let proof_size = self.try_proof_size()?;
+        if proof_size == 0 {
+            return Err(ClientError::InvalidPublicInputs(
+                "proof_b64 must decode to a non-empty proof".to_string(),
+            ));
+        }
+
+        let expected_event_count = self
+            .sequence_end
+            .checked_sub(self.sequence_start)
+            .and_then(|value| value.checked_add(1))
+            .ok_or_else(|| {
+                ClientError::InvalidPublicInputs(
+                    "sequence range overflows when computing event_count".to_string(),
+                )
+            })?;
+        if expected_event_count != u64::from(self.event_count) {
+            return Err(ClientError::InvalidPublicInputs(format!(
+                "sequence range implies {} events, but event_count is {}",
+                expected_event_count, self.event_count
+            )));
+        }
+
+        let _ = self.proof_hash()?;
+        Ok(())
     }
 }
 
@@ -353,6 +424,7 @@ impl SetChainClient {
         &self,
         submission: BatchProofSubmission,
     ) -> Result<BatchProofResponse> {
+        submission.validate()?;
         let url = format!(
             "{}/api/v1/anchor/batch/{}/proof",
             self.base_url, submission.batch_id
@@ -387,6 +459,7 @@ impl SetChainClient {
         submission: BatchProofSubmission,
         proving_time_ms: u64,
     ) -> Result<BatchProofResponse> {
+        submission.validate()?;
         let url = format!(
             "{}/api/v1/anchor/batch/{}/commit-with-proof",
             self.base_url, submission.batch_id
@@ -472,7 +545,9 @@ impl SetChainClient {
         }
 
         let request = VerifyRequest {
-            expected_proof_hash: normalize_set_chain_batch_proof_hash(expected_proof_hash),
+            expected_proof_hash: normalize_and_validate_set_chain_batch_proof_hash(
+                expected_proof_hash,
+            )?,
         };
 
         let response = self.client.post(&url).json(&request).send().await?;
@@ -652,23 +727,25 @@ mod tests {
             batch_id: Uuid::new_v4(),
             tenant_id: Uuid::new_v4(),
             store_id: Uuid::new_v4(),
-            events_root: "0x1234".to_string(),
-            prev_state_root: "0xabcd".to_string(),
-            new_state_root: "0xef01".to_string(),
+            events_root: format!("0x{}", "11".repeat(32)),
+            prev_state_root: format!("0x{}", "22".repeat(32)),
+            new_state_root: format!("0x{}", "33".repeat(32)),
             sequence_start: 1,
             sequence_end: 10,
             event_count: 10,
             proof_b64: base64::engine::general_purpose::STANDARD.encode(b"test proof"),
-            policy_hash: "0x5678".to_string(),
+            policy_hash: format!("0x{}", "44".repeat(32)),
             policy_limit: 10000,
             all_compliant: true,
         };
 
+        submission.validate().unwrap();
         assert_eq!(
             submission.proof_hash().unwrap(),
             compute_set_chain_batch_proof_hash(b"test proof")
         );
         assert_eq!(submission.proof_size(), 10);
+        assert_eq!(submission.try_proof_size().unwrap(), 10);
     }
 
     #[test]
@@ -681,6 +758,12 @@ mod tests {
             normalize_set_chain_batch_proof_hash("0xabcd"),
             "0xabcd".to_string()
         );
+    }
+
+    #[test]
+    fn test_normalize_and_validate_set_chain_batch_proof_hash_rejects_invalid_hex() {
+        assert!(normalize_and_validate_set_chain_batch_proof_hash("xyz").is_err());
+        assert!(normalize_and_validate_set_chain_batch_proof_hash("0x12").is_err());
     }
 
     #[test]
@@ -706,6 +789,75 @@ mod tests {
         assert!(submission.new_state_root.starts_with("0x"));
         assert!(submission.policy_hash.starts_with("0x"));
         assert!(!submission.proof_b64.is_empty());
+        submission.validate().unwrap();
+    }
+
+    #[test]
+    fn test_batch_proof_submission_validate_rejects_sequence_mismatch() {
+        let mut submission = SetChainClient::create_submission(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            [0u8; 32],
+            [1u8; 32],
+            [2u8; 32],
+            1,
+            10,
+            10,
+            b"proof bytes",
+            [3u8; 32],
+            10000,
+            true,
+        );
+        submission.event_count = 9;
+
+        assert!(submission.validate().is_err());
+    }
+
+    #[test]
+    fn test_batch_proof_submission_validate_rejects_invalid_roots() {
+        let mut submission = SetChainClient::create_submission(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            [0u8; 32],
+            [1u8; 32],
+            [2u8; 32],
+            1,
+            10,
+            10,
+            b"proof bytes",
+            [3u8; 32],
+            10000,
+            true,
+        );
+        submission.prev_state_root = "0x1234".to_string();
+
+        assert!(submission.validate().is_err());
+    }
+
+    #[test]
+    fn test_batch_proof_submission_validate_rejects_invalid_proof_base64() {
+        let mut submission = SetChainClient::create_submission(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            [0u8; 32],
+            [1u8; 32],
+            [2u8; 32],
+            1,
+            10,
+            10,
+            b"proof bytes",
+            [3u8; 32],
+            10000,
+            true,
+        );
+        submission.proof_b64 = "***not-base64***".to_string();
+
+        assert!(submission.validate().is_err());
+        assert_eq!(submission.proof_size(), 0);
+        assert!(submission.try_proof_size().is_err());
     }
 
     #[test]

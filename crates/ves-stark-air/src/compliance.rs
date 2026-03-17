@@ -767,6 +767,7 @@ mod tests {
             policy_params: PolicyParams::threshold(10000),
             policy_hash: "0".repeat(64),
             witness_commitment: None,
+            authorization_receipt_hash: None,
         }
     }
 

@@ -12,6 +12,7 @@
 //!
 //! - `aml.threshold`: Proves amount < threshold (strict less-than)
 //! - `order_total.cap`: Proves amount <= cap (less-than-or-equal)
+//! - `agent.authorization.v1`: Proves amount <= maxTotal for a delegated intent hash
 
 use anyhow::{Context, Result};
 use base64::Engine;
@@ -24,11 +25,16 @@ use uuid::Uuid;
 
 use ves_stark_client::{ProofSubmission, SequencerClient};
 use ves_stark_primitives::public_inputs::{
-    compute_policy_hash, witness_commitment_hex_to_u64, CompliancePublicInputs, PolicyParams,
+    compute_policy_hash, witness_commitment_hex_to_u64, witness_commitment_u64_to_hex,
+    CompliancePublicInputs, PolicyParams,
 };
-use ves_stark_primitives::{hash_to_felts, Felt};
+use ves_stark_primitives::{hash_to_felts, CommerceAuthorizationReceipt, Felt};
 use ves_stark_prover::{ComplianceProof, ComplianceProver, ComplianceWitness, Policy};
-use ves_stark_verifier::{verify_compliance_proof, MAX_PROOF_SIZE};
+use ves_stark_verifier::{
+    verify_agent_authorization_proof_auto_bound,
+    verify_agent_authorization_proof_auto_bound_strict, verify_compliance_proof_auto_bound,
+    verify_compliance_proof_auto_bound_strict, MAX_PROOF_SIZE,
+};
 
 // Batch proving imports
 use ves_stark_batch::verifier::MAX_BATCH_PROOF_SIZE;
@@ -46,13 +52,25 @@ enum PolicyType {
     /// Order total cap: proves amount <= cap
     #[value(name = "order_total.cap")]
     OrderTotalCap,
+    /// Agent authorization: proves amount <= maxTotal for a delegated intent hash
+    #[value(name = "agent.authorization.v1")]
+    AgentAuthorization,
 }
 
 impl PolicyType {
-    fn as_policy(&self, limit: u64) -> Policy {
+    fn as_policy(&self, limit: u64, intent_hash: Option<&str>) -> Result<Policy> {
         match self {
-            PolicyType::AmlThreshold => Policy::aml_threshold(limit),
-            PolicyType::OrderTotalCap => Policy::order_total_cap(limit),
+            PolicyType::AmlThreshold => Ok(Policy::aml_threshold(limit)),
+            PolicyType::OrderTotalCap => Ok(Policy::order_total_cap(limit)),
+            PolicyType::AgentAuthorization => Policy::agent_authorization(
+                limit,
+                intent_hash.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "--intent-hash is required for agent.authorization.v1 unless it is already present in the public inputs"
+                    )
+                })?,
+            )
+            .map_err(|e| anyhow::anyhow!("Invalid agent authorization policy: {e}")),
         }
     }
 
@@ -60,6 +78,7 @@ impl PolicyType {
         match self {
             PolicyType::AmlThreshold => "aml.threshold",
             PolicyType::OrderTotalCap => "order_total.cap",
+            PolicyType::AgentAuthorization => "agent.authorization.v1",
         }
     }
 
@@ -67,14 +86,28 @@ impl PolicyType {
         match self {
             PolicyType::AmlThreshold => "<",
             PolicyType::OrderTotalCap => "<=",
+            PolicyType::AgentAuthorization => "<=",
         }
     }
 
-    fn create_policy_params(&self, limit: u64) -> PolicyParams {
+    fn create_policy_params(&self, limit: u64, intent_hash: Option<&str>) -> Result<PolicyParams> {
         match self {
-            PolicyType::AmlThreshold => PolicyParams::threshold(limit),
-            PolicyType::OrderTotalCap => PolicyParams::cap(limit),
+            PolicyType::AmlThreshold => Ok(PolicyParams::threshold(limit)),
+            PolicyType::OrderTotalCap => Ok(PolicyParams::cap(limit)),
+            PolicyType::AgentAuthorization => PolicyParams::agent_authorization(
+                limit,
+                intent_hash.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "--intent-hash is required for agent.authorization.v1 unless it is already present in the public inputs"
+                    )
+                })?,
+            )
+            .map_err(|e| anyhow::anyhow!("Invalid agent authorization policy params: {e}")),
         }
+    }
+
+    fn supports_batch(&self) -> bool {
+        !matches!(self, PolicyType::AgentAuthorization)
     }
 }
 
@@ -97,13 +130,17 @@ enum Commands {
         #[arg(short, long)]
         amount: u64,
 
-        /// The policy limit (threshold for aml.threshold, cap for order_total.cap)
+        /// The policy limit (threshold, cap, or maxTotal depending on policy)
         #[arg(short, long)]
         limit: u64,
 
         /// Policy type
         #[arg(short, long, value_enum, default_value = "aml.threshold")]
         policy: PolicyType,
+
+        /// Delegated commerce intent hash for agent.authorization.v1
+        #[arg(long)]
+        intent_hash: Option<String>,
 
         /// Path to public inputs JSON file (optional, will generate random if not provided)
         #[arg(short, long)]
@@ -134,13 +171,17 @@ enum Commands {
         #[arg(short, long)]
         amount: u64,
 
-        /// The policy limit (threshold for aml.threshold, cap for order_total.cap)
+        /// The policy limit (threshold, cap, or maxTotal depending on policy)
         #[arg(short, long)]
         limit: u64,
 
         /// Policy type
         #[arg(short, long, value_enum, default_value = "aml.threshold")]
         policy: PolicyType,
+
+        /// Delegated commerce intent hash for agent.authorization.v1
+        #[arg(long)]
+        intent_hash: Option<String>,
 
         /// Verify the stored proof after submission
         #[arg(long)]
@@ -162,6 +203,10 @@ enum Commands {
         #[arg(long)]
         witness_commitment_hex: Option<String>,
 
+        /// Authorization receipt JSON to bind an agent.authorization.v1 proof to a canonical receipt
+        #[arg(long)]
+        authorization_receipt: Option<PathBuf>,
+
         /// The limit value used for the proof
         #[arg(short, long)]
         limit: u64,
@@ -169,6 +214,10 @@ enum Commands {
         /// Policy type
         #[arg(short, long, value_enum, default_value = "aml.threshold")]
         policy: PolicyType,
+
+        /// Delegated commerce intent hash for agent.authorization.v1
+        #[arg(long)]
+        intent_hash: Option<String>,
     },
 
     /// Inspect proof metadata
@@ -188,6 +237,10 @@ enum Commands {
         /// Policy type
         #[arg(short, long, value_enum, default_value = "aml.threshold")]
         policy: PolicyType,
+
+        /// Delegated commerce intent hash for agent.authorization.v1
+        #[arg(long)]
+        intent_hash: Option<String>,
 
         /// Output file (default: stdout)
         #[arg(short, long)]
@@ -211,6 +264,10 @@ enum Commands {
         /// Policy type
         #[arg(short, long, value_enum, default_value = "aml.threshold")]
         policy: PolicyType,
+
+        /// Delegated commerce intent hash for agent.authorization.v1
+        #[arg(long)]
+        intent_hash: Option<String>,
     },
 
     /// Generate a batch state transition proof (zkRollup-style)
@@ -281,10 +338,11 @@ fn main() -> Result<()> {
             amount,
             limit,
             policy,
+            intent_hash,
             inputs,
             output,
             json,
-        } => prove(amount, limit, policy, inputs, output, json),
+        } => prove(amount, limit, policy, intent_hash, inputs, output, json),
 
         Commands::ProveSubmit {
             sequencer_url,
@@ -292,31 +350,52 @@ fn main() -> Result<()> {
             amount,
             limit,
             policy,
+            intent_hash,
             verify,
-        } => prove_submit(sequencer_url, event_id, amount, limit, policy, verify),
+        } => prove_submit(
+            sequencer_url,
+            event_id,
+            amount,
+            limit,
+            policy,
+            intent_hash,
+            verify,
+        ),
 
         Commands::Verify {
             proof,
             inputs,
             witness_commitment_hex,
+            authorization_receipt,
             limit,
             policy,
-        } => verify(proof, inputs, witness_commitment_hex, limit, policy),
+            intent_hash,
+        } => verify(
+            proof,
+            inputs,
+            witness_commitment_hex,
+            authorization_receipt,
+            limit,
+            policy,
+            intent_hash,
+        ),
 
         Commands::Inspect { proof } => inspect(proof),
 
         Commands::GenerateInputs {
             limit,
             policy,
+            intent_hash,
             output,
-        } => generate_inputs(limit, policy, output),
+        } => generate_inputs(limit, policy, intent_hash, output),
 
         Commands::Benchmark {
             count,
             max_amount,
             limit,
             policy,
-        } => benchmark(count, max_amount, limit, policy),
+            intent_hash,
+        } => benchmark(count, max_amount, limit, policy, intent_hash),
 
         Commands::BatchProve {
             num_events,
@@ -357,17 +436,112 @@ fn read_text_input(path: &PathBuf, label: &str) -> Result<String> {
     }
 }
 
+fn normalize_intent_hash(intent_hash: &str) -> Result<String> {
+    let params = PolicyParams::agent_authorization(1, intent_hash)
+        .map_err(|e| anyhow::anyhow!("Invalid --intent-hash: {e}"))?;
+    Ok(params
+        .get_intent_hash()
+        .expect("agent authorization params must include intentHash")
+        .to_string())
+}
+
+fn resolve_intent_hash(
+    policy_type: PolicyType,
+    provided: Option<String>,
+    public_inputs: Option<&CompliancePublicInputs>,
+) -> Result<Option<String>> {
+    if !matches!(policy_type, PolicyType::AgentAuthorization) {
+        if provided.is_some() {
+            anyhow::bail!("--intent-hash is only valid for agent.authorization.v1");
+        }
+        return Ok(None);
+    }
+
+    let provided = provided.as_deref().map(normalize_intent_hash).transpose()?;
+    let inputs_hash = public_inputs
+        .and_then(|inputs| inputs.policy_params.get_intent_hash())
+        .map(|value| value.to_string());
+
+    match (provided, inputs_hash) {
+        (Some(provided), Some(from_inputs)) => {
+            if provided != from_inputs {
+                anyhow::bail!(
+                    "--intent-hash does not match public_inputs.policyParams.intentHash"
+                );
+            }
+            Ok(Some(provided))
+        }
+        (Some(provided), None) => Ok(Some(provided)),
+        (None, Some(from_inputs)) => Ok(Some(from_inputs)),
+        (None, None) => anyhow::bail!(
+            "--intent-hash is required for agent.authorization.v1 unless it is already present in the public inputs"
+        ),
+    }
+}
+
+fn validate_public_inputs_match_policy(
+    public_inputs: &CompliancePublicInputs,
+    policy_type: PolicyType,
+    limit: u64,
+    intent_hash: Option<&str>,
+) -> Result<()> {
+    let expected_policy_id = policy_type.policy_id();
+    if public_inputs.policy_id != expected_policy_id {
+        anyhow::bail!(
+            "public inputs policyId {} does not match requested policy {}",
+            public_inputs.policy_id,
+            expected_policy_id
+        );
+    }
+
+    let expected_params = policy_type.create_policy_params(limit, intent_hash)?;
+    if public_inputs.policy_params != expected_params {
+        anyhow::bail!("public inputs policyParams do not match the requested policy arguments");
+    }
+
+    let expected_hash = compute_policy_hash(expected_policy_id, &expected_params)?;
+    if public_inputs.policy_hash != expected_hash.to_hex() {
+        anyhow::bail!("public inputs policyHash does not match the requested policy arguments");
+    }
+
+    Ok(())
+}
+
+fn ensure_batch_policy_supported(policy_type: PolicyType) -> Result<()> {
+    if policy_type.supports_batch() {
+        Ok(())
+    } else {
+        anyhow::bail!("agent.authorization.v1 is not supported by batch proofs")
+    }
+}
+
 fn prove(
     amount: u64,
     limit: u64,
     policy_type: PolicyType,
+    intent_hash: Option<String>,
     inputs_path: Option<PathBuf>,
     output_path: Option<PathBuf>,
     json_output: bool,
 ) -> Result<()> {
-    let policy = policy_type.as_policy(limit);
+    // Load or generate public inputs
+    let public_inputs = if let Some(path) = inputs_path {
+        let contents = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read inputs file: {}", path.display()))?;
+        serde_json::from_str(&contents).with_context(|| "Failed to parse public inputs JSON")?
+    } else {
+        let intent_hash = resolve_intent_hash(policy_type, intent_hash.clone(), None)?;
+        generate_random_public_inputs(limit, policy_type, intent_hash.as_deref())?
+    };
+    let intent_hash = resolve_intent_hash(policy_type, intent_hash, Some(&public_inputs))?;
+    validate_public_inputs_match_policy(
+        &public_inputs,
+        policy_type,
+        limit,
+        intent_hash.as_deref(),
+    )?;
+    let policy = policy_type.as_policy(limit, intent_hash.as_deref())?;
 
-    // Validate inputs
     if !policy.validate_amount(amount) {
         anyhow::bail!(
             "Amount ({}) must be {} limit ({}) for {} policy",
@@ -377,15 +551,6 @@ fn prove(
             policy_type.policy_id()
         );
     }
-
-    // Load or generate public inputs
-    let public_inputs = if let Some(path) = inputs_path {
-        let contents = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read inputs file: {}", path.display()))?;
-        serde_json::from_str(&contents).with_context(|| "Failed to parse public inputs JSON")?
-    } else {
-        generate_random_public_inputs(limit, policy_type)?
-    };
 
     eprintln!("Generating proof...");
     eprintln!("  Policy: {}", policy_type.policy_id());
@@ -462,9 +627,11 @@ fn prove_submit(
     amount: u64,
     limit: u64,
     policy_type: PolicyType,
+    intent_hash: Option<String>,
     verify_after: bool,
 ) -> Result<()> {
-    let policy = policy_type.as_policy(limit);
+    let intent_hash = resolve_intent_hash(policy_type, intent_hash, None)?;
+    let policy = policy_type.as_policy(limit, intent_hash.as_deref())?;
     if !policy.validate_amount(amount) {
         anyhow::bail!(
             "Amount ({}) must be {} limit ({}) for {} policy",
@@ -476,7 +643,9 @@ fn prove_submit(
     }
 
     let policy_id = policy_type.policy_id();
-    let policy_params = policy_type.create_policy_params(limit).to_json_value();
+    let policy_params = policy_type
+        .create_policy_params(limit, intent_hash.as_deref())?
+        .to_json_value();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -500,6 +669,12 @@ fn prove_submit(
             .get_public_inputs_validated_with_params(event_id, policy_id, policy_params.clone())
             .await
             .map_err(|e| anyhow::anyhow!("failed to fetch public inputs: {e}"))?;
+        validate_public_inputs_match_policy(
+            &public_inputs,
+            policy_type,
+            limit,
+            intent_hash.as_deref(),
+        )?;
 
         eprintln!("Generating proof...");
         eprintln!(
@@ -522,6 +697,7 @@ fn prove_submit(
             policy_params,
             proof_bytes: proof.proof_bytes,
             witness_commitment: proof.witness_commitment,
+            public_inputs: None,
         };
 
         let resp = client
@@ -562,90 +738,121 @@ fn verify(
     proof_path: PathBuf,
     inputs_path: PathBuf,
     witness_commitment_hex: Option<String>,
+    authorization_receipt_path: Option<PathBuf>,
     limit: u64,
     policy_type: PolicyType,
+    intent_hash: Option<String>,
 ) -> Result<()> {
     // Load public inputs
     let inputs_str = read_text_input(&inputs_path, "inputs")?;
     let public_inputs: CompliancePublicInputs =
         serde_json::from_str(&inputs_str).with_context(|| "Failed to parse public inputs JSON")?;
+    let intent_hash = resolve_intent_hash(policy_type, intent_hash, Some(&public_inputs))?;
+    validate_public_inputs_match_policy(
+        &public_inputs,
+        policy_type,
+        limit,
+        intent_hash.as_deref(),
+    )?;
+    let authorization_receipt = if let Some(path) = authorization_receipt_path {
+        let receipt_str = read_text_input(&path, "authorization receipt")?;
+        Some(
+            serde_json::from_str::<CommerceAuthorizationReceipt>(&receipt_str)
+                .with_context(|| "Failed to parse authorization receipt JSON")?,
+        )
+    } else {
+        None
+    };
+    if authorization_receipt.is_some() && !matches!(policy_type, PolicyType::AgentAuthorization) {
+        anyhow::bail!("--authorization-receipt requires --policy agent.authorization.v1");
+    }
 
     // Load proof
     let proof_str = read_text_input(&proof_path, "proof")?;
 
     // Try to parse as JSON first, then as raw base64
-    let (proof_bytes, witness_commitment): (Vec<u8>, [u64; 4]) = if proof_str
-        .trim()
-        .starts_with('{')
-    {
-        let json: serde_json::Value = serde_json::from_str(&proof_str)?;
-        let b64 = json["proof_b64"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing proof_b64 field in JSON"))?;
-        let bytes = base64::engine::general_purpose::STANDARD.decode(b64)?;
+    let (proof_bytes, witness_commitment, witness_commitment_hex): (Vec<u8>, [u64; 4], String) =
+        if proof_str.trim().starts_with('{') {
+            let json: serde_json::Value = serde_json::from_str(&proof_str)?;
+            let b64 = json["proof_b64"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("Missing proof_b64 field in JSON"))?;
+            let bytes = base64::engine::general_purpose::STANDARD.decode(b64)?;
 
-        // Load witness commitment from JSON
-        let parse_witness_commitment_value = |value: &serde_json::Value| -> Result<[u64; 4]> {
-            let arr = value.as_array().ok_or_else(|| {
-                anyhow::anyhow!("witness_commitment must be an array of numbers or decimal strings")
-            })?;
+            // Load witness commitment from JSON
+            let parse_witness_commitment_value = |value: &serde_json::Value| -> Result<[u64; 4]> {
+                let arr = value.as_array().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "witness_commitment must be an array of numbers or decimal strings"
+                    )
+                })?;
 
-            if arr.len() != 4 {
-                anyhow::bail!("witness_commitment must have exactly 4 elements");
-            }
+                if arr.len() != 4 {
+                    anyhow::bail!("witness_commitment must have exactly 4 elements");
+                }
 
-            let mut commitment = [0u64; 4];
-            for (idx, element) in arr.iter().enumerate() {
-                commitment[idx] = match element {
-                    serde_json::Value::String(s) => s.parse::<u64>().map_err(|_| {
-                        anyhow::anyhow!("Invalid witness_commitment[{}] element", idx)
-                    })?,
-                    serde_json::Value::Number(n) => n.as_u64().ok_or_else(|| {
-                        anyhow::anyhow!("Invalid witness_commitment[{}] element", idx)
-                    })?,
-                    _ => {
-                        anyhow::bail!("Invalid witness_commitment[{}] element", idx);
-                    }
-                };
-            }
+                let mut commitment = [0u64; 4];
+                for (idx, element) in arr.iter().enumerate() {
+                    commitment[idx] = match element {
+                        serde_json::Value::String(s) => s.parse::<u64>().map_err(|_| {
+                            anyhow::anyhow!("Invalid witness_commitment[{}] element", idx)
+                        })?,
+                        serde_json::Value::Number(n) => n.as_u64().ok_or_else(|| {
+                            anyhow::anyhow!("Invalid witness_commitment[{}] element", idx)
+                        })?,
+                        _ => {
+                            anyhow::bail!("Invalid witness_commitment[{}] element", idx);
+                        }
+                    };
+                }
 
-            Ok(commitment)
-        };
+                Ok(commitment)
+            };
 
-        let commitment =
-            if let Some(wc_hex) = json.get("witness_commitment_hex").and_then(|v| v.as_str()) {
-                witness_commitment_hex_to_u64(wc_hex)
-                    .map_err(|e| anyhow::anyhow!("Invalid witness_commitment_hex: {e}"))?
+            let (commitment, commitment_hex) = if let Some(wc_hex) =
+                json.get("witness_commitment_hex").and_then(|v| v.as_str())
+            {
+                (
+                    witness_commitment_hex_to_u64(wc_hex)
+                        .map_err(|e| anyhow::anyhow!("Invalid witness_commitment_hex: {e}"))?,
+                    wc_hex.to_string(),
+                )
             } else if let Some(wc) = json.get("witness_commitment") {
-                parse_witness_commitment_value(wc)?
+                let commitment = parse_witness_commitment_value(wc)?;
+                (commitment, witness_commitment_u64_to_hex(&commitment))
             } else if let Some(wc) = json.get("witnessCommitment") {
-                parse_witness_commitment_value(wc)?
+                let commitment = parse_witness_commitment_value(wc)?;
+                (commitment, witness_commitment_u64_to_hex(&commitment))
             } else {
                 anyhow::bail!("Missing witness_commitment or witness_commitment_hex in proof JSON");
             };
 
-        (bytes, commitment)
-    } else {
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(proof_str.trim())
-            .context("Failed to decode raw base64 proof")?;
-
-        let commitment = if let Some(hex) = witness_commitment_hex.as_deref() {
-            witness_commitment_hex_to_u64(hex)
-                .map_err(|e| anyhow::anyhow!("Invalid --witness-commitment-hex: {e}"))?
-        } else if let Some(commitment) = public_inputs
-            .witness_commitment_u64()
-            .map_err(|e| anyhow::anyhow!("Invalid witnessCommitment in public inputs: {e}"))?
-        {
-            commitment
+            (bytes, commitment, commitment_hex)
         } else {
-            anyhow::bail!(
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(proof_str.trim())
+                .context("Failed to decode raw base64 proof")?;
+
+            let (commitment, commitment_hex) = if let Some(hex) = witness_commitment_hex.as_deref()
+            {
+                (
+                    witness_commitment_hex_to_u64(hex)
+                        .map_err(|e| anyhow::anyhow!("Invalid --witness-commitment-hex: {e}"))?,
+                    hex.to_string(),
+                )
+            } else if let Some(commitment) = public_inputs
+                .witness_commitment_u64()
+                .map_err(|e| anyhow::anyhow!("Invalid witnessCommitment in public inputs: {e}"))?
+            {
+                (commitment, witness_commitment_u64_to_hex(&commitment))
+            } else {
+                anyhow::bail!(
                 "Raw base64 proofs require --witness-commitment-hex or inputs.witnessCommitment"
             );
-        };
+            };
 
-        (bytes, commitment)
-    };
+            (bytes, commitment, commitment_hex)
+        };
 
     if proof_bytes.len() > MAX_PROOF_SIZE {
         anyhow::bail!(
@@ -663,11 +870,31 @@ fn verify(
 
     let start = Instant::now();
 
-    // Verify with explicit policy parameters (verifier will check they match public inputs)
-    let policy = policy_type.as_policy(limit);
-    let result =
-        verify_compliance_proof(&proof_bytes, &public_inputs, &policy, &witness_commitment)
+    let bound_public_inputs = public_inputs
+        .bind_witness_commitment(&witness_commitment)
+        .map_err(|e| anyhow::anyhow!("Verification error: {e}"))?;
+    if bound_public_inputs.witness_commitment.as_deref() != Some(witness_commitment_hex.as_str()) {
+        anyhow::bail!("witness commitment hex does not match the bound public inputs");
+    }
+
+    let result = if let Some(receipt) = authorization_receipt.as_ref() {
+        verify_agent_authorization_proof_auto_bound(&proof_bytes, &bound_public_inputs, receipt)
+    } else {
+        verify_compliance_proof_auto_bound(&proof_bytes, &bound_public_inputs)
+    }
+    .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
+
+    if let Some(receipt) = authorization_receipt.as_ref() {
+        verify_agent_authorization_proof_auto_bound_strict(
+            &proof_bytes,
+            &bound_public_inputs,
+            receipt,
+        )
+        .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
+    } else {
+        verify_compliance_proof_auto_bound_strict(&proof_bytes, &bound_public_inputs)
             .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
+    }
 
     let elapsed = start.elapsed();
 
@@ -766,9 +993,11 @@ fn inspect(proof_path: PathBuf) -> Result<()> {
 fn generate_inputs(
     limit: u64,
     policy_type: PolicyType,
+    intent_hash: Option<String>,
     output_path: Option<PathBuf>,
 ) -> Result<()> {
-    let inputs = generate_random_public_inputs(limit, policy_type)?;
+    let intent_hash = resolve_intent_hash(policy_type, intent_hash, None)?;
+    let inputs = generate_random_public_inputs(limit, policy_type, intent_hash.as_deref())?;
     let json = serde_json::to_string_pretty(&inputs)?;
 
     if let Some(path) = output_path {
@@ -785,9 +1014,10 @@ fn generate_inputs(
 fn generate_random_public_inputs(
     limit: u64,
     policy_type: PolicyType,
+    intent_hash: Option<&str>,
 ) -> Result<CompliancePublicInputs> {
     let policy_id = policy_type.policy_id();
-    let params = policy_type.create_policy_params(limit);
+    let params = policy_type.create_policy_params(limit, intent_hash)?;
     let hash = compute_policy_hash(policy_id, &params)?;
 
     Ok(CompliancePublicInputs {
@@ -803,10 +1033,17 @@ fn generate_random_public_inputs(
         policy_params: params,
         policy_hash: hash.to_hex(),
         witness_commitment: None,
+        authorization_receipt_hash: None,
     })
 }
 
-fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType) -> Result<()> {
+fn benchmark(
+    count: usize,
+    max_amount: u64,
+    limit: u64,
+    policy_type: PolicyType,
+    intent_hash: Option<String>,
+) -> Result<()> {
     use std::time::Duration;
 
     if count == 0 {
@@ -824,7 +1061,8 @@ fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType)
     println!("  Limit: {}", limit);
     println!();
 
-    let policy = policy_type.as_policy(limit);
+    let intent_hash = resolve_intent_hash(policy_type, intent_hash, None)?;
+    let policy = policy_type.as_policy(limit, intent_hash.as_deref())?;
     let mut prove_times: Vec<Duration> = Vec::with_capacity(count);
     let mut verify_times: Vec<Duration> = Vec::with_capacity(count);
     let mut proof_sizes: Vec<usize> = Vec::with_capacity(count);
@@ -847,10 +1085,18 @@ fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType)
                     rand_u64() % bound
                 }
             }
+            PolicyType::AgentAuthorization => {
+                let bound = max_amount.min(limit.saturating_add(1));
+                if bound == 0 {
+                    0
+                } else {
+                    rand_u64() % bound
+                }
+            }
         };
 
         // Generate inputs
-        let inputs = generate_random_public_inputs(limit, policy_type)?;
+        let inputs = generate_random_public_inputs(limit, policy_type, intent_hash.as_deref())?;
 
         // Create witness and prover
         let witness = ComplianceWitness::new(amount, inputs.clone());
@@ -865,16 +1111,13 @@ fn benchmark(count: usize, max_amount: u64, limit: u64, policy_type: PolicyType)
         prove_times.push(prove_time);
         proof_sizes.push(proof.proof_bytes.len());
 
-        // Time verification (use the same policy parameters as the inputs)
-        let verify_policy = policy.clone();
+        // Time verification against witness-bound public inputs
+        let bound_inputs = inputs
+            .bind_witness_commitment(&proof.witness_commitment)
+            .map_err(|e| anyhow::anyhow!("Verification error: {e}"))?;
         let start = Instant::now();
-        let result = verify_compliance_proof(
-            &proof.proof_bytes,
-            &inputs,
-            &verify_policy,
-            &proof.witness_commitment,
-        )
-        .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
+        let result = verify_compliance_proof_auto_bound(&proof.proof_bytes, &bound_inputs)
+            .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
         let verify_time = start.elapsed();
         verify_times.push(verify_time);
 
@@ -971,19 +1214,23 @@ fn batch_prove(
     output_path: Option<PathBuf>,
 ) -> Result<()> {
     ensure_experimental_batch_enabled()?;
+    ensure_batch_policy_supported(policy_type)?;
 
     if limit == 0 {
         anyhow::bail!("limit must be greater than 0");
     }
 
     let policy_id = policy_type.policy_id();
-    let params = policy_type.create_policy_params(limit);
+    let params = policy_type.create_policy_params(limit, None)?;
     let policy_hash_obj = compute_policy_hash(policy_id, &params)?;
     let policy_hash = hash_to_felts(&policy_hash_obj);
 
     let batch_policy_kind = match policy_type {
         PolicyType::AmlThreshold => BatchPolicyKind::AmlThreshold,
         PolicyType::OrderTotalCap => BatchPolicyKind::OrderTotalCap,
+        PolicyType::AgentAuthorization => {
+            anyhow::bail!("agent.authorization.v1 is not supported by batch proofs")
+        }
     };
 
     // Load events from file or generate randomly
@@ -1250,8 +1497,9 @@ fn generate_batch_public_inputs(
     tenant_id: Uuid,
     store_id: Uuid,
 ) -> Result<CompliancePublicInputs> {
+    ensure_batch_policy_supported(policy_type)?;
     let policy_id = policy_type.policy_id();
-    let params = policy_type.create_policy_params(limit);
+    let params = policy_type.create_policy_params(limit, None)?;
     let hash = compute_policy_hash(policy_id, &params)?;
 
     Ok(CompliancePublicInputs {
@@ -1267,6 +1515,7 @@ fn generate_batch_public_inputs(
         policy_params: params,
         policy_hash: hash.to_hex(),
         witness_commitment: None,
+        authorization_receipt_hash: None,
     })
 }
 

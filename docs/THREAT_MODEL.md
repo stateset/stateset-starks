@@ -31,6 +31,10 @@ Optional hardening: the canonical public inputs may include `witnessCommitment` 
 hex-encoded). If present, verifiers should require it matches the proof's witness commitment to
 bind the proved witness to the canonical public inputs.
 
+Repository hardening note: the CLI and the Node/Python bindings now bind `witnessCommitment` into
+the public-input object before verification by default, and local bound-hash helpers include that
+field in hashed artifacts.
+
 Important: the current AIR does **not** prove that `amount` is derived from, equal to, or otherwise
 consistent with the payload hashes in the public inputs. That linkage must be enforced by the
 surrounding protocol/pipeline (or by extending the AIR).
@@ -126,6 +130,10 @@ Important caveat: because public inputs are not linked to `amount` inside the AI
 prover could generate a valid proof for a chosen `amount` and arbitrary payload hashes. Preventing
 this requires amount-to-payload binding in the surrounding protocol (or in the AIR).
 
+When applications maintain ordered streams of public-input hashes locally, they should prefer the
+bound public-input hash that includes `witnessCommitment` so the stream commits to the proved
+witness as well as the event metadata.
+
 ## Security Parameters
 
 Proof soundness and performance are determined by `ves_stark_air::options::ProofOptions`. As of
@@ -137,6 +145,10 @@ this repository version:
   `fri_folding_factor=8`
 - `secure`: `num_queries=40`, `blowup_factor=16`, `grinding_factor=20`,
   `field_extension=Quadratic`, `fri_folding_factor=8`
+
+Default verifier helpers in this repository accept `default` and `secure` profiles only.
+Verifiers that want to admit `fast` proofs must opt into that profile explicitly with custom
+acceptable options.
 
 The helper `ProofOptions::try_security_level()` provides an internal rough estimate; it is not a
 formal security proof.

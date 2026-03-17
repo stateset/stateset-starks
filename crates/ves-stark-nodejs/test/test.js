@@ -67,7 +67,7 @@ const publicInputsWrong = {
 
 assert.throws(
   () => ves.verifyHex(proof.proofBytes, publicInputsWrong, proof.witnessCommitmentHex),
-  /Verification error: Witness commitment mismatch/
+  /Failed to bind witness commitment to public inputs/
 )
 
 const capPolicyType = 'order_total.cap'
@@ -90,5 +90,31 @@ const capInputsBound = {
 const capOk = ves.verifyHex(capProof.proofBytes, capInputsBound, capProof.witnessCommitmentHex)
 assert.strictEqual(capOk.valid, true, capOk.error || 'cap verification failed')
 assert.strictEqual(capOk.policyLimit, capPolicyLimit)
+
+const authPolicyType = 'agent.authorization.v1'
+const authPolicyLimit = 20_000n
+const authIntentHash = '11'.repeat(32)
+const authPolicyParams = ves.createAgentAuthorizationParams(authPolicyLimit, authIntentHash)
+const authPolicyHash = ves.computePolicyHash(authPolicyType, authPolicyParams)
+
+const authInputsBase = {
+  ...publicInputsBase,
+  policyId: authPolicyType,
+  policyParams: authPolicyParams,
+  policyHash: authPolicyHash,
+}
+
+const authProof = ves.prove(12_500n, authInputsBase, authPolicyType, authPolicyLimit)
+const authInputsBound = {
+  ...authInputsBase,
+  witnessCommitment: authProof.witnessCommitmentHex,
+}
+const authOk = ves.verifyHex(
+  authProof.proofBytes,
+  authInputsBound,
+  authProof.witnessCommitmentHex
+)
+assert.strictEqual(authOk.valid, true, authOk.error || 'agent authorization verification failed')
+assert.strictEqual(authOk.policyLimit, authPolicyLimit)
 
 console.log('ok')

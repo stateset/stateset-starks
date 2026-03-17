@@ -6,16 +6,21 @@
 //! - Hash-to-field conversions for 32-byte hashes
 //! - Canonical public inputs structures
 
+pub mod commerce_intent;
 pub mod field;
 pub mod hash;
 pub mod public_inputs;
 pub mod rescue;
 
+pub use commerce_intent::{
+    CommerceAuthorizationReceipt, CommerceExecution, CommerceIntent, CommerceIntentError,
+    DOMAIN_COMMERCE_AUTHORIZATION_RECEIPT_HASH, DOMAIN_COMMERCE_INTENT_HASH,
+};
 pub use field::{felt_from_u64, felt_to_u64, Felt, FELT_ONE, FELT_ZERO};
 pub use hash::{felts_to_hash, hash_to_felts, Hash256};
 pub use public_inputs::{
-    canonical_json, compute_full_public_inputs_hash, compute_policy_hash,
-    compute_public_inputs_hash, witness_commitment_hex_to_u64, witness_commitment_u64_to_hex,
-    CompliancePublicInputs, PolicyParams, PublicInputsError,
+    canonical_json, compute_bound_public_inputs_hash, compute_full_public_inputs_hash,
+    compute_policy_hash, compute_public_inputs_hash, witness_commitment_hex_to_u64,
+    witness_commitment_u64_to_hex, CompliancePublicInputs, PolicyParams, PublicInputsError,
 };
 pub use rescue::{rescue_hash, rescue_hash_pair, RescueState};

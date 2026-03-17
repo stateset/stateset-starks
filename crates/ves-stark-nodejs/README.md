@@ -18,7 +18,12 @@ npm install @stateset/ves-stark
 ### Generate a Compliance Proof
 
 ```javascript
-const { prove, computePolicyHash, createAmlThresholdParams } = require('@stateset/ves-stark');
+const {
+  prove,
+  computePolicyHash,
+  createAmlThresholdParams,
+  createAgentAuthorizationParams,
+} = require('@stateset/ves-stark');
 
 // Create policy parameters
 const policyParams = createAmlThresholdParams(10000n);
@@ -72,6 +77,29 @@ if (result.valid) {
 }
 ```
 
+`verify()` and `verifyHex()` now bind the supplied witness commitment into the public inputs before
+verification, so local verification is witness-bound by default.
+
+### Agent Authorization Policy
+
+```javascript
+const intentHash = '11'.repeat(32);
+const policyParams = createAgentAuthorizationParams(20000n, intentHash);
+const policyHash = computePolicyHash('agent.authorization.v1', policyParams);
+
+const agentPublicInputs = {
+  ...publicInputs,
+  policyId: 'agent.authorization.v1',
+  policyParams,
+  policyHash,
+};
+
+const proof = prove(12500n, agentPublicInputs, 'agent.authorization.v1', 20000n);
+```
+
+If you also have the canonical authorization receipt, use `verifyAgentAuthorizationHex(...)` to
+verify the receipt binding in addition to the policy proof.
+
 ## API Reference
 
 ### `prove(amount, publicInputs, policyType, policyLimit)`
@@ -81,7 +109,7 @@ Generate a STARK compliance proof.
 **Parameters:**
 - `amount` (bigint): The amount to prove compliance for
 - `publicInputs` (JsCompliancePublicInputs): Public inputs including event metadata
-- `policyType` (string): Policy type - `"aml.threshold"` or `"order_total.cap"`
+- `policyType` (string): Policy type - `"aml.threshold"`, `"order_total.cap"`, or `"agent.authorization.v1"`
 - `policyLimit` (bigint): The policy limit value
 
 **Returns:** `JsComplianceProof`
@@ -121,6 +149,15 @@ Verify a STARK compliance proof using the witness commitment hex string.
 
 **Returns:** `JsVerificationResult`
 
+### `verifyAgentAuthorization(proofBytes, publicInputs, witnessCommitment, receipt)`
+
+Verify an `agent.authorization.v1` proof against a canonical authorization receipt.
+
+### `verifyAgentAuthorizationHex(proofBytes, publicInputs, witnessCommitmentHex, receipt)`
+
+Verify an `agent.authorization.v1` proof against a canonical authorization receipt using the hex
+commitment form.
+
 ### `computePolicyHash(policyId, policyParams)`
 
 Compute the canonical policy hash.
@@ -149,12 +186,23 @@ Create policy parameters for order total cap policy.
 
 **Returns:** `{ cap: bigint }`
 
+### `createAgentAuthorizationParams(maxTotal, intentHash)`
+
+Create policy parameters for the delegated agent authorization policy.
+
+**Parameters:**
+- `maxTotal` (bigint): The delegated maximum total
+- `intentHash` (string): 64-character commerce intent hash
+
+**Returns:** `{ maxTotal: bigint, intentHash: string }`
+
 ## Policy Types
 
 | Policy | ID | Constraint | Use Case |
 |--------|-----|------------|----------|
 | AML Threshold | `aml.threshold` | amount < threshold | Anti-money laundering compliance |
 | Order Total Cap | `order_total.cap` | amount <= cap | Order value limits |
+| Agent Authorization | `agent.authorization.v1` | amount <= maxTotal | Delegated commerce execution |
 
 ## TypeScript Support
 

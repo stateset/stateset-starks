@@ -197,6 +197,72 @@ impl SequencerClient {
         resp.validate_and_parse_public_inputs()
     }
 
+    /// Get public inputs for an agent.authorization.v1 policy.
+    pub async fn get_authorization_public_inputs(
+        &self,
+        event_id: Uuid,
+        max_total: u64,
+        intent_hash: &str,
+    ) -> Result<PublicInputsResponse> {
+        self.get_public_inputs_with_params(
+            event_id,
+            "agent.authorization.v1",
+            AgentAuthorizationParams::new(max_total, intent_hash)?.to_json(),
+        )
+        .await
+    }
+
+    /// Get public inputs for an agent.authorization.v1 policy from a receipt.
+    pub async fn get_authorization_public_inputs_for_receipt(
+        &self,
+        max_total: u64,
+        receipt: &ves_stark_primitives::CommerceAuthorizationReceipt,
+    ) -> Result<PublicInputsResponse> {
+        self.get_authorization_public_inputs(receipt.event_id, max_total, &receipt.intent_hash)
+            .await
+    }
+
+    /// Get public inputs for an agent.authorization.v1 policy and validate the sequencer hash.
+    pub async fn get_authorization_public_inputs_validated(
+        &self,
+        event_id: Uuid,
+        max_total: u64,
+        intent_hash: &str,
+    ) -> Result<ves_stark_primitives::public_inputs::CompliancePublicInputs> {
+        let resp = self
+            .get_authorization_public_inputs(event_id, max_total, intent_hash)
+            .await?;
+        resp.validate_and_parse_public_inputs()
+    }
+
+    /// Get public inputs for an agent.authorization.v1 policy from a receipt and validate the
+    /// sequencer hash.
+    pub async fn get_authorization_public_inputs_validated_for_receipt(
+        &self,
+        max_total: u64,
+        receipt: &ves_stark_primitives::CommerceAuthorizationReceipt,
+    ) -> Result<ves_stark_primitives::public_inputs::CompliancePublicInputs> {
+        let resp = self
+            .get_authorization_public_inputs_for_receipt(max_total, receipt)
+            .await?;
+        resp.validate_and_parse_public_inputs()
+    }
+
+    /// Get public inputs for an agent.authorization.v1 policy from a receipt, validate the
+    /// sequencer hash, and bind the receipt hash plus witness commitment locally.
+    pub async fn get_authorization_public_inputs_bound_for_receipt(
+        &self,
+        max_total: u64,
+        receipt: &ves_stark_primitives::CommerceAuthorizationReceipt,
+    ) -> Result<ves_stark_primitives::public_inputs::CompliancePublicInputs> {
+        let inputs = self
+            .get_authorization_public_inputs_validated_for_receipt(max_total, receipt)
+            .await?;
+        inputs
+            .bind_authorization_receipt(receipt)
+            .map_err(|e| ClientError::InvalidPublicInputs(format!("{e}")))
+    }
+
     /// Get public inputs and validate that the sequencer-provided hash matches the
     /// canonical hash computed locally. Returns canonical typed inputs on success.
     pub async fn get_public_inputs_validated_with_params(
@@ -213,6 +279,8 @@ impl SequencerClient {
 
     /// Submit a compliance proof
     pub async fn submit_proof(&self, submission: ProofSubmission) -> Result<SubmitProofResponse> {
+        submission.validate()?;
+
         let url = format!(
             "{}/api/v1/ves/compliance/{}/proofs",
             self.base_url, submission.event_id
@@ -231,7 +299,11 @@ impl SequencerClient {
                     &submission.witness_commitment,
                 ),
             ),
-            public_inputs: None, // Let the sequencer compute canonical inputs
+            public_inputs: submission
+                .public_inputs
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()?,
         };
 
         let response = self.client.post(&url).json(&request).send().await?;
@@ -257,6 +329,14 @@ impl SequencerClient {
                 message: body,
             })
         }
+    }
+
+    /// Submit a canonical `agent.authorization.v1` proof bundle.
+    pub async fn submit_agent_authorization_bundle(
+        &self,
+        bundle: &AgentAuthorizationProofBundle,
+    ) -> Result<SubmitProofResponse> {
+        self.submit_proof(bundle.to_submission()?).await
     }
 
     /// List all proofs for an event
@@ -381,7 +461,9 @@ impl SequencerClient {
             policy_params: public_inputs.policy_params.to_json_value(),
             proof_bytes: proof.proof_bytes,
             witness_commitment: proof.witness_commitment,
-        };
+            public_inputs: None,
+        }
+        .with_public_inputs(public_inputs.clone())?;
         self.submit_proof(submission).await
     }
 }

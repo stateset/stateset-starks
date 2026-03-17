@@ -374,13 +374,14 @@ mod tests {
     use super::*;
     use crate::prover::witness::BatchWitnessBuilder;
     use crate::state::BatchMetadata;
-    use crate::verifier::verify_batch_proof;
+    use crate::verifier::BatchVerifier;
     use uuid::Uuid;
     use ves_stark_primitives::hash_to_felts;
     use ves_stark_primitives::public_inputs::{
         compute_policy_hash, witness_commitment_u64_to_hex, CompliancePublicInputs, PolicyParams,
     };
     use ves_stark_primitives::{felt_from_u64, rescue::rescue_hash, Felt};
+    use winter_verifier::AcceptableOptions;
 
     #[test]
     fn test_prover_creation() {
@@ -437,6 +438,7 @@ mod tests {
                 commitment[2].as_int(),
                 commitment[3].as_int(),
             ])),
+            authorization_receipt_hash: None,
         }
     }
 
@@ -449,6 +451,12 @@ mod tests {
 
     fn sample_policy_kind() -> BatchPolicyKind {
         BatchPolicyKind::AmlThreshold
+    }
+
+    fn fast_batch_verifier() -> BatchVerifier {
+        BatchVerifier::with_options(AcceptableOptions::OptionSet(vec![ProofOptions::fast()
+            .try_to_winterfell()
+            .unwrap()]))
     }
 
     #[test]
@@ -496,7 +504,9 @@ mod tests {
             witness.public_inputs_accumulator().unwrap(),
         );
 
-        let result = verify_batch_proof(&proof.proof_bytes, &pub_inputs).unwrap();
+        let result = fast_batch_verifier()
+            .verify(&proof.proof_bytes, &pub_inputs)
+            .unwrap();
         assert!(
             result.valid,
             "batch proof should verify: {:?}",
@@ -555,7 +565,9 @@ mod tests {
             witness.public_inputs_accumulator().unwrap(),
         );
 
-        let result = verify_batch_proof(&proof.proof_bytes, &pub_inputs).unwrap();
+        let result = fast_batch_verifier()
+            .verify(&proof.proof_bytes, &pub_inputs)
+            .unwrap();
         assert!(
             result.valid,
             "non-power-of-two batch proof should verify: {:?}",
@@ -604,7 +616,9 @@ mod tests {
             witness.public_inputs_accumulator().unwrap(),
         );
 
-        let result = verify_batch_proof(&proof.proof_bytes, &pub_inputs).unwrap();
+        let result = fast_batch_verifier()
+            .verify(&proof.proof_bytes, &pub_inputs)
+            .unwrap();
         assert!(
             result.valid,
             "single-event batch proof should verify: {:?}",
@@ -654,7 +668,9 @@ mod tests {
             witness.public_inputs_accumulator().unwrap(),
         );
 
-        let result = verify_batch_proof(&proof.proof_bytes, &pub_inputs).unwrap();
+        let result = fast_batch_verifier()
+            .verify(&proof.proof_bytes, &pub_inputs)
+            .unwrap();
         assert!(
             result.valid,
             "single-event high-limb batch proof should verify: {:?}",
@@ -756,7 +772,7 @@ mod tests {
         ] {
             // Tampered inputs may be caught by pre-verification validation (Err) or
             // by the STARK verifier itself (Ok with valid == false). Either is correct rejection.
-            match verify_batch_proof(&proof.proof_bytes, &tampered) {
+            match fast_batch_verifier().verify(&proof.proof_bytes, &tampered) {
                 Err(_) => {} // pre-validation correctly caught the inconsistency
                 Ok(result) => assert!(
                     !result.valid,
@@ -811,7 +827,9 @@ mod tests {
             witness.public_inputs_accumulator().unwrap(),
         );
 
-        let result = verify_batch_proof(&proof.proof_bytes, &pub_inputs).unwrap();
+        let result = fast_batch_verifier()
+            .verify(&proof.proof_bytes, &pub_inputs)
+            .unwrap();
         assert!(
             result.valid,
             "batch proof should verify: {:?}",

@@ -23,6 +23,7 @@ struct ProofInput {
     threshold: u64,
     /// Witness commitment (random)
     witness_commitment: [u64; 4],
+    authorization_receipt_hash: None,
 }
 
 fn create_public_inputs(threshold: u64) -> CompliancePublicInputs {

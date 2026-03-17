@@ -347,6 +347,7 @@ mod tests {
             policy_params: params,
             policy_hash: hash.to_hex(),
             witness_commitment: None,
+            authorization_receipt_hash: None,
         }
     }
 
@@ -368,6 +369,7 @@ mod tests {
             policy_params: params,
             policy_hash: hash.to_hex(),
             witness_commitment: None,
+            authorization_receipt_hash: None,
         }
     }
 

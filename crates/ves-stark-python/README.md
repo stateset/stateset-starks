@@ -88,6 +88,9 @@ if result:
     print("Valid!")
 ```
 
+`ves_stark.verify(...)` now binds the supplied witness commitment into the public inputs before
+verification, so local verification is witness-bound by default.
+
 ## API Reference
 
 ### Classes
@@ -103,9 +106,12 @@ policy = ves_stark.Policy.aml_threshold(10000)
 # Create order total cap policy (proves amount <= cap)
 policy = ves_stark.Policy.order_total_cap(50000)
 
+# Create agent authorization policy (proves amount <= maxTotal)
+policy = ves_stark.Policy.agent_authorization(20000, "11" * 32)
+
 # Properties
-policy.policy_id   # "aml.threshold" or "order_total.cap"
-policy.limit       # The threshold/cap value
+policy.policy_id   # "aml.threshold", "order_total.cap", or "agent.authorization.v1"
+policy.limit       # The threshold/cap/maxTotal value
 ```
 
 #### `CompliancePublicInputs`
@@ -126,6 +132,7 @@ public_inputs = ves_stark.CompliancePublicInputs(
     policy_params={"threshold": 10000},  # dict
     policy_hash="...",        # 64-char lowercase hex
     witness_commitment=None,  # optional 64-char lowercase hex (witnessCommitment)
+    authorization_receipt_hash=None,  # optional 64-char lowercase hex
 )
 
 # All fields are readable and writable
@@ -209,6 +216,10 @@ result = ves_stark.verify(
 **Raises:**
 - `ValueError`: If arguments are malformed
 
+#### `verify_agent_authorization(proof_bytes, public_inputs, witness_commitment, receipt)`
+
+Verify an `agent.authorization.v1` proof against a canonical authorization receipt.
+
 #### `compute_policy_hash(policy_id, policy_params)`
 
 Compute the canonical policy hash.
@@ -229,6 +240,7 @@ hash = ves_stark.compute_policy_hash("aml.threshold", {"threshold": 10000})
 |--------|-----|------------|----------|
 | AML Threshold | `aml.threshold` | amount < threshold | Anti-money laundering compliance |
 | Order Total Cap | `order_total.cap` | amount <= cap | Order value limits |
+| Agent Authorization | `agent.authorization.v1` | amount <= maxTotal | Delegated commerce execution |
 
 ## Building from Source
 

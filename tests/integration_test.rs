@@ -6,13 +6,16 @@
 //!
 //! - `aml.threshold`: Proves amount < threshold (strict less-than)
 //! - `order_total.cap`: Proves amount <= cap (less-than-or-equal)
+//! - `agent.authorization.v1`: Proves amount <= maxTotal while committing an
+//!   intentHash through the canonical policy hash
 
 use uuid::Uuid;
 use ves_stark_primitives::public_inputs::{
     compute_policy_hash, CompliancePublicInputs, PolicyParams,
 };
+use ves_stark_primitives::{CommerceExecution, CommerceIntent};
 use ves_stark_prover::{ComplianceProver, ComplianceWitness, Policy};
-use ves_stark_verifier::verify_compliance_proof;
+use ves_stark_verifier::{verify_agent_authorization_proof_auto_bound, verify_compliance_proof};
 
 /// Create sample public inputs for AML threshold policy
 fn sample_aml_public_inputs(threshold: u64) -> CompliancePublicInputs {
@@ -33,6 +36,7 @@ fn sample_aml_public_inputs(threshold: u64) -> CompliancePublicInputs {
         policy_params: params,
         policy_hash: hash.to_hex(),
         witness_commitment: None,
+        authorization_receipt_hash: None,
     }
 }
 
@@ -55,6 +59,33 @@ fn sample_cap_public_inputs(cap: u64) -> CompliancePublicInputs {
         policy_params: params,
         policy_hash: hash.to_hex(),
         witness_commitment: None,
+        authorization_receipt_hash: None,
+    }
+}
+
+/// Create sample public inputs for agent authorization policy
+fn sample_agent_authorization_public_inputs(
+    max_total: u64,
+    intent_hash: &str,
+) -> CompliancePublicInputs {
+    let policy_id = "agent.authorization.v1";
+    let params = PolicyParams::agent_authorization(max_total, intent_hash).unwrap();
+    let hash = compute_policy_hash(policy_id, &params).unwrap();
+
+    CompliancePublicInputs {
+        event_id: Uuid::new_v4(),
+        tenant_id: Uuid::new_v4(),
+        store_id: Uuid::new_v4(),
+        sequence_number: 1,
+        payload_kind: 7,
+        payload_plain_hash: "d".repeat(64),
+        payload_cipher_hash: "e".repeat(64),
+        event_signing_hash: "f".repeat(64),
+        policy_id: policy_id.to_string(),
+        policy_params: params,
+        policy_hash: hash.to_hex(),
+        witness_commitment: None,
+        authorization_receipt_hash: None,
     }
 }
 
@@ -310,6 +341,120 @@ fn test_order_total_cap_equal_proof() {
     )
     .expect("Verification should succeed");
     assert!(result.valid, "Proof should be valid for amount == cap");
+}
+
+#[test]
+fn test_agent_authorization_policy_valid_proof() {
+    let max_total = 25_000u64;
+    let amount = 12_500u64;
+    let intent_hash = CommerceIntent {
+        intent_id: Uuid::new_v4(),
+        tenant_id: Uuid::new_v4(),
+        store_id: Uuid::new_v4(),
+        agent_id: Uuid::new_v4(),
+        delegation_id: Uuid::new_v4(),
+        currency: "USD".to_string(),
+        max_total,
+        merchant: Some("Acme Market".to_string()),
+        payee: Some("settlement@stateset.app".to_string()),
+        allowed_skus: vec!["sku-a".to_string()],
+        allowed_categories: vec!["grocery".to_string()],
+        shipping_country: Some("US".to_string()),
+        expires_at: 1_900_000_000,
+        nonce: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+    }
+    .compute_hash_hex()
+    .unwrap();
+
+    let inputs = sample_agent_authorization_public_inputs(max_total, &intent_hash);
+    let witness = ComplianceWitness::new(amount, inputs.clone());
+    let policy = Policy::agent_authorization(max_total, intent_hash.clone()).unwrap();
+
+    let prover = ComplianceProver::with_policy(policy.clone());
+    let proof = prover.prove(&witness).unwrap();
+
+    let result = verify_compliance_proof(
+        &proof.proof_bytes,
+        &inputs,
+        &policy,
+        &proof.witness_commitment,
+    )
+    .unwrap();
+    assert!(result.valid, "Proof should be valid for authorized amount");
+
+    let mismatched_policy = Policy::agent_authorization(
+        max_total,
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    )
+    .unwrap();
+    assert!(verify_compliance_proof(
+        &proof.proof_bytes,
+        &inputs,
+        &mismatched_policy,
+        &proof.witness_commitment,
+    )
+    .is_err());
+}
+
+#[test]
+fn test_agent_authorization_receipt_bound_proof() {
+    let max_total = 25_000u64;
+    let amount = 12_500u64;
+    let intent = CommerceIntent {
+        intent_id: Uuid::new_v4(),
+        tenant_id: Uuid::new_v4(),
+        store_id: Uuid::new_v4(),
+        agent_id: Uuid::new_v4(),
+        delegation_id: Uuid::new_v4(),
+        currency: "USD".to_string(),
+        max_total,
+        merchant: Some("Acme Market".to_string()),
+        payee: Some("settlement@stateset.app".to_string()),
+        allowed_skus: vec!["sku-a".to_string()],
+        allowed_categories: vec!["grocery".to_string()],
+        shipping_country: Some("US".to_string()),
+        expires_at: 1_900_000_000,
+        nonce: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+    };
+    let execution = CommerceExecution {
+        event_id: Uuid::new_v4(),
+        sequence_number: 42,
+        currency: "USD".to_string(),
+        amount,
+        merchant: "Acme Market".to_string(),
+        payee: "settlement@stateset.app".to_string(),
+        sku_ids: vec!["sku-a".to_string()],
+        category_ids: vec!["grocery".to_string()],
+        shipping_country: Some("US".to_string()),
+        executed_at: 1_800_000_000,
+    };
+    let receipt = intent.authorize_execution(&execution).unwrap();
+
+    let mut inputs = sample_agent_authorization_public_inputs(max_total, &receipt.intent_hash);
+    inputs.event_id = receipt.event_id;
+    inputs.tenant_id = receipt.tenant_id;
+    inputs.store_id = receipt.store_id;
+    inputs.sequence_number = receipt.sequence_number;
+    let inputs = inputs.bind_authorization_receipt(&receipt).unwrap();
+
+    let witness = ComplianceWitness::new(amount, inputs.clone());
+    let policy = Policy::agent_authorization(max_total, receipt.intent_hash.clone()).unwrap();
+
+    let prover = ComplianceProver::with_policy(policy);
+    let proof = prover.prove(&witness).unwrap();
+
+    let result =
+        verify_agent_authorization_proof_auto_bound(&proof.proof_bytes, &inputs, &receipt).unwrap();
+    assert!(result.valid, "Receipt-bound proof should be valid");
+
+    let mut tampered_receipt = receipt.clone();
+    tampered_receipt.amount += 1;
+    tampered_receipt.receipt_hash = tampered_receipt.compute_hash_hex().unwrap();
+
+    assert!(matches!(
+        verify_agent_authorization_proof_auto_bound(&proof.proof_bytes, &inputs, &tampered_receipt),
+        Err(ves_stark_verifier::VerifierError::PublicInputMismatch(_))
+    ));
 }
 
 // =============================================================================

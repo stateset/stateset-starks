@@ -8,7 +8,7 @@ use std::time::Instant;
 use ves_stark_air::compliance::{ComplianceAir, PublicInputs};
 use ves_stark_air::policy::Policy;
 use ves_stark_primitives::public_inputs::CompliancePublicInputs;
-use ves_stark_primitives::{felt_from_u64, Felt, Hash256};
+use ves_stark_primitives::{felt_from_u64, CommerceAuthorizationReceipt, Felt, Hash256};
 use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
 use winter_verifier::{verify, AcceptableOptions};
 
@@ -62,11 +62,6 @@ fn default_acceptable_options() -> Result<AcceptableOptions, VerifierError> {
             .map_err(|e| {
                 VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
             })?,
-        ves_stark_air::options::ProofOptions::fast()
-            .try_to_winterfell()
-            .map_err(|e| {
-                VerifierError::VerificationFailed(format!("Invalid proof options: {e}"))
-            })?,
         ves_stark_air::options::ProofOptions::secure()
             .try_to_winterfell()
             .map_err(|e| {
@@ -101,6 +96,9 @@ fn verify_compliance_proof_with_options(
     )?;
     validate_hex_string("event_signing_hash", &public_inputs.event_signing_hash, 64)?;
     validate_hex_string("policy_hash", &public_inputs.policy_hash, 64)?;
+    if let Some(receipt_hash) = public_inputs.authorization_receipt_hash.as_deref() {
+        validate_hex_string("authorization_receipt_hash", receipt_hash, 64)?;
+    }
 
     // Optional hardening: if the canonical public inputs include a witness commitment, enforce
     // that the caller-provided commitment matches it.
@@ -146,6 +144,12 @@ fn verify_compliance_proof_with_options(
             policy.limit(),
             derived_policy.limit(),
         ));
+    }
+    if policy != &derived_policy {
+        return Err(VerifierError::PublicInputMismatch(format!(
+            "policy parameters in public inputs do not match expected policy for {}",
+            policy.policy_id()
+        )));
     }
 
     // Validate policy semantics before touching proof bytes so callers get consistent
@@ -204,6 +208,69 @@ fn verify_compliance_proof_with_options(
     }
 }
 
+fn bound_witness_commitment(
+    public_inputs: &CompliancePublicInputs,
+) -> Result<[u64; 4], VerifierError> {
+    public_inputs
+        .witness_commitment_u64()
+        .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?
+        .ok_or_else(|| {
+            VerifierError::PublicInputMismatch(
+                "missing witnessCommitment in public inputs".to_string(),
+            )
+        })
+}
+
+fn validate_agent_authorization_receipt_binding(
+    public_inputs: &CompliancePublicInputs,
+    policy: &Policy,
+    witness_commitment: &[u64; 4],
+    receipt: &CommerceAuthorizationReceipt,
+) -> Result<CommerceAuthorizationReceipt, VerifierError> {
+    if policy.policy_id() != "agent.authorization.v1" {
+        return Err(VerifierError::PublicInputMismatch(
+            "authorization receipt binding requires agent.authorization.v1 policy".to_string(),
+        ));
+    }
+
+    let normalized_receipt = receipt.normalized().map_err(|e| {
+        VerifierError::PublicInputMismatch(format!("invalid authorization receipt: {e}"))
+    })?;
+    public_inputs
+        .validate_authorization_receipt(&normalized_receipt)
+        .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?;
+
+    let expected_commitment = normalized_receipt.witness_commitment_u64();
+    if &expected_commitment != witness_commitment {
+        return Err(VerifierError::WitnessCommitmentMismatch);
+    }
+
+    Ok(normalized_receipt)
+}
+
+fn verify_agent_authorization_proof_with_options(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    policy: &Policy,
+    witness_commitment: &[u64; 4],
+    receipt: &CommerceAuthorizationReceipt,
+    acceptable_options: &AcceptableOptions,
+) -> Result<VerificationResult, VerifierError> {
+    validate_agent_authorization_receipt_binding(
+        public_inputs,
+        policy,
+        witness_commitment,
+        receipt,
+    )?;
+    verify_compliance_proof_with_options(
+        proof_bytes,
+        public_inputs,
+        policy,
+        witness_commitment,
+        acceptable_options,
+    )
+}
+
 /// Verify a compliance proof
 ///
 /// This is the main entry point for proof verification. It takes raw proof
@@ -237,6 +304,43 @@ pub fn verify_compliance_proof_strict(
     verify_compliance_proof(proof_bytes, public_inputs, policy, witness_commitment)?.ensure_valid()
 }
 
+/// Verify an `agent.authorization.v1` proof against a canonical authorization receipt.
+pub fn verify_agent_authorization_proof(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    policy: &Policy,
+    witness_commitment: &[u64; 4],
+    receipt: &CommerceAuthorizationReceipt,
+) -> Result<VerificationResult, VerifierError> {
+    let acceptable_options = default_acceptable_options()?;
+    verify_agent_authorization_proof_with_options(
+        proof_bytes,
+        public_inputs,
+        policy,
+        witness_commitment,
+        receipt,
+        &acceptable_options,
+    )
+}
+
+/// Verify an `agent.authorization.v1` proof and return an error on invalid proofs.
+pub fn verify_agent_authorization_proof_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    policy: &Policy,
+    witness_commitment: &[u64; 4],
+    receipt: &CommerceAuthorizationReceipt,
+) -> Result<VerificationResult, VerifierError> {
+    verify_agent_authorization_proof(
+        proof_bytes,
+        public_inputs,
+        policy,
+        witness_commitment,
+        receipt,
+    )?
+    .ensure_valid()
+}
+
 /// Verify a compliance proof using policy parameters from the public inputs.
 pub fn verify_compliance_proof_auto(
     proof_bytes: &[u8],
@@ -246,6 +350,37 @@ pub fn verify_compliance_proof_auto(
     let policy = Policy::from_public_inputs(&public_inputs.policy_id, &public_inputs.policy_params)
         .map_err(|e| VerifierError::PublicInputMismatch(format!("Invalid policy params: {e}")))?;
     verify_compliance_proof(proof_bytes, public_inputs, &policy, witness_commitment)
+}
+
+/// Verify an `agent.authorization.v1` proof using policy parameters from the public inputs
+/// and an explicit witness commitment.
+pub fn verify_agent_authorization_proof_auto(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    witness_commitment: &[u64; 4],
+    receipt: &CommerceAuthorizationReceipt,
+) -> Result<VerificationResult, VerifierError> {
+    let policy = Policy::from_public_inputs(&public_inputs.policy_id, &public_inputs.policy_params)
+        .map_err(|e| VerifierError::PublicInputMismatch(format!("Invalid policy params: {e}")))?;
+    verify_agent_authorization_proof(
+        proof_bytes,
+        public_inputs,
+        &policy,
+        witness_commitment,
+        receipt,
+    )
+}
+
+/// Verify an `agent.authorization.v1` proof using policy parameters from the public inputs
+/// and return an error on invalid proofs.
+pub fn verify_agent_authorization_proof_auto_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    witness_commitment: &[u64; 4],
+    receipt: &CommerceAuthorizationReceipt,
+) -> Result<VerificationResult, VerifierError> {
+    verify_agent_authorization_proof_auto(proof_bytes, public_inputs, witness_commitment, receipt)?
+        .ensure_valid()
 }
 
 /// Verify a compliance proof using policy parameters from the public inputs and
@@ -265,15 +400,29 @@ pub fn verify_compliance_proof_auto_bound(
     proof_bytes: &[u8],
     public_inputs: &CompliancePublicInputs,
 ) -> Result<VerificationResult, VerifierError> {
-    let witness_commitment = public_inputs
-        .witness_commitment_u64()
-        .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?
-        .ok_or_else(|| {
-            VerifierError::PublicInputMismatch(
-                "missing witnessCommitment in public inputs".to_string(),
-            )
-        })?;
+    let witness_commitment = bound_witness_commitment(public_inputs)?;
     verify_compliance_proof_auto(proof_bytes, public_inputs, &witness_commitment)
+}
+
+/// Verify an `agent.authorization.v1` proof using policy parameters and witness commitment
+/// from the public inputs.
+pub fn verify_agent_authorization_proof_auto_bound(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    receipt: &CommerceAuthorizationReceipt,
+) -> Result<VerificationResult, VerifierError> {
+    let witness_commitment = bound_witness_commitment(public_inputs)?;
+    verify_agent_authorization_proof_auto(proof_bytes, public_inputs, &witness_commitment, receipt)
+}
+
+/// Verify an `agent.authorization.v1` proof using policy parameters and witness commitment
+/// from public inputs and return an error on invalid proofs.
+pub fn verify_agent_authorization_proof_auto_bound_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    receipt: &CommerceAuthorizationReceipt,
+) -> Result<VerificationResult, VerifierError> {
+    verify_agent_authorization_proof_auto_bound(proof_bytes, public_inputs, receipt)?.ensure_valid()
 }
 
 /// Verify a compliance proof using policy parameters and witness commitment from
@@ -303,7 +452,6 @@ impl ComplianceVerifier {
     fn fallback_options() -> AcceptableOptions {
         AcceptableOptions::OptionSet(vec![
             Self::to_winterfell_unchecked(&ves_stark_air::options::ProofOptions::default()),
-            Self::to_winterfell_unchecked(&ves_stark_air::options::ProofOptions::fast()),
             Self::to_winterfell_unchecked(&ves_stark_air::options::ProofOptions::secure()),
         ])
     }
@@ -379,15 +527,66 @@ impl ComplianceVerifier {
         proof_bytes: &[u8],
         public_inputs: &CompliancePublicInputs,
     ) -> Result<VerificationResult, VerifierError> {
-        let witness_commitment = public_inputs
-            .witness_commitment_u64()
-            .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?
-            .ok_or_else(|| {
-                VerifierError::PublicInputMismatch(
-                    "missing witnessCommitment in public inputs".to_string(),
-                )
-            })?;
+        let witness_commitment = bound_witness_commitment(public_inputs)?;
         self.verify_auto(proof_bytes, public_inputs, &witness_commitment)
+    }
+
+    /// Verify an `agent.authorization.v1` proof with an authorization receipt.
+    pub fn verify_agent_authorization(
+        &self,
+        proof_bytes: &[u8],
+        public_inputs: &CompliancePublicInputs,
+        policy: &Policy,
+        witness_commitment: &[u64; 4],
+        receipt: &CommerceAuthorizationReceipt,
+    ) -> Result<VerificationResult, VerifierError> {
+        verify_agent_authorization_proof_with_options(
+            proof_bytes,
+            public_inputs,
+            policy,
+            witness_commitment,
+            receipt,
+            &self.acceptable_options,
+        )
+    }
+
+    /// Verify an `agent.authorization.v1` proof using policy parameters from the public inputs.
+    pub fn verify_agent_authorization_auto(
+        &self,
+        proof_bytes: &[u8],
+        public_inputs: &CompliancePublicInputs,
+        witness_commitment: &[u64; 4],
+        receipt: &CommerceAuthorizationReceipt,
+    ) -> Result<VerificationResult, VerifierError> {
+        let policy =
+            Policy::from_public_inputs(&public_inputs.policy_id, &public_inputs.policy_params)
+                .map_err(|e| {
+                    VerifierError::PublicInputMismatch(format!("Invalid policy params: {e}"))
+                })?;
+        self.verify_agent_authorization(
+            proof_bytes,
+            public_inputs,
+            &policy,
+            witness_commitment,
+            receipt,
+        )
+    }
+
+    /// Verify an `agent.authorization.v1` proof using policy parameters and witness commitment
+    /// from the public inputs.
+    pub fn verify_agent_authorization_auto_bound(
+        &self,
+        proof_bytes: &[u8],
+        public_inputs: &CompliancePublicInputs,
+        receipt: &CommerceAuthorizationReceipt,
+    ) -> Result<VerificationResult, VerifierError> {
+        let witness_commitment = bound_witness_commitment(public_inputs)?;
+        self.verify_agent_authorization_auto(
+            proof_bytes,
+            public_inputs,
+            &witness_commitment,
+            receipt,
+        )
     }
 
     /// Verify a proof and return an error on invalid proofs.
@@ -421,6 +620,7 @@ mod tests {
     use super::*;
     use uuid::Uuid;
     use ves_stark_primitives::public_inputs::PolicyParams;
+    use ves_stark_primitives::{CommerceExecution, CommerceIntent};
 
     fn sample_inputs(threshold: u64) -> CompliancePublicInputs {
         let policy_id = "aml.threshold";
@@ -440,7 +640,63 @@ mod tests {
             policy_params: params,
             policy_hash: hash.to_hex(),
             witness_commitment: None,
+            authorization_receipt_hash: None,
         }
+    }
+
+    fn sample_agent_authorization_context(
+    ) -> (CommerceAuthorizationReceipt, CompliancePublicInputs, Policy) {
+        let intent = CommerceIntent {
+            intent_id: Uuid::parse_str("9f7f314e-80c3-45dc-af6d-11d6c1a68701").unwrap(),
+            tenant_id: Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap(),
+            store_id: Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap(),
+            agent_id: Uuid::parse_str("6ba7b811-9dad-11d1-80b4-00c04fd430c8").unwrap(),
+            delegation_id: Uuid::parse_str("d9428888-122b-11e1-b85c-61cd3cbb3210").unwrap(),
+            currency: "USD".to_string(),
+            max_total: 25_000,
+            merchant: Some("Acme Market".to_string()),
+            payee: Some("settlement@stateset.app".to_string()),
+            allowed_skus: vec!["sku-a".to_string(), "sku-b".to_string()],
+            allowed_categories: vec!["produce".to_string()],
+            shipping_country: Some("US".to_string()),
+            expires_at: 1_900_000_000,
+            nonce: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+        };
+        let execution = CommerceExecution {
+            event_id: Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap(),
+            sequence_number: 42,
+            currency: "USD".to_string(),
+            amount: 12_500,
+            merchant: "Acme Market".to_string(),
+            payee: "settlement@stateset.app".to_string(),
+            sku_ids: vec!["sku-a".to_string()],
+            category_ids: vec!["produce".to_string()],
+            shipping_country: Some("US".to_string()),
+            executed_at: 1_800_000_000,
+        };
+        let receipt = intent.authorize_execution(&execution).unwrap();
+        let policy = Policy::agent_authorization(intent.max_total, &receipt.intent_hash).unwrap();
+        let params =
+            PolicyParams::agent_authorization(intent.max_total, &receipt.intent_hash).unwrap();
+        let policy_hash =
+            CompliancePublicInputs::compute_policy_hash(policy.policy_id(), &params).unwrap();
+        let inputs = CompliancePublicInputs {
+            event_id: receipt.event_id,
+            tenant_id: receipt.tenant_id,
+            store_id: receipt.store_id,
+            sequence_number: receipt.sequence_number,
+            payload_kind: 7,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "1".repeat(64),
+            event_signing_hash: "2".repeat(64),
+            policy_id: policy.policy_id().to_string(),
+            policy_params: params,
+            policy_hash: policy_hash.to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+        };
+
+        (receipt, inputs, policy)
     }
 
     // =========================================================================
@@ -508,6 +764,37 @@ mod tests {
                 &proof.witness_commitment
             )
             .is_err());
+    }
+
+    #[test]
+    fn test_default_verifier_rejects_fast_proof() {
+        use ves_stark_prover::{ComplianceProver, ComplianceWitness};
+
+        let threshold = 10_000u64;
+        let amount = 5_000u64;
+        let inputs = sample_inputs(threshold);
+        let witness = ComplianceWitness::new(amount, inputs.clone());
+        let policy = Policy::aml_threshold(threshold);
+
+        let prover = ComplianceProver::with_policy(policy.clone())
+            .with_options(ves_stark_air::options::ProofOptions::fast());
+        let proof = prover.prove(&witness).unwrap();
+
+        let result = verify_compliance_proof(
+            &proof.proof_bytes,
+            &inputs,
+            &policy,
+            &proof.witness_commitment,
+        )
+        .unwrap();
+        assert!(!result.valid);
+        assert!(verify_compliance_proof_strict(
+            &proof.proof_bytes,
+            &inputs,
+            &policy,
+            &proof.witness_commitment
+        )
+        .is_err());
     }
 
     // =========================================================================
@@ -828,6 +1115,7 @@ mod tests {
                 policy_params: params.clone(),
                 policy_hash: hash.to_hex(),
                 witness_commitment: None,
+                authorization_receipt_hash: None,
             };
             assert!(inputs.validate_policy_hash().unwrap());
         }
@@ -854,6 +1142,58 @@ mod tests {
         let inputs = sample_inputs(threshold);
         let err = verify_compliance_proof_auto_bound(&[], &inputs).unwrap_err();
         assert!(matches!(err, VerifierError::PublicInputMismatch(_)));
+    }
+
+    #[test]
+    fn test_agent_authorization_receipt_requires_agent_policy() {
+        let (receipt, inputs, _) = sample_agent_authorization_context();
+        let witness_commitment = receipt.witness_commitment_u64();
+        let err = verify_agent_authorization_proof(
+            &[],
+            &inputs,
+            &Policy::aml_threshold(10_000),
+            &witness_commitment,
+            &receipt,
+        )
+        .unwrap_err();
+        assert!(matches!(err, VerifierError::PublicInputMismatch(_)));
+    }
+
+    #[test]
+    fn test_agent_authorization_receipt_rejects_invalid_hash_before_deserialization() {
+        let (mut receipt, inputs, policy) = sample_agent_authorization_context();
+        let witness_commitment = receipt.witness_commitment_u64();
+        receipt.receipt_hash = "0".repeat(64);
+
+        let err =
+            verify_agent_authorization_proof(&[], &inputs, &policy, &witness_commitment, &receipt)
+                .unwrap_err();
+        assert!(matches!(err, VerifierError::PublicInputMismatch(_)));
+    }
+
+    #[test]
+    fn test_agent_authorization_receipt_rejects_public_input_receipt_hash_mismatch() {
+        let (receipt, mut inputs, policy) = sample_agent_authorization_context();
+        let witness_commitment = receipt.witness_commitment_u64();
+        inputs.authorization_receipt_hash = Some("0".repeat(64));
+
+        let err =
+            verify_agent_authorization_proof(&[], &inputs, &policy, &witness_commitment, &receipt)
+                .unwrap_err();
+        assert!(matches!(err, VerifierError::PublicInputMismatch(_)));
+    }
+
+    #[test]
+    fn test_agent_authorization_receipt_rejects_amount_commitment_mismatch() {
+        let (mut receipt, inputs, policy) = sample_agent_authorization_context();
+        let witness_commitment = receipt.witness_commitment_u64();
+        receipt.amount += 1;
+        receipt.receipt_hash = receipt.compute_hash_hex().unwrap();
+
+        let err =
+            verify_agent_authorization_proof(&[], &inputs, &policy, &witness_commitment, &receipt)
+                .unwrap_err();
+        assert!(matches!(err, VerifierError::WitnessCommitmentMismatch));
     }
 
     // =========================================================================

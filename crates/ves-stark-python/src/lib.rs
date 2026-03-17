@@ -9,9 +9,14 @@ use pyo3::types::{PyBytes, PyDict};
 use uuid::Uuid;
 
 use ves_stark_air::Policy as RustPolicy;
-use ves_stark_primitives::{CompliancePublicInputs as RustCompliancePublicInputs, PolicyParams};
+use ves_stark_primitives::{
+    CommerceAuthorizationReceipt, CompliancePublicInputs as RustCompliancePublicInputs,
+    PolicyParams,
+};
 use ves_stark_prover::{ComplianceProver, ComplianceWitness};
-use ves_stark_verifier::{verify_compliance_proof_auto, VerifierError};
+use ves_stark_verifier::{
+    verify_agent_authorization_proof_auto_bound, verify_compliance_proof_auto_bound, VerifierError,
+};
 
 /// Policy type for compliance proofs
 #[pyclass]
@@ -52,6 +57,25 @@ impl Policy {
         Self {
             inner: RustPolicy::order_total_cap(cap),
         }
+    }
+
+    /// Create an agent authorization policy.
+    ///
+    /// The prover will prove that the amount is less than or equal to the delegated maximum total
+    /// and bind the proof to the supplied delegated commerce intent hash.
+    ///
+    /// Args:
+    ///     max_total: The delegated maximum total
+    ///     intent_hash: The delegated commerce intent hash (hex64)
+    ///
+    /// Returns:
+    ///     Policy configured for delegated agent authorization
+    #[staticmethod]
+    pub fn agent_authorization(max_total: u64, intent_hash: String) -> PyResult<Self> {
+        let inner = RustPolicy::agent_authorization(max_total, intent_hash).map_err(|e| {
+            PyValueError::new_err(format!("Invalid agent authorization policy: {}", e))
+        })?;
+        Ok(Self { inner })
     }
 
     /// Get the policy ID string
@@ -110,6 +134,9 @@ pub struct CompliancePublicInputs {
     /// Optional witness commitment (hex64, lowercase) to bind the proved witness to canonical inputs.
     #[pyo3(get, set)]
     pub witness_commitment: Option<String>,
+    /// Optional authorization receipt hash (hex64, lowercase) committed into canonical public inputs.
+    #[pyo3(get, set)]
+    pub authorization_receipt_hash: Option<String>,
 }
 
 #[pymethods]
@@ -129,9 +156,10 @@ impl CompliancePublicInputs {
     ///     policy_params: Policy parameters as dict
     ///     policy_hash: Policy hash (hex64, lowercase)
     ///     witness_commitment: Optional witness commitment (hex64, lowercase)
+    ///     authorization_receipt_hash: Optional authorization receipt hash (hex64, lowercase)
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (event_id, tenant_id, store_id, sequence_number, payload_kind, payload_plain_hash, payload_cipher_hash, event_signing_hash, policy_id, policy_params, policy_hash, witness_commitment=None))]
+    #[pyo3(signature = (event_id, tenant_id, store_id, sequence_number, payload_kind, payload_plain_hash, payload_cipher_hash, event_signing_hash, policy_id, policy_params, policy_hash, witness_commitment=None, authorization_receipt_hash=None))]
     pub fn new(
         event_id: String,
         tenant_id: String,
@@ -145,6 +173,7 @@ impl CompliancePublicInputs {
         policy_params: &Bound<'_, PyDict>,
         policy_hash: String,
         witness_commitment: Option<String>,
+        authorization_receipt_hash: Option<String>,
     ) -> PyResult<Self> {
         // Convert PyDict to JSON string
         let policy_params_json = Python::with_gil(|py| {
@@ -166,6 +195,7 @@ impl CompliancePublicInputs {
             policy_params_json,
             policy_hash,
             witness_commitment,
+            authorization_receipt_hash,
         })
     }
 
@@ -242,8 +272,29 @@ impl CompliancePublicInputs {
             policy_params: PolicyParams(policy_params),
             policy_hash: self.policy_hash.clone(),
             witness_commitment: self.witness_commitment.clone(),
+            authorization_receipt_hash: self.authorization_receipt_hash.clone(),
         })
     }
+}
+
+fn bind_public_inputs_to_commitment(
+    public_inputs: &CompliancePublicInputs,
+    witness_commitment: &[u64; 4],
+) -> PyResult<RustCompliancePublicInputs> {
+    let rust_inputs = public_inputs.to_rust()?;
+    rust_inputs
+        .bind_witness_commitment(witness_commitment)
+        .map_err(|e| PyValueError::new_err(format!("Failed to bind witness commitment: {}", e)))
+}
+
+fn receipt_from_py_dict(value: &Bound<'_, PyDict>) -> PyResult<CommerceAuthorizationReceipt> {
+    let receipt_json = Python::with_gil(|py| {
+        let json = py.import("json")?;
+        let dumps = json.getattr("dumps")?;
+        dumps.call1((value,))?.extract::<String>()
+    })?;
+    serde_json::from_str(&receipt_json)
+        .map_err(|e| PyValueError::new_err(format!("Invalid authorization receipt dict: {}", e)))
 }
 
 /// Result of proof generation
@@ -399,9 +450,6 @@ pub fn verify(
     public_inputs: &CompliancePublicInputs,
     witness_commitment: Vec<u64>,
 ) -> PyResult<VerificationResult> {
-    // Convert public inputs
-    let rust_inputs = public_inputs.to_rust()?;
-
     // Convert witness commitment
     if witness_commitment.len() != 4 {
         return Err(PyValueError::new_err(format!(
@@ -415,9 +463,47 @@ pub fn verify(
         witness_commitment[2],
         witness_commitment[3],
     ];
+    let rust_inputs = bind_public_inputs_to_commitment(public_inputs, &commitment)?;
 
     // Verify proof
-    let result = verify_compliance_proof_auto(proof_bytes, &rust_inputs, &commitment);
+    let result = verify_compliance_proof_auto_bound(proof_bytes, &rust_inputs);
+
+    match result {
+        Ok(verification) => Ok(VerificationResult {
+            valid: verification.valid,
+            verification_time_ms: verification.verification_time_ms,
+            error: verification.error,
+            policy_id: verification.policy_id,
+            policy_limit: verification.policy_limit,
+        }),
+        Err(e) => Err(verifier_error_to_py(e)),
+    }
+}
+
+/// Verify an `agent.authorization.v1` proof against a canonical authorization receipt.
+#[pyfunction]
+pub fn verify_agent_authorization(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    witness_commitment: Vec<u64>,
+    receipt: &Bound<'_, PyDict>,
+) -> PyResult<VerificationResult> {
+    if witness_commitment.len() != 4 {
+        return Err(PyValueError::new_err(format!(
+            "Witness commitment must have exactly 4 elements, got {}",
+            witness_commitment.len()
+        )));
+    }
+    let commitment: [u64; 4] = [
+        witness_commitment[0],
+        witness_commitment[1],
+        witness_commitment[2],
+        witness_commitment[3],
+    ];
+    let rust_inputs = bind_public_inputs_to_commitment(public_inputs, &commitment)?;
+    let receipt = receipt_from_py_dict(receipt)?;
+
+    let result = verify_agent_authorization_proof_auto_bound(proof_bytes, &rust_inputs, &receipt);
 
     match result {
         Ok(verification) => Ok(VerificationResult {
@@ -482,6 +568,7 @@ fn ves_stark(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<VerificationResult>()?;
     m.add_function(wrap_pyfunction!(prove, m)?)?;
     m.add_function(wrap_pyfunction!(verify, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_agent_authorization, m)?)?;
     m.add_function(wrap_pyfunction!(compute_policy_hash, m)?)?;
     Ok(())
 }

@@ -3,6 +3,7 @@
 //! These structures define the public inputs for Phase 1 per-event compliance proofs.
 //! They MUST match the canonical format used by the sequencer (RFC 8785 JCS canonicalization).
 
+use crate::commerce_intent::CommerceAuthorizationReceipt;
 use crate::field::{felt_from_u64, Felt, FeltArray8};
 use crate::hash::{hash_to_felts, u64_to_felt_pair, Hash256};
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,12 @@ pub enum PublicInputsError {
     /// JCS canonicalization failed
     #[error("JCS canonicalization failed: {0}")]
     Canonicalization(String),
+    /// Authorization receipt binding failed
+    #[error("Invalid authorization receipt binding: {0}")]
+    AuthorizationReceiptBinding(String),
+    /// Witness commitment binding failed
+    #[error("Invalid witness commitment binding: {0}")]
+    WitnessCommitmentBinding(String),
 }
 
 /// Policy parameters (JSON object)
@@ -53,6 +60,20 @@ impl PolicyParams {
         Self(serde_json::json!({ "cap": value }))
     }
 
+    /// Create from agent authorization parameters.
+    ///
+    /// The `intent_hash` is normalized to lowercase hex without a `0x` prefix.
+    pub fn agent_authorization(
+        max_total: u64,
+        intent_hash: &str,
+    ) -> Result<Self, PublicInputsError> {
+        let intent_hash = normalize_hex_input("intentHash", intent_hash, 64)?;
+        Ok(Self(serde_json::json!({
+            "intentHash": intent_hash,
+            "maxTotal": max_total
+        })))
+    }
+
     /// Get the threshold value if this is an aml.threshold policy
     pub fn get_threshold(&self) -> Option<u64> {
         self.0.get("threshold")?.as_u64()
@@ -61,6 +82,16 @@ impl PolicyParams {
     /// Get the cap value if this is an order_total.cap policy
     pub fn get_cap(&self) -> Option<u64> {
         self.0.get("cap")?.as_u64()
+    }
+
+    /// Get the maximum authorized total if this is an agent.authorization.v1 policy.
+    pub fn get_max_total(&self) -> Option<u64> {
+        self.0.get("maxTotal")?.as_u64()
+    }
+
+    /// Get the delegated commerce intent hash if this is an agent.authorization.v1 policy.
+    pub fn get_intent_hash(&self) -> Option<&str> {
+        self.0.get("intentHash")?.as_str()
     }
 
     /// Get the inner JSON value.
@@ -115,6 +146,13 @@ pub struct CompliancePublicInputs {
     /// to bind the proven witness to the canonical public inputs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub witness_commitment: Option<String>,
+
+    /// Optional authorization receipt hash (hex32, lowercase, no 0x).
+    ///
+    /// When present, canonical public-input hashes commit to a specific delegated execution
+    /// receipt for `agent.authorization.v1` flows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization_receipt_hash: Option<String>,
 }
 
 impl CompliancePublicInputs {
@@ -129,7 +167,8 @@ impl CompliancePublicInputs {
     /// Compute the sequencer-canonical hash of these public inputs.
     ///
     /// The canonical sequencer hash excludes `witnessCommitment`, which is submitted
-    /// out-of-band alongside the proof.
+    /// out-of-band alongside the proof. When present, `authorizationReceiptHash`
+    /// remains part of the canonical hash.
     pub fn compute_hash(&self) -> Result<Hash256, PublicInputsError> {
         compute_public_inputs_hash(self)
     }
@@ -138,6 +177,14 @@ impl CompliancePublicInputs {
     /// `witnessCommitment` when present.
     pub fn compute_full_hash(&self) -> Result<Hash256, PublicInputsError> {
         compute_full_public_inputs_hash(self)
+    }
+
+    /// Compute the hash of a witness-bound public-input object.
+    ///
+    /// Unlike `compute_hash()`, this requires `witnessCommitment` to be present and
+    /// includes it in the hashed object.
+    pub fn compute_bound_hash(&self) -> Result<Hash256, PublicInputsError> {
+        compute_bound_public_inputs_hash(self)
     }
 
     /// Convert to field elements for use in the AIR
@@ -159,6 +206,119 @@ impl CompliancePublicInputs {
             return Ok(None);
         };
         Ok(Some(witness_commitment_hex_to_u64(hex_str)?))
+    }
+
+    /// Validate that this public-input object is consistent with an authorization receipt.
+    pub fn validate_authorization_receipt(
+        &self,
+        receipt: &CommerceAuthorizationReceipt,
+    ) -> Result<(), PublicInputsError> {
+        let receipt = receipt
+            .normalized()
+            .map_err(|e| PublicInputsError::AuthorizationReceiptBinding(e.to_string()))?;
+        receipt
+            .validate()
+            .map_err(|e| PublicInputsError::AuthorizationReceiptBinding(e.to_string()))?;
+
+        if self.policy_id != "agent.authorization.v1" {
+            return Err(PublicInputsError::AuthorizationReceiptBinding(
+                "authorization receipts require agent.authorization.v1 policy".to_string(),
+            ));
+        }
+
+        let max_total = self.policy_params.get_max_total().ok_or_else(|| {
+            PublicInputsError::AuthorizationReceiptBinding(
+                "missing maxTotal in agent authorization policy params".to_string(),
+            )
+        })?;
+        let intent_hash = self.policy_params.get_intent_hash().ok_or_else(|| {
+            PublicInputsError::AuthorizationReceiptBinding(
+                "missing intentHash in agent authorization policy params".to_string(),
+            )
+        })?;
+        if receipt.intent_hash != intent_hash {
+            return Err(PublicInputsError::AuthorizationReceiptBinding(
+                "authorization receipt intent hash does not match policy params".to_string(),
+            ));
+        }
+        if receipt.amount > max_total {
+            return Err(PublicInputsError::AuthorizationReceiptBinding(format!(
+                "authorization receipt amount {} exceeds policy maxTotal {}",
+                receipt.amount, max_total
+            )));
+        }
+        if receipt.event_id != self.event_id {
+            return Err(PublicInputsError::AuthorizationReceiptBinding(
+                "authorization receipt event_id does not match public inputs".to_string(),
+            ));
+        }
+        if receipt.tenant_id != self.tenant_id {
+            return Err(PublicInputsError::AuthorizationReceiptBinding(
+                "authorization receipt tenant_id does not match public inputs".to_string(),
+            ));
+        }
+        if receipt.store_id != self.store_id {
+            return Err(PublicInputsError::AuthorizationReceiptBinding(
+                "authorization receipt store_id does not match public inputs".to_string(),
+            ));
+        }
+        if receipt.sequence_number != self.sequence_number {
+            return Err(PublicInputsError::AuthorizationReceiptBinding(
+                "authorization receipt sequence_number does not match public inputs".to_string(),
+            ));
+        }
+        if let Some(expected_commitment) = self.witness_commitment_u64()? {
+            let receipt_commitment = receipt.witness_commitment_u64();
+            if expected_commitment != receipt_commitment {
+                return Err(PublicInputsError::AuthorizationReceiptBinding(
+                    "authorization receipt amount does not match witnessCommitment".to_string(),
+                ));
+            }
+        }
+        if let Some(expected_receipt_hash) = self.authorization_receipt_hash.as_deref() {
+            validate_hex_string("authorizationReceiptHash", expected_receipt_hash, 64)?;
+            if expected_receipt_hash != receipt.receipt_hash {
+                return Err(PublicInputsError::AuthorizationReceiptBinding(
+                    "authorizationReceiptHash does not match authorization receipt".to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Return a copy of these public inputs bound to a witness commitment.
+    pub fn bind_witness_commitment(
+        &self,
+        witness_commitment: &[u64; 4],
+    ) -> Result<Self, PublicInputsError> {
+        let witness_commitment_hex = witness_commitment_u64_to_hex(witness_commitment);
+        if let Some(expected) = self.witness_commitment.as_deref() {
+            if expected != witness_commitment_hex {
+                return Err(PublicInputsError::WitnessCommitmentBinding(
+                    "witnessCommitment does not match the requested witness commitment".to_string(),
+                ));
+            }
+        }
+
+        let mut bound = self.clone();
+        bound.witness_commitment = Some(witness_commitment_hex);
+        Ok(bound)
+    }
+
+    /// Return a copy of these public inputs bound to a canonical authorization receipt.
+    pub fn bind_authorization_receipt(
+        &self,
+        receipt: &CommerceAuthorizationReceipt,
+    ) -> Result<Self, PublicInputsError> {
+        self.validate_authorization_receipt(receipt)?;
+
+        let mut bound = self.clone();
+        bound.witness_commitment = Some(witness_commitment_u64_to_hex(
+            &receipt.witness_commitment_u64(),
+        ));
+        bound.authorization_receipt_hash = Some(receipt.receipt_hash.clone());
+        Ok(bound)
     }
 }
 
@@ -202,6 +362,9 @@ impl CompliancePublicInputsFelts {
         validate_hex_string("policyHash", &inputs.policy_hash, 64)?;
         if let Some(commitment) = inputs.witness_commitment.as_deref() {
             validate_hex_string("witnessCommitment", commitment, 64)?;
+        }
+        if let Some(receipt_hash) = inputs.authorization_receipt_hash.as_deref() {
+            validate_hex_string("authorizationReceiptHash", receipt_hash, 64)?;
         }
 
         Ok(Self {
@@ -349,6 +512,52 @@ pub fn compute_full_public_inputs_hash(
     Ok(Hash256::sha256(canonical.as_bytes()))
 }
 
+/// Compute the hash of a witness-bound public-input object.
+///
+/// This requires `witnessCommitment` to be present and includes it in the hashed object.
+pub fn compute_bound_public_inputs_hash(
+    inputs: &CompliancePublicInputs,
+) -> Result<Hash256, PublicInputsError> {
+    if inputs.witness_commitment.is_none() {
+        return Err(PublicInputsError::WitnessCommitmentBinding(
+            "missing witnessCommitment".to_string(),
+        ));
+    }
+    compute_full_public_inputs_hash(inputs)
+}
+
+fn normalize_hex_input(
+    field: &'static str,
+    value: &str,
+    expected_len: usize,
+) -> Result<String, PublicInputsError> {
+    let normalized = value
+        .trim()
+        .strip_prefix("0x")
+        .or_else(|| value.trim().strip_prefix("0X"))
+        .unwrap_or(value.trim())
+        .to_ascii_lowercase();
+
+    if normalized.len() != expected_len {
+        return Err(PublicInputsError::InvalidHexFormat {
+            field,
+            reason: format!(
+                "expected {} characters, got {}",
+                expected_len,
+                normalized.len()
+            ),
+        });
+    }
+    if !normalized.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(PublicInputsError::InvalidHexFormat {
+            field,
+            reason: "must contain only hexadecimal characters".to_string(),
+        });
+    }
+
+    Ok(normalized)
+}
+
 fn validate_hex_string(
     field: &'static str,
     value: &str,
@@ -390,6 +599,61 @@ pub fn canonical_json(value: &serde_json::Value) -> Result<String, PublicInputsE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CommerceExecution, CommerceIntent};
+
+    fn sample_authorization_receipt() -> CommerceAuthorizationReceipt {
+        let intent = CommerceIntent {
+            intent_id: Uuid::parse_str("9f7f314e-80c3-45dc-af6d-11d6c1a68701").unwrap(),
+            tenant_id: Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap(),
+            store_id: Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap(),
+            agent_id: Uuid::parse_str("6ba7b811-9dad-11d1-80b4-00c04fd430c8").unwrap(),
+            delegation_id: Uuid::parse_str("d9428888-122b-11e1-b85c-61cd3cbb3210").unwrap(),
+            currency: "USD".to_string(),
+            max_total: 25_000,
+            merchant: Some("Acme Market".to_string()),
+            payee: Some("settlement@stateset.app".to_string()),
+            allowed_skus: vec!["sku-a".to_string()],
+            allowed_categories: vec!["grocery".to_string()],
+            shipping_country: Some("US".to_string()),
+            expires_at: 1_900_000_000,
+            nonce: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+        };
+        let execution = CommerceExecution {
+            event_id: Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap(),
+            sequence_number: 42,
+            currency: "USD".to_string(),
+            amount: 12_500,
+            merchant: "Acme Market".to_string(),
+            payee: "settlement@stateset.app".to_string(),
+            sku_ids: vec!["sku-a".to_string()],
+            category_ids: vec!["grocery".to_string()],
+            shipping_country: Some("US".to_string()),
+            executed_at: 1_800_000_000,
+        };
+        intent.authorize_execution(&execution).unwrap()
+    }
+
+    fn sample_authorization_inputs(
+        receipt: &CommerceAuthorizationReceipt,
+    ) -> CompliancePublicInputs {
+        let params = PolicyParams::agent_authorization(25_000, &receipt.intent_hash).unwrap();
+        let policy_hash = compute_policy_hash("agent.authorization.v1", &params).unwrap();
+        CompliancePublicInputs {
+            event_id: receipt.event_id,
+            tenant_id: receipt.tenant_id,
+            store_id: receipt.store_id,
+            sequence_number: receipt.sequence_number,
+            payload_kind: 7,
+            payload_plain_hash: "a".repeat(64),
+            payload_cipher_hash: "b".repeat(64),
+            event_signing_hash: "c".repeat(64),
+            policy_id: "agent.authorization.v1".to_string(),
+            policy_params: params,
+            policy_hash: policy_hash.to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+        }
+    }
 
     #[test]
     fn test_canonical_json_simple() {
@@ -429,6 +693,27 @@ mod tests {
     }
 
     #[test]
+    fn test_agent_authorization_params_normalize_intent_hash() {
+        let params = PolicyParams::agent_authorization(
+            25_000,
+            "0X0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+        )
+        .unwrap();
+
+        assert_eq!(params.get_max_total(), Some(25_000));
+        assert_eq!(
+            params.get_intent_hash(),
+            Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+        );
+    }
+
+    #[test]
+    fn test_agent_authorization_params_reject_invalid_intent_hash() {
+        let err = PolicyParams::agent_authorization(25_000, "xyz").unwrap_err();
+        assert!(matches!(err, PublicInputsError::InvalidHexFormat { .. }));
+    }
+
+    #[test]
     fn test_public_inputs_felts_roundtrip() {
         let inputs = CompliancePublicInputs {
             event_id: Uuid::new_v4(),
@@ -443,6 +728,7 @@ mod tests {
             policy_params: PolicyParams::threshold(10000),
             policy_hash: "d".repeat(64),
             witness_commitment: None,
+            authorization_receipt_hash: None,
         };
 
         let felts = inputs.to_field_elements().unwrap();
@@ -473,6 +759,7 @@ mod tests {
             policy_params: params,
             policy_hash: hash.to_hex(),
             witness_commitment: None,
+            authorization_receipt_hash: None,
         };
 
         assert!(inputs.validate_policy_hash().unwrap());
@@ -493,6 +780,7 @@ mod tests {
             policy_params: PolicyParams::threshold(10000),
             policy_hash: "d".repeat(64),
             witness_commitment: None,
+            authorization_receipt_hash: None,
         };
 
         let result = inputs.to_field_elements();
@@ -517,6 +805,7 @@ mod tests {
                 .unwrap()
                 .to_hex(),
             witness_commitment: None,
+            authorization_receipt_hash: None,
         };
         let mut inputs_with_commitment = inputs_without_commitment.clone();
         inputs_with_commitment.witness_commitment = Some(witness_commitment);
@@ -549,6 +838,7 @@ mod tests {
             policy_params: PolicyParams::threshold(10000),
             policy_hash: "0".repeat(64),
             witness_commitment: Some(commitment_hex),
+            authorization_receipt_hash: None,
         };
 
         let recovered = inputs.witness_commitment_u64().unwrap().unwrap();
@@ -570,6 +860,7 @@ mod tests {
             policy_params: PolicyParams::threshold(10000),
             policy_hash: "0".repeat(64),
             witness_commitment: Some("A".repeat(64)),
+            authorization_receipt_hash: None,
         };
 
         let err = inputs.witness_commitment_u64().unwrap_err();
@@ -579,6 +870,121 @@ mod tests {
                 field: "witnessCommitment",
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn test_compute_bound_hash_requires_witness_commitment() {
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "0".repeat(64),
+            event_signing_hash: "0".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10_000),
+            policy_hash: compute_policy_hash("aml.threshold", &PolicyParams::threshold(10_000))
+                .unwrap()
+                .to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+        };
+
+        let err = inputs.compute_bound_hash().unwrap_err();
+        assert!(matches!(
+            err,
+            PublicInputsError::WitnessCommitmentBinding(_)
+        ));
+    }
+
+    #[test]
+    fn test_bind_witness_commitment_sets_bound_hash() {
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "1".repeat(64),
+            event_signing_hash: "2".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10_000),
+            policy_hash: compute_policy_hash("aml.threshold", &PolicyParams::threshold(10_000))
+                .unwrap()
+                .to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+        };
+
+        let bound = inputs.bind_witness_commitment(&[1, 2, 3, 4]).unwrap();
+        assert_eq!(
+            bound.witness_commitment,
+            Some(witness_commitment_u64_to_hex(&[1, 2, 3, 4]))
+        );
+        assert_eq!(
+            inputs.compute_hash().unwrap(),
+            bound.compute_hash().unwrap()
+        );
+        assert_ne!(
+            inputs.compute_full_hash().unwrap(),
+            bound.compute_full_hash().unwrap()
+        );
+        assert_eq!(
+            bound.compute_bound_hash().unwrap(),
+            bound.compute_full_hash().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_bind_authorization_receipt_sets_witness_commitment_and_hash() {
+        let receipt = sample_authorization_receipt();
+        let inputs = sample_authorization_inputs(&receipt);
+
+        let bound = inputs.bind_authorization_receipt(&receipt).unwrap();
+
+        assert_eq!(
+            bound.witness_commitment,
+            Some(witness_commitment_u64_to_hex(
+                &receipt.witness_commitment_u64()
+            ))
+        );
+        assert_eq!(
+            bound.authorization_receipt_hash,
+            Some(receipt.receipt_hash.clone())
+        );
+        assert_ne!(
+            inputs.compute_hash().unwrap(),
+            bound.compute_hash().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_validate_authorization_receipt_rejects_context_mismatch() {
+        let receipt = sample_authorization_receipt();
+        let mut inputs = sample_authorization_inputs(&receipt);
+        inputs.event_id = Uuid::new_v4();
+
+        let err = inputs.validate_authorization_receipt(&receipt).unwrap_err();
+        assert!(matches!(
+            err,
+            PublicInputsError::AuthorizationReceiptBinding(_)
+        ));
+    }
+
+    #[test]
+    fn test_validate_authorization_receipt_rejects_mismatched_receipt_hash_binding() {
+        let receipt = sample_authorization_receipt();
+        let mut inputs = sample_authorization_inputs(&receipt);
+        inputs.authorization_receipt_hash = Some("0".repeat(64));
+
+        let err = inputs.validate_authorization_receipt(&receipt).unwrap_err();
+        assert!(matches!(
+            err,
+            PublicInputsError::AuthorizationReceiptBinding(_)
         ));
     }
 }

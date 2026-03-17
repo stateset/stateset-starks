@@ -46,6 +46,9 @@ pub enum ClientError {
     #[error("Proof generation failed: {0}")]
     ProofGeneration(String),
 
+    #[error("Invalid proof bundle: {0}")]
+    InvalidProofBundle(String),
+
     #[error("Base64 decode error: {0}")]
     Base64(#[from] base64::DecodeError),
 

@@ -26,6 +26,9 @@ pub enum PolicyError {
     /// AML thresholds must be greater than zero for strict comparison
     #[error("AML threshold must be greater than zero")]
     InvalidThreshold,
+    /// Intent hashes must be 32-byte hex strings
+    #[error("Invalid intent hash: {0}")]
+    InvalidIntentHash(String),
     /// Unsupported policy identifier
     #[error("Unsupported policy id: {0}")]
     UnsupportedPolicyId(String),
@@ -42,6 +45,8 @@ pub enum Policy {
     AmlThreshold { threshold: u64 },
     /// Order total cap policy (amount <= cap)
     OrderTotalCap { cap: u64 },
+    /// Agent authorization policy (amount <= max_total, bound to an intent hash)
+    AgentAuthorization { max_total: u64, intent_hash: String },
 }
 
 impl Policy {
@@ -55,11 +60,23 @@ impl Policy {
         Policy::OrderTotalCap { cap }
     }
 
+    /// Create an agent authorization policy.
+    pub fn agent_authorization(
+        max_total: u64,
+        intent_hash: impl Into<String>,
+    ) -> Result<Self, PolicyError> {
+        Ok(Policy::AgentAuthorization {
+            max_total,
+            intent_hash: normalize_intent_hash(&intent_hash.into())?,
+        })
+    }
+
     /// Get the policy identifier
     pub fn policy_id(&self) -> &'static str {
         match self {
             Policy::AmlThreshold { .. } => policy_ids::AML_THRESHOLD,
             Policy::OrderTotalCap { .. } => policy_ids::ORDER_TOTAL_CAP,
+            Policy::AgentAuthorization { .. } => policy_ids::AGENT_AUTHORIZATION_V1,
         }
     }
 
@@ -68,6 +85,15 @@ impl Policy {
         match self {
             Policy::AmlThreshold { threshold } => *threshold,
             Policy::OrderTotalCap { cap } => *cap,
+            Policy::AgentAuthorization { max_total, .. } => *max_total,
+        }
+    }
+
+    /// Get the committed intent hash when present.
+    pub fn intent_hash(&self) -> Option<&str> {
+        match self {
+            Policy::AgentAuthorization { intent_hash, .. } => Some(intent_hash),
+            _ => None,
         }
     }
 
@@ -83,6 +109,7 @@ impl Policy {
                 Ok(threshold - 1)
             }
             Policy::OrderTotalCap { cap } => Ok(*cap),
+            Policy::AgentAuthorization { max_total, .. } => Ok(*max_total),
         }
     }
 
@@ -91,6 +118,7 @@ impl Policy {
         match self {
             Policy::AmlThreshold { .. } => ComparisonType::LessThan,
             Policy::OrderTotalCap { .. } => ComparisonType::LessThanOrEqual,
+            Policy::AgentAuthorization { .. } => ComparisonType::LessThanOrEqual,
         }
     }
 
@@ -99,6 +127,7 @@ impl Policy {
         match self {
             Policy::AmlThreshold { threshold } => amount < *threshold,
             Policy::OrderTotalCap { cap } => amount <= *cap,
+            Policy::AgentAuthorization { max_total, .. } => amount <= *max_total,
         }
     }
 
@@ -119,6 +148,15 @@ impl Policy {
                     .get_cap()
                     .ok_or(PolicyError::MissingPolicyParam("cap"))?;
                 Ok(Policy::OrderTotalCap { cap })
+            }
+            policy_ids::AGENT_AUTHORIZATION_V1 => {
+                let max_total = policy_params
+                    .get_max_total()
+                    .ok_or(PolicyError::MissingPolicyParam("maxTotal"))?;
+                let intent_hash = policy_params
+                    .get_intent_hash()
+                    .ok_or(PolicyError::MissingPolicyParam("intentHash"))?;
+                Policy::agent_authorization(max_total, intent_hash)
             }
             _ => Err(PolicyError::UnsupportedPolicyId(policy_id.to_string())),
         }
@@ -157,6 +195,28 @@ impl Policy {
             _ => None,
         }
     }
+}
+
+fn normalize_intent_hash(intent_hash: &str) -> Result<String, PolicyError> {
+    let normalized = intent_hash
+        .trim()
+        .strip_prefix("0x")
+        .or_else(|| intent_hash.trim().strip_prefix("0X"))
+        .unwrap_or(intent_hash.trim())
+        .to_ascii_lowercase();
+
+    if normalized.len() != 64 {
+        return Err(PolicyError::InvalidIntentHash(
+            "must be exactly 32 bytes of hex".to_string(),
+        ));
+    }
+    if !normalized.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(PolicyError::InvalidIntentHash(
+            "must contain only hexadecimal characters".to_string(),
+        ));
+    }
+
+    Ok(normalized)
 }
 
 impl From<AmlThresholdPolicy> for Policy {
@@ -205,6 +265,27 @@ mod tests {
     }
 
     #[test]
+    fn test_agent_authorization_policy() {
+        let policy = Policy::agent_authorization(
+            10000,
+            "0X0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+        )
+        .unwrap();
+
+        assert_eq!(policy.policy_id(), "agent.authorization.v1");
+        assert_eq!(policy.limit(), 10000);
+        assert_eq!(policy.comparison_type(), ComparisonType::LessThanOrEqual);
+        assert_eq!(
+            policy.intent_hash(),
+            Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+        );
+
+        assert!(policy.validate_amount(5000));
+        assert!(policy.validate_amount(10000));
+        assert!(!policy.validate_amount(10001));
+    }
+
+    #[test]
     fn test_effective_limit() {
         let policy = Policy::aml_threshold(10);
         assert_eq!(policy.effective_limit().unwrap(), 9);
@@ -229,5 +310,26 @@ mod tests {
         for limb in limbs.iter().skip(2) {
             assert_eq!(limb.as_int(), 0);
         }
+    }
+
+    #[test]
+    fn test_from_public_inputs_supports_agent_authorization() {
+        let params = PolicyParams::agent_authorization(
+            10_000,
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
+        .unwrap();
+        let policy = Policy::from_public_inputs("agent.authorization.v1", &params).unwrap();
+
+        assert_eq!(policy.limit(), 10_000);
+        assert_eq!(
+            policy.intent_hash(),
+            Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+        );
+    }
+
+    #[test]
+    fn test_agent_authorization_rejects_invalid_intent_hash() {
+        assert!(Policy::agent_authorization(10_000, "xyz").is_err());
     }
 }

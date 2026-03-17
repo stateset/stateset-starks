@@ -99,6 +99,20 @@ impl SerializableBatchProof {
 
     /// Create a new serializable batch proof
     pub fn new(proof: BatchProof, public_inputs: BatchPublicInputs) -> Result<Self, BatchError> {
+        let expected_batch_id = batch_id_to_uuid_string(
+            public_inputs.batch_id.map(|lane| lane.as_int()),
+        )
+        .map_err(|err| match err {
+            BatchError::DeserializationFailed(message) => BatchError::SerializationFailed(message),
+            other => other,
+        })?;
+        validate_proof_consistency_with_error(
+            &proof,
+            &public_inputs,
+            &expected_batch_id,
+            BatchError::SerializationFailed,
+        )?;
+
         Ok(Self {
             version: Self::VERSION,
             proof,
@@ -108,7 +122,7 @@ impl SerializableBatchProof {
 
     /// Serialize to JSON
     pub fn to_json(&self) -> Result<String, BatchError> {
-        self.public_inputs.validate_for_serialization()?;
+        self.validate_for_serialization()?;
         serde_json::to_string_pretty(self)
             .map_err(|e| BatchError::SerializationFailed(format!("JSON error: {}", e)))
     }
@@ -117,13 +131,13 @@ impl SerializableBatchProof {
     pub fn from_json(json: &str) -> Result<Self, BatchError> {
         let proof: Self = serde_json::from_str(json)
             .map_err(|e| BatchError::DeserializationFailed(format!("JSON error: {}", e)))?;
-        proof.public_inputs.validate_for_deserialization()?;
+        proof.validate_for_deserialization()?;
         Ok(proof)
     }
 
     /// Serialize to compact binary format
     pub fn to_bytes(&self) -> Result<Vec<u8>, BatchError> {
-        self.public_inputs.validate_for_serialization()?;
+        self.validate_for_serialization()?;
         let mut bytes = Vec::new();
 
         // Version byte
@@ -436,6 +450,13 @@ impl SerializableBatchProof {
             metadata,
         };
 
+        validate_proof_consistency_with_error(
+            &proof,
+            &validated_public_inputs,
+            &batch_id_uuid,
+            BatchError::DeserializationFailed,
+        )?;
+
         Ok(Self {
             version,
             proof,
@@ -446,6 +467,39 @@ impl SerializableBatchProof {
     /// Convert public inputs back to BatchPublicInputs
     pub fn to_batch_public_inputs(&self) -> Result<BatchPublicInputs, BatchError> {
         self.public_inputs.clone().try_into()
+    }
+
+    fn validate_for_deserialization(&self) -> Result<(), BatchError> {
+        let public_inputs = self.to_batch_public_inputs()?;
+        let expected_batch_id = batch_id_to_uuid_string(self.public_inputs.batch_id)?;
+        validate_proof_consistency_with_error(
+            &self.proof,
+            &public_inputs,
+            &expected_batch_id,
+            BatchError::DeserializationFailed,
+        )
+    }
+
+    fn validate_for_serialization(&self) -> Result<(), BatchError> {
+        let public_inputs = self.to_batch_public_inputs().map_err(|err| match err {
+            BatchError::DeserializationFailed(message) => {
+                BatchError::SerializationFailed(format!("invalid public inputs: {message}"))
+            }
+            other => other,
+        })?;
+        let expected_batch_id =
+            batch_id_to_uuid_string(self.public_inputs.batch_id).map_err(|err| match err {
+                BatchError::DeserializationFailed(message) => {
+                    BatchError::SerializationFailed(message)
+                }
+                other => other,
+            })?;
+        validate_proof_consistency_with_error(
+            &self.proof,
+            &public_inputs,
+            &expected_batch_id,
+            BatchError::SerializationFailed,
+        )
     }
 }
 
@@ -524,6 +578,60 @@ fn batch_id_to_uuid_string(batch_id: [u64; 4]) -> Result<String, BatchError> {
     Ok(Uuid::from_bytes(batch_id_bytes).to_string())
 }
 
+fn validate_proof_consistency_with_error<F>(
+    proof: &BatchProof,
+    public_inputs: &BatchPublicInputs,
+    expected_batch_id: &str,
+    error: F,
+) -> Result<(), BatchError>
+where
+    F: Fn(String) -> BatchError,
+{
+    let expected_proof_hash = BatchProof::compute_hash(&proof.proof_bytes).to_hex();
+    if proof.proof_hash != expected_proof_hash {
+        return Err(error(
+            "proof_hash does not match the serialized proof bytes".to_string(),
+        ));
+    }
+
+    let expected_prev_state_root = public_inputs.prev_state_root.map(|lane| lane.as_int());
+    if proof.prev_state_root != expected_prev_state_root {
+        return Err(error(
+            "proof prev_state_root does not match public inputs".to_string(),
+        ));
+    }
+
+    let expected_new_state_root = public_inputs.new_state_root.map(|lane| lane.as_int());
+    if proof.new_state_root != expected_new_state_root {
+        return Err(error(
+            "proof new_state_root does not match public inputs".to_string(),
+        ));
+    }
+
+    if proof.metadata.batch_id != expected_batch_id {
+        return Err(error(
+            "metadata batch_id does not match public inputs".to_string(),
+        ));
+    }
+    if proof.metadata.num_events != public_inputs.num_events_usize() {
+        return Err(error(
+            "metadata num_events does not match public inputs".to_string(),
+        ));
+    }
+    if proof.metadata.all_compliant != public_inputs.is_all_compliant() {
+        return Err(error(
+            "metadata all_compliant does not match public inputs".to_string(),
+        ));
+    }
+    if proof.metadata.proof_size != proof.proof_bytes.len() {
+        return Err(error(
+            "metadata proof_size does not match proof byte length".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
 impl TryFrom<SerializableBatchPublicInputs> for BatchPublicInputs {
     type Error = BatchError;
 
@@ -562,23 +670,6 @@ impl TryFrom<SerializableBatchPublicInputs> for BatchPublicInputs {
         }
 
         Ok(public_inputs)
-    }
-}
-
-impl SerializableBatchPublicInputs {
-    fn validate_for_deserialization(&self) -> Result<(), BatchError> {
-        let _ = BatchPublicInputs::try_from(self.clone())?;
-        Ok(())
-    }
-
-    fn validate_for_serialization(&self) -> Result<(), BatchError> {
-        self.validate_for_deserialization()
-            .map_err(|err| match err {
-                BatchError::DeserializationFailed(message) => {
-                    BatchError::SerializationFailed(format!("invalid public inputs: {message}"))
-                }
-                other => other,
-            })
     }
 }
 
@@ -737,18 +828,16 @@ mod tests {
     #[test]
     fn test_binary_deserialization_rejects_invalid_batch_id_limb() {
         let proof = sample_proof();
-        let mut inputs = sample_public_inputs();
-        inputs.batch_id = [
-            felt_from_u64(u32::MAX as u64 + 1),
-            felt_from_u64(22),
-            felt_from_u64(33),
-            felt_from_u64(44),
-        ];
-
-        let bytes = SerializableBatchProof::new(proof, inputs)
+        let proof_len = proof.proof_bytes.len();
+        let inputs = sample_public_inputs();
+        let mut bytes = SerializableBatchProof::new(proof, inputs)
             .unwrap()
             .to_bytes()
             .unwrap();
+        let batch_id_offset = 1 + 4 + proof_len + 32 + 32;
+        bytes[batch_id_offset..batch_id_offset + 8]
+            .copy_from_slice(&(u32::MAX as u64 + 1).to_le_bytes());
+
         assert!(matches!(
             SerializableBatchProof::from_bytes(&bytes),
             Err(BatchError::DeserializationFailed(_))
@@ -850,6 +939,18 @@ mod tests {
     }
 
     #[test]
+    fn test_serializable_proof_new_rejects_inconsistent_proof_metadata() {
+        let mut proof = sample_proof();
+        proof.metadata.num_events += 1;
+        let inputs = sample_public_inputs();
+
+        assert!(matches!(
+            SerializableBatchProof::new(proof, inputs),
+            Err(BatchError::SerializationFailed(_))
+        ));
+    }
+
+    #[test]
     fn test_json_deserialization_rejects_invalid_policy_kind() {
         let proof = sample_proof();
         let inputs = sample_public_inputs();
@@ -864,15 +965,56 @@ mod tests {
     }
 
     #[test]
+    fn test_json_deserialization_rejects_mismatched_proof_hash() {
+        let proof = sample_proof();
+        let inputs = sample_public_inputs();
+        let mut serializable = SerializableBatchProof::new(proof, inputs).unwrap();
+        serializable.proof.proof_hash = "deadbeef".to_string();
+
+        let json = serde_json::to_string(&serializable).unwrap();
+        assert!(matches!(
+            SerializableBatchProof::from_json(&json),
+            Err(BatchError::DeserializationFailed(_))
+        ));
+    }
+
+    #[test]
+    fn test_json_serialization_rejects_tampered_proof_hash() {
+        let proof = sample_proof();
+        let inputs = sample_public_inputs();
+        let mut serializable = SerializableBatchProof::new(proof, inputs).unwrap();
+        serializable.proof.proof_hash = "deadbeef".to_string();
+
+        assert!(matches!(
+            serializable.to_json(),
+            Err(BatchError::SerializationFailed(_))
+        ));
+    }
+
+    #[test]
+    fn test_binary_serialization_rejects_tampered_state_root() {
+        let proof = sample_proof();
+        let inputs = sample_public_inputs();
+        let mut serializable = SerializableBatchProof::new(proof, inputs).unwrap();
+        serializable.proof.new_state_root[0] ^= 1;
+
+        assert!(matches!(
+            serializable.to_bytes(),
+            Err(BatchError::SerializationFailed(_))
+        ));
+    }
+
+    #[test]
     fn test_json_serialization_stringifies_u64_fields() {
         let large_field_value = 9_007_199_254_740_993u64;
         let mut proof = sample_proof();
-        proof.prev_state_root = [u64::MAX, 2, 3, 4];
-        proof.new_state_root = [5, 6, 7, u64::MAX];
+        proof.prev_state_root = [large_field_value, 2, 3, 4];
+        proof.new_state_root = [5, 6, 7, large_field_value];
         proof.metadata.proving_time_ms = u64::MAX;
 
         let mut inputs = sample_public_inputs();
-        inputs.prev_state_root = [large_field_value, 2, 3, 4].map(felt_from_u64);
+        inputs.prev_state_root = proof.prev_state_root.map(felt_from_u64);
+        inputs.new_state_root = proof.new_state_root.map(felt_from_u64);
         inputs.public_inputs_accumulator = [large_field_value; 8].map(felt_from_u64);
 
         let serializable = SerializableBatchProof::new(proof, inputs).unwrap();
@@ -880,8 +1022,8 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
         assert_eq!(
-            value["proof"]["prev_state_root"][0],
-            serde_json::json!(u64::MAX.to_string())
+            value["proof"]["new_state_root"][3],
+            serde_json::json!(large_field_value.to_string())
         );
         assert_eq!(
             value["proof"]["metadata"]["proving_time_ms"],

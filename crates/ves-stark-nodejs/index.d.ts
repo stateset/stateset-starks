@@ -29,6 +29,8 @@ export interface JsCompliancePublicInputs {
   policyHash: string
   /** Optional witness commitment (hex64, lowercase) to bind the proved witness to canonical inputs. */
   witnessCommitment?: string
+  /** Optional authorization receipt hash (hex64, lowercase) committed into canonical public inputs. */
+  authorizationReceiptHash?: string
 }
 /** Result of proof generation */
 export interface JsComplianceProof {
@@ -61,10 +63,10 @@ export interface JsVerificationResult {
 /**
  * Generate a STARK compliance proof for the provided amount witness.
  *
- * @param amount - The amount to prove compliance for (must be less than policy limit)
+ * @param amount - The amount to prove compliance for (must satisfy the policy constraint)
  * @param publicInputs - Public inputs including event metadata and policy info
- * @param policyType - Policy type: "aml.threshold" or "order_total.cap"
- * @param policyLimit - The policy limit (threshold or cap value)
+ * @param policyType - Policy type: "aml.threshold", "order_total.cap", or "agent.authorization.v1"
+ * @param policyLimit - The policy limit (threshold, cap, or maxTotal value)
  * @returns ComplianceProof containing proof bytes and metadata
  *
  * Note: this proves a statement about the supplied `amount` witness. Binding that
@@ -92,6 +94,10 @@ export declare function verify(proofBytes: Buffer, publicInputs: JsCompliancePub
  * mismatches are reported as thrown errors rather than `valid = false`.
  */
 export declare function verifyHex(proofBytes: Buffer, publicInputs: JsCompliancePublicInputs, witnessCommitmentHex: string): JsVerificationResult
+/** Verify an `agent.authorization.v1` proof against a canonical authorization receipt. */
+export declare function verifyAgentAuthorization(proofBytes: Buffer, publicInputs: JsCompliancePublicInputs, witnessCommitment: Array<string>, receipt: any): JsVerificationResult
+/** Verify an `agent.authorization.v1` proof using the witness commitment hex string. */
+export declare function verifyAgentAuthorizationHex(proofBytes: Buffer, publicInputs: JsCompliancePublicInputs, witnessCommitmentHex: string, receipt: any): JsVerificationResult
 /**
  * Compute the policy hash for given policy ID and parameters
  *
@@ -114,3 +120,11 @@ export declare function createAmlThresholdParams(threshold: bigint): any
  * @returns Policy parameters JSON object
  */
 export declare function createOrderTotalCapParams(cap: bigint): any
+/**
+ * Create policy parameters for agent authorization policy.
+ *
+ * @param maxTotal - The maximum delegated total
+ * @param intentHash - The delegated commerce intent hash (hex64, lowercase recommended)
+ * @returns Policy parameters JSON object
+ */
+export declare function createAgentAuthorizationParams(maxTotal: bigint, intentHash: string): any

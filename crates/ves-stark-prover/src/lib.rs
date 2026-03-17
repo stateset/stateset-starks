@@ -11,6 +11,8 @@
 //! The prover supports multiple policy types:
 //! - `aml.threshold`: Proves amount < threshold (strict less-than)
 //! - `order_total.cap`: Proves amount <= cap (less-than-or-equal)
+//! - `agent.authorization.v1`: Proves amount <= maxTotal while committing an
+//!   intentHash through the policy hash
 //!
 //! # Usage
 //!

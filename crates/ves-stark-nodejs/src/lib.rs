@@ -8,9 +8,14 @@ use napi_derive::napi;
 use uuid::Uuid;
 
 use ves_stark_air::Policy;
-use ves_stark_primitives::{witness_commitment_hex_to_u64, CompliancePublicInputs, PolicyParams};
+use ves_stark_primitives::{
+    witness_commitment_hex_to_u64, CommerceAuthorizationReceipt, CompliancePublicInputs,
+    PolicyParams,
+};
 use ves_stark_prover::{ComplianceProver, ComplianceWitness};
-use ves_stark_verifier::{verify_compliance_proof_auto, VerifierError};
+use ves_stark_verifier::{
+    verify_agent_authorization_proof_auto_bound, verify_compliance_proof_auto_bound, VerifierError,
+};
 
 fn bigint_to_u64(value: &BigInt, field_name: &str) -> Result<u64> {
     let (sign_bit, value, lossless) = value.get_u64();
@@ -74,6 +79,30 @@ fn verifier_error_to_napi(err: VerifierError) -> Error {
     Error::new(status, format!("Verification error: {}", err))
 }
 
+fn bind_public_inputs_to_commitment(
+    mut public_inputs: CompliancePublicInputs,
+    witness_commitment: &[u64; 4],
+) -> Result<CompliancePublicInputs> {
+    public_inputs = public_inputs
+        .bind_witness_commitment(witness_commitment)
+        .map_err(|e| {
+            Error::new(
+                Status::InvalidArg,
+                format!("Failed to bind witness commitment to public inputs: {}", e),
+            )
+        })?;
+    Ok(public_inputs)
+}
+
+fn parse_authorization_receipt(receipt: serde_json::Value) -> Result<CommerceAuthorizationReceipt> {
+    serde_json::from_value(receipt).map_err(|e| {
+        Error::new(
+            Status::InvalidArg,
+            format!("Invalid authorization receipt object: {}", e),
+        )
+    })
+}
+
 /// Public inputs for compliance proof generation/verification
 #[napi(object)]
 pub struct JsCompliancePublicInputs {
@@ -101,6 +130,8 @@ pub struct JsCompliancePublicInputs {
     pub policy_hash: String,
     /// Optional witness commitment (hex64, lowercase) to bind the proved witness to canonical inputs.
     pub witness_commitment: Option<String>,
+    /// Optional authorization receipt hash (hex64, lowercase) committed into canonical public inputs.
+    pub authorization_receipt_hash: Option<String>,
 }
 
 /// Result of proof generation
@@ -157,15 +188,16 @@ fn convert_public_inputs(js: &JsCompliancePublicInputs) -> Result<CompliancePubl
         policy_params: PolicyParams(js.policy_params.clone()),
         policy_hash: js.policy_hash.clone(),
         witness_commitment: js.witness_commitment.clone(),
+        authorization_receipt_hash: js.authorization_receipt_hash.clone(),
     })
 }
 
 /// Generate a STARK compliance proof for the provided amount witness.
 ///
-/// @param amount - The amount to prove compliance for (must be less than policy limit)
+/// @param amount - The amount to prove compliance for (must satisfy the policy constraint)
 /// @param publicInputs - Public inputs including event metadata and policy info
-/// @param policyType - Policy type: "aml.threshold" or "order_total.cap"
-/// @param policyLimit - The policy limit (threshold or cap value)
+/// @param policyType - Policy type: "aml.threshold", "order_total.cap", or "agent.authorization.v1"
+/// @param policyLimit - The policy limit (threshold, cap, or maxTotal value)
 /// @returns ComplianceProof containing proof bytes and metadata
 ///
 /// Note: this proves a statement about the supplied `amount` witness. Binding that
@@ -181,23 +213,48 @@ pub fn prove(
     let amount = bigint_to_u64(&amount, "amount")?;
     let policy_limit = bigint_to_u64(&policy_limit, "policy_limit")?;
 
-    // Create policy based on type
-    let policy = match policy_type.as_str() {
-        "aml.threshold" => Policy::aml_threshold(policy_limit),
-        "order_total.cap" => Policy::order_total_cap(policy_limit),
-        _ => {
-            return Err(Error::new(
-                Status::InvalidArg,
-                format!(
-                    "Unknown policy type: {}. Supported: aml.threshold, order_total.cap",
-                    policy_type
-                ),
-            ))
-        }
-    };
-
     // Convert public inputs
     let rust_inputs = convert_public_inputs(&public_inputs)?;
+    if rust_inputs.policy_id != policy_type {
+        return Err(Error::new(
+            Status::InvalidArg,
+            format!(
+                "policyType {} does not match publicInputs.policyId {}",
+                policy_type, rust_inputs.policy_id
+            ),
+        ));
+    }
+
+    let policy = Policy::from_public_inputs(&rust_inputs.policy_id, &rust_inputs.policy_params)
+        .map_err(|e| {
+            Error::new(
+                Status::InvalidArg,
+                format!("Invalid policy parameters for {}: {}", policy_type, e),
+            )
+        })?;
+    if policy.limit() != policy_limit {
+        return Err(Error::new(
+            Status::InvalidArg,
+            format!(
+                "policyLimit {} does not match publicInputs policy limit {}",
+                policy_limit,
+                policy.limit()
+            ),
+        ));
+    }
+    if !policy.validate_amount(amount) {
+        return Err(Error::new(
+            Status::InvalidArg,
+            format!(
+                "amount must be {} policy limit for {}",
+                match policy_type.as_str() {
+                    "aml.threshold" => "<",
+                    _ => "<=",
+                },
+                policy_type
+            ),
+        ));
+    }
 
     // Create witness
     let witness = ComplianceWitness::new(amount, rust_inputs);
@@ -252,9 +309,10 @@ pub fn verify(
     let rust_inputs = convert_public_inputs(&public_inputs)?;
 
     let commitment = parse_witness_commitment(witness_commitment)?;
+    let rust_inputs = bind_public_inputs_to_commitment(rust_inputs, &commitment)?;
 
     // Verify proof
-    let result = verify_compliance_proof_auto(&proof_bytes, &rust_inputs, &commitment);
+    let result = verify_compliance_proof_auto_bound(&proof_bytes, &rust_inputs);
 
     match result {
         Ok(verification) => Ok(JsVerificationResult {
@@ -288,9 +346,69 @@ pub fn verify_hex(
             format!("Invalid witnessCommitmentHex: {}", e),
         )
     })?;
+    let rust_inputs = bind_public_inputs_to_commitment(rust_inputs, &commitment)?;
 
     // Verify proof
-    let result = verify_compliance_proof_auto(&proof_bytes, &rust_inputs, &commitment);
+    let result = verify_compliance_proof_auto_bound(&proof_bytes, &rust_inputs);
+
+    match result {
+        Ok(verification) => Ok(JsVerificationResult {
+            valid: verification.valid,
+            verification_time_ms: verification.verification_time_ms as i64,
+            error: verification.error,
+            policy_id: verification.policy_id,
+            policy_limit: BigInt::from(verification.policy_limit),
+        }),
+        Err(e) => Err(verifier_error_to_napi(e)),
+    }
+}
+
+/// Verify an `agent.authorization.v1` proof against a canonical authorization receipt.
+#[napi]
+pub fn verify_agent_authorization(
+    proof_bytes: Buffer,
+    public_inputs: JsCompliancePublicInputs,
+    witness_commitment: Vec<String>,
+    receipt: serde_json::Value,
+) -> Result<JsVerificationResult> {
+    let rust_inputs = convert_public_inputs(&public_inputs)?;
+    let commitment = parse_witness_commitment(witness_commitment)?;
+    let rust_inputs = bind_public_inputs_to_commitment(rust_inputs, &commitment)?;
+    let receipt = parse_authorization_receipt(receipt)?;
+
+    let result = verify_agent_authorization_proof_auto_bound(&proof_bytes, &rust_inputs, &receipt);
+
+    match result {
+        Ok(verification) => Ok(JsVerificationResult {
+            valid: verification.valid,
+            verification_time_ms: verification.verification_time_ms as i64,
+            error: verification.error,
+            policy_id: verification.policy_id,
+            policy_limit: BigInt::from(verification.policy_limit),
+        }),
+        Err(e) => Err(verifier_error_to_napi(e)),
+    }
+}
+
+/// Verify an `agent.authorization.v1` proof using the witness commitment hex string.
+#[napi]
+pub fn verify_agent_authorization_hex(
+    proof_bytes: Buffer,
+    public_inputs: JsCompliancePublicInputs,
+    witness_commitment_hex: String,
+    receipt: serde_json::Value,
+) -> Result<JsVerificationResult> {
+    let rust_inputs = convert_public_inputs(&public_inputs)?;
+    let commitment = witness_commitment_hex_to_u64(&witness_commitment_hex).map_err(|e| {
+        Error::new(
+            Status::InvalidArg,
+            format!("Invalid witnessCommitmentHex: {}", e),
+        )
+    })?;
+    let rust_inputs = bind_public_inputs_to_commitment(rust_inputs, &commitment)?;
+    let receipt = parse_authorization_receipt(receipt)?;
+
+    let result = verify_agent_authorization_proof_auto_bound(&proof_bytes, &rust_inputs, &receipt);
 
     match result {
         Ok(verification) => Ok(JsVerificationResult {
@@ -339,4 +457,24 @@ pub fn create_aml_threshold_params(threshold: BigInt) -> Result<serde_json::Valu
 pub fn create_order_total_cap_params(cap: BigInt) -> Result<serde_json::Value> {
     let cap = bigint_to_u64(&cap, "cap")?;
     Ok(serde_json::json!({ "cap": cap }))
+}
+
+/// Create policy parameters for agent authorization policy.
+///
+/// @param maxTotal - The maximum delegated total
+/// @param intentHash - The delegated commerce intent hash (hex64, lowercase recommended)
+/// @returns Policy parameters JSON object
+#[napi]
+pub fn create_agent_authorization_params(
+    max_total: BigInt,
+    intent_hash: String,
+) -> Result<serde_json::Value> {
+    let max_total = bigint_to_u64(&max_total, "max_total")?;
+    let params = PolicyParams::agent_authorization(max_total, &intent_hash).map_err(|e| {
+        Error::new(
+            Status::InvalidArg,
+            format!("Invalid agent authorization params: {}", e),
+        )
+    })?;
+    Ok(params.to_json_value())
 }

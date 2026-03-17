@@ -15,6 +15,10 @@
 //! - `ves-stark-air`: AIR constraint definitions
 //! - `ves-stark-prover`: Proof generation
 //! - `ves-stark-verifier`: Proof verification
+//! - `ves-stark-client`: Sequencer and Set Chain client helpers
+//!
+//! The primitives crate also includes canonical commerce intent and
+//! authorization receipt hashing for agentic commerce flows.
 //!
 //! # Example
 //!

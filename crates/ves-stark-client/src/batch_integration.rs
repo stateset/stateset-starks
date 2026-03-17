@@ -8,6 +8,25 @@ use uuid::Uuid;
 use crate::error::{ClientError, Result};
 use crate::set_chain::{BatchProofResponse, BatchProofSubmission, SetChainClient};
 
+fn validate_batch_proof_for_client(proof: &ves_stark_batch::prover::BatchProof) -> Result<Uuid> {
+    let batch_id = parse_batch_id_from_metadata(&proof.metadata.batch_id)?;
+
+    let expected_proof_hash = ves_stark_batch::prover::BatchProof::compute_hash(&proof.proof_bytes);
+    if proof.proof_hash != expected_proof_hash.to_hex() {
+        return Err(ClientError::InvalidPublicInputs(
+            "proof_hash does not match proof bytes".to_string(),
+        ));
+    }
+
+    if proof.metadata.proof_size != proof.proof_bytes.len() {
+        return Err(ClientError::InvalidPublicInputs(
+            "proof metadata proof_size does not match proof bytes".to_string(),
+        ));
+    }
+
+    Ok(batch_id)
+}
+
 fn parse_batch_id_from_metadata(batch_id: &str) -> Result<Uuid> {
     let batch_id = batch_id.trim();
 
@@ -139,8 +158,7 @@ impl SetChainClient {
         policy_hash: [u8; 32],
         policy_limit: u64,
     ) -> Result<BatchProofResponse> {
-        // Parse batch_id from hex string
-        let batch_id = parse_batch_id_from_metadata(&proof.metadata.batch_id)?;
+        let batch_id = validate_batch_proof_for_client(proof)?;
         let event_count =
             validate_sequence_range(sequence_start, sequence_end, proof.metadata.num_events)?;
 
@@ -182,8 +200,7 @@ impl SetChainClient {
         policy_hash: [u8; 32],
         policy_limit: u64,
     ) -> Result<BatchProofResponse> {
-        // Parse batch_id from hex string
-        let batch_id = parse_batch_id_from_metadata(&proof.metadata.batch_id)?;
+        let batch_id = validate_batch_proof_for_client(proof)?;
         let event_count =
             validate_sequence_range(sequence_start, sequence_end, proof.metadata.num_events)?;
 
@@ -215,8 +232,7 @@ impl SetChainClient {
         &self,
         proof: &ves_stark_batch::prover::BatchProof,
     ) -> Result<bool> {
-        // Parse batch_id
-        let batch_id = parse_batch_id_from_metadata(&proof.metadata.batch_id)?;
+        let batch_id = validate_batch_proof_for_client(proof)?;
 
         let verification = self.verify_proof_hash(batch_id, &proof.proof_hash).await?;
         Ok(verification.proof_hash_valid)
@@ -274,7 +290,7 @@ impl BatchSubmissionBuilder {
     }
 
     pub fn from_batch_proof(proof: &ves_stark_batch::prover::BatchProof) -> Result<Self> {
-        let batch_id = parse_batch_id_from_metadata(&proof.metadata.batch_id)?;
+        let batch_id = validate_batch_proof_for_client(proof)?;
 
         Ok(Self {
             batch_id: Some(batch_id),
@@ -458,9 +474,10 @@ mod tests {
     }
 
     fn sample_batch_proof() -> BatchProof {
+        let proof_bytes = vec![1, 2, 3, 4, 5];
         BatchProof {
-            proof_bytes: vec![1, 2, 3, 4, 5],
-            proof_hash: "0x1234567890abcdef".to_string(),
+            proof_hash: BatchProof::compute_hash(&proof_bytes).to_hex(),
+            proof_bytes,
             prev_state_root: [1, 2, 3, 4],
             new_state_root: [5, 6, 7, 8],
             metadata: BatchProofMetadata {
@@ -572,6 +589,24 @@ mod tests {
             .sequence_range(1, 11)
             .build();
 
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_batch_submission_builder_rejects_mismatched_proof_hash() {
+        let mut proof = sample_batch_proof();
+        proof.proof_hash = "deadbeef".to_string();
+
+        let result = BatchSubmissionBuilder::from_batch_proof(&proof);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_batch_submission_builder_rejects_mismatched_proof_size() {
+        let mut proof = sample_batch_proof();
+        proof.metadata.proof_size += 1;
+
+        let result = BatchSubmissionBuilder::from_batch_proof(&proof);
         assert!(result.is_err());
     }
 }

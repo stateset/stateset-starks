@@ -73,13 +73,21 @@ impl BatchVerificationResult {
 /// Maximum allowed proof size in bytes (10 MB)
 pub const MAX_BATCH_PROOF_SIZE: usize = 10 * 1024 * 1024;
 
-/// Verify a batch proof
-///
-/// This is the main entry point for batch proof verification. It takes raw proof
-/// bytes and public inputs, and returns a verification result.
-pub fn verify_batch_proof(
+fn default_acceptable_options() -> Result<AcceptableOptions, BatchError> {
+    Ok(AcceptableOptions::OptionSet(vec![
+        ProofOptions::default()
+            .try_to_winterfell()
+            .map_err(|e| BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}")))?,
+        ProofOptions::secure()
+            .try_to_winterfell()
+            .map_err(|e| BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}")))?,
+    ]))
+}
+
+fn verify_batch_proof_with_options(
     proof_bytes: &[u8],
     public_inputs: &BatchPublicInputs,
+    acceptable_options: &AcceptableOptions,
 ) -> Result<BatchVerificationResult, BatchError> {
     let start = Instant::now();
 
@@ -97,24 +105,11 @@ pub fn verify_batch_proof(
     let proof = winter_verifier::Proof::from_bytes(proof_bytes)
         .map_err(|e| BatchError::DeserializationFailed(format!("{e}")))?;
 
-    // Define acceptable proof options
-    let acceptable_options = AcceptableOptions::OptionSet(vec![
-        ProofOptions::default()
-            .try_to_winterfell()
-            .map_err(|e| BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}")))?,
-        ProofOptions::fast()
-            .try_to_winterfell()
-            .map_err(|e| BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}")))?,
-        ProofOptions::secure()
-            .try_to_winterfell()
-            .map_err(|e| BatchError::InvalidPublicInputs(format!("Invalid proof options: {e}")))?,
-    ]);
-
     // Verify the proof
     let result = verify::<BatchComplianceAir, Hasher, RandCoin, VectorCommit>(
         proof,
         public_inputs.clone(),
-        &acceptable_options,
+        acceptable_options,
     );
 
     let verification_time = start.elapsed();
@@ -156,15 +151,61 @@ pub fn verify_batch_proof(
     }
 }
 
+/// Verify a batch proof
+///
+/// This is the main entry point for batch proof verification. It takes raw proof
+/// bytes and public inputs, and returns a verification result.
+pub fn verify_batch_proof(
+    proof_bytes: &[u8],
+    public_inputs: &BatchPublicInputs,
+) -> Result<BatchVerificationResult, BatchError> {
+    let acceptable_options = default_acceptable_options()?;
+    verify_batch_proof_with_options(proof_bytes, public_inputs, &acceptable_options)
+}
+
 /// Batch proof verifier
 pub struct BatchVerifier {
-    _private: (),
+    acceptable_options: AcceptableOptions,
 }
 
 impl BatchVerifier {
     /// Create a new verifier with default options
     pub fn new() -> Self {
-        Self { _private: () }
+        Self::try_new().unwrap_or_else(|_| Self {
+            acceptable_options: Self::fallback_options(),
+        })
+    }
+
+    fn fallback_options() -> AcceptableOptions {
+        AcceptableOptions::OptionSet(vec![
+            Self::to_winterfell_unchecked(&ProofOptions::default()),
+            Self::to_winterfell_unchecked(&ProofOptions::secure()),
+        ])
+    }
+
+    fn to_winterfell_unchecked(options: &ProofOptions) -> winter_air::ProofOptions {
+        winter_air::ProofOptions::new(
+            options.num_queries,
+            options.blowup_factor,
+            options.grinding_factor,
+            options.field_extension,
+            options.fri_folding_factor,
+            31,
+        )
+    }
+
+    /// Create a new verifier with default options without panicking.
+    pub fn try_new() -> Result<Self, BatchError> {
+        Ok(Self {
+            acceptable_options: default_acceptable_options()?,
+        })
+    }
+
+    /// Create a verifier with custom acceptable options.
+    pub fn with_options(options: AcceptableOptions) -> Self {
+        Self {
+            acceptable_options: options,
+        }
     }
 
     /// Verify a batch proof
@@ -173,7 +214,7 @@ impl BatchVerifier {
         proof_bytes: &[u8],
         public_inputs: &BatchPublicInputs,
     ) -> Result<BatchVerificationResult, BatchError> {
-        verify_batch_proof(proof_bytes, public_inputs)
+        verify_batch_proof_with_options(proof_bytes, public_inputs, &self.acceptable_options)
     }
 
     /// Verify state transition chain
@@ -285,11 +326,112 @@ impl Default for BatchVerifier {
 mod tests {
     use super::*;
     use crate::air::trace_layout::MAX_BATCH_SIZE;
+    use crate::prover::{BatchProver, BatchProverConfig, BatchWitnessBuilder};
     use crate::public_inputs::BatchPolicyKind;
+    use crate::state::BatchMetadata;
+    use uuid::Uuid;
+    use ves_stark_primitives::hash_to_felts;
+    use ves_stark_primitives::public_inputs::{
+        compute_policy_hash, witness_commitment_u64_to_hex, CompliancePublicInputs, PolicyParams,
+    };
+    use ves_stark_primitives::{felt_from_u64, rescue::rescue_hash};
+    use winter_verifier::AcceptableOptions;
 
     #[test]
     fn test_verifier_creation() {
         let _verifier = BatchVerifier::new();
+    }
+
+    fn sample_public_inputs(
+        threshold: u64,
+        amount: u64,
+        sequence_number: u64,
+        tenant_id: Uuid,
+        store_id: Uuid,
+    ) -> CompliancePublicInputs {
+        let policy_id = "aml.threshold";
+        let params = PolicyParams::threshold(threshold);
+        let hash = compute_policy_hash(policy_id, &params).unwrap();
+        let amount_limbs = [
+            felt_from_u64(amount & 0xFFFFFFFF),
+            felt_from_u64(amount >> 32),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+            felt_from_u64(0),
+        ];
+        let commitment = rescue_hash(&amount_limbs);
+
+        CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id,
+            store_id,
+            sequence_number,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "0".repeat(64),
+            event_signing_hash: "0".repeat(64),
+            policy_id: policy_id.to_string(),
+            policy_params: params,
+            policy_hash: hash.to_hex(),
+            witness_commitment: Some(witness_commitment_u64_to_hex(&[
+                commitment[0].as_int(),
+                commitment[1].as_int(),
+                commitment[2].as_int(),
+                commitment[3].as_int(),
+            ])),
+            authorization_receipt_hash: None,
+        }
+    }
+
+    fn sample_policy_hash(threshold: u64) -> [Felt; 8] {
+        let policy_id = "aml.threshold";
+        let params = PolicyParams::threshold(threshold);
+        let hash = compute_policy_hash(policy_id, &params).unwrap();
+        hash_to_felts(&hash)
+    }
+
+    fn sample_fast_batch_proof() -> (Vec<u8>, BatchPublicInputs) {
+        let threshold = 10_000u64;
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata = BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
+
+        let witness = BatchWitnessBuilder::new()
+            .metadata(metadata)
+            .policy_hash(sample_policy_hash(threshold))
+            .policy_limit(threshold)
+            .add_event(
+                5_000,
+                sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let prover = BatchProver::with_config(
+            BatchProverConfig::default().with_options(ProofOptions::fast()),
+        );
+        let proof = prover.prove(&witness).unwrap();
+        let public_inputs = BatchPublicInputs::new(
+            witness.prev_state_root.root,
+            witness.compute_new_state_root().unwrap().root,
+            witness.batch_id_felts(),
+            witness.tenant_id_felts(),
+            witness.store_id_felts(),
+            witness.metadata.sequence_start,
+            witness.metadata.sequence_end,
+            witness.metadata.timestamp,
+            witness.num_events(),
+            witness.all_compliant(),
+            BatchPolicyKind::AmlThreshold,
+            witness.policy_limit,
+            witness.public_inputs_accumulator().unwrap(),
+        );
+
+        (proof.proof_bytes, public_inputs)
     }
 
     #[test]
@@ -327,6 +469,30 @@ mod tests {
         assert_eq!(new_felts[1].as_int(), 6);
         assert_eq!(new_felts[2].as_int(), 7);
         assert_eq!(new_felts[3].as_int(), 8);
+    }
+
+    #[test]
+    fn test_default_batch_verifier_rejects_fast_proof() {
+        let (proof_bytes, public_inputs) = sample_fast_batch_proof();
+
+        let result = verify_batch_proof(&proof_bytes, &public_inputs).unwrap();
+        assert!(!result.valid);
+
+        let verifier = BatchVerifier::new();
+        let result = verifier.verify(&proof_bytes, &public_inputs).unwrap();
+        assert!(!result.valid);
+    }
+
+    #[test]
+    fn test_batch_verifier_with_custom_options_accepts_fast_proof() {
+        let (proof_bytes, public_inputs) = sample_fast_batch_proof();
+
+        let verifier =
+            BatchVerifier::with_options(AcceptableOptions::OptionSet(vec![ProofOptions::fast()
+                .try_to_winterfell()
+                .unwrap()]));
+        let result = verifier.verify(&proof_bytes, &public_inputs).unwrap();
+        assert!(result.valid, "{:?}", result.error);
     }
 
     #[test]
