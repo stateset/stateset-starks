@@ -95,7 +95,7 @@ pub struct BatchProof {
 }
 
 /// Metadata about the batch proof generation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BatchProofMetadata {
     /// Batch ID (hex encoded)
     pub batch_id: String,

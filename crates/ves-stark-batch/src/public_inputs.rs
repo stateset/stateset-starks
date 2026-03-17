@@ -9,6 +9,7 @@ use ves_stark_primitives::{
 };
 use winter_math::ToElements;
 
+use crate::air::trace_layout::MAX_BATCH_SIZE;
 use crate::error::{BatchError, BatchResult};
 use crate::state::BatchMetadata;
 
@@ -271,6 +272,13 @@ impl BatchPublicInputs {
                 .map_err(|_| error("num_events does not fit in platform usize".to_string()));
         }
 
+        if num_events_u64 > MAX_BATCH_SIZE as u64 {
+            return Err(error(format!(
+                "batch size {} exceeds maximum {}",
+                num_events_u64, MAX_BATCH_SIZE
+            )));
+        }
+
         let expected_num_events = sequence_end
             .checked_sub(sequence_start)
             .and_then(|span| span.checked_add(1))
@@ -415,6 +423,30 @@ mod tests {
             inputs.policy_kind_enum(),
             Some(BatchPolicyKind::AmlThreshold)
         );
+    }
+
+    #[test]
+    fn test_validate_rejects_batch_larger_than_maximum() {
+        let inputs = BatchPublicInputs::new(
+            [felt_from_u64(1); 4],
+            [felt_from_u64(2); 4],
+            [felt_from_u64(3); 4],
+            [felt_from_u64(4); 4],
+            [felt_from_u64(5); 4],
+            0,
+            MAX_BATCH_SIZE as u64,
+            123,
+            MAX_BATCH_SIZE + 1,
+            true,
+            BatchPolicyKind::AmlThreshold,
+            10_000,
+            [FELT_ZERO; 8],
+        );
+
+        let err = inputs
+            .validate()
+            .expect_err("oversized batch should be rejected");
+        assert!(matches!(err, BatchError::InvalidPublicInputs(_)));
     }
 
     #[test]

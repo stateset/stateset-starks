@@ -6,13 +6,28 @@
 use base64::Engine;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
+use ves_stark_primitives::Hash256;
 use zeroize::Zeroizing;
 
 use crate::error::{ClientError, Result};
 
 const ZERO_REGISTRY_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
+const BATCH_PROOF_HASH_DOMAIN: &[u8] = b"STATESET_VES_BATCH_PROOF_HASH_V1";
+
+fn compute_set_chain_batch_proof_hash(proof_bytes: &[u8]) -> String {
+    let hash = Hash256::sha256_with_domain(BATCH_PROOF_HASH_DOMAIN, proof_bytes);
+    format!("0x{}", hash.to_hex())
+}
+
+fn normalize_set_chain_batch_proof_hash(expected_hash: &str) -> String {
+    let trimmed = expected_hash.trim();
+    if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
+        trimmed.to_string()
+    } else {
+        format!("0x{}", trimmed)
+    }
+}
 
 /// Set Chain configuration
 #[derive(Debug, Clone)]
@@ -127,15 +142,15 @@ pub struct BatchProofSubmission {
 }
 
 impl BatchProofSubmission {
-    /// Compute the proof hash (SHA-256).
+    /// Compute the domain-separated batch proof hash in the `0x`-prefixed
+    /// form expected by the Set Chain HTTP API.
     ///
     /// Returns an error if the base64-encoded proof bytes are invalid.
     pub fn proof_hash(&self) -> Result<String> {
         let proof_bytes = base64::engine::general_purpose::STANDARD
             .decode(&self.proof_b64)
             .map_err(|e| ClientError::InvalidPublicInputs(format!("invalid proof base64: {e}")))?;
-        let hash = Sha256::digest(&proof_bytes);
-        Ok(format!("0x{}", hex::encode(hash)))
+        Ok(compute_set_chain_batch_proof_hash(&proof_bytes))
     }
 
     /// Get proof size in bytes.
@@ -159,7 +174,7 @@ pub struct BatchProofResponse {
     pub tx_hash: String,
     /// Block number where the proof was anchored
     pub block_number: Option<u64>,
-    /// Proof hash (SHA-256 of proof bytes)
+    /// Proof hash (domain-separated batch proof hash, `0x`-prefixed)
     pub proof_hash: String,
     /// Whether anchoring was successful
     pub success: bool,
@@ -457,7 +472,7 @@ impl SetChainClient {
         }
 
         let request = VerifyRequest {
-            expected_proof_hash: expected_proof_hash.to_string(),
+            expected_proof_hash: normalize_set_chain_batch_proof_hash(expected_proof_hash),
         };
 
         let response = self.client.post(&url).json(&request).send().await?;
@@ -649,8 +664,23 @@ mod tests {
             all_compliant: true,
         };
 
-        assert!(submission.proof_hash().unwrap().starts_with("0x"));
+        assert_eq!(
+            submission.proof_hash().unwrap(),
+            compute_set_chain_batch_proof_hash(b"test proof")
+        );
         assert_eq!(submission.proof_size(), 10);
+    }
+
+    #[test]
+    fn test_normalize_set_chain_batch_proof_hash_adds_prefix() {
+        assert_eq!(
+            normalize_set_chain_batch_proof_hash("abcd"),
+            "0xabcd".to_string()
+        );
+        assert_eq!(
+            normalize_set_chain_batch_proof_hash("0xabcd"),
+            "0xabcd".to_string()
+        );
     }
 
     #[test]

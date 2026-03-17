@@ -89,7 +89,8 @@ pub struct SerializableBatchPublicInputs {
 
 impl SerializableBatchProof {
     /// Current protocol version
-    pub const VERSION: u8 = 3;
+    pub const VERSION: u8 = 4;
+    const LEGACY_VERSION: u8 = 3;
 
     /// Fixed-size public input payload in bytes for compact binary serialization.
     ///
@@ -194,6 +195,16 @@ impl SerializableBatchProof {
             bytes.extend_from_slice(&val.to_le_bytes());
         }
 
+        let metadata_json = serde_json::to_vec(&self.proof.metadata)
+            .map_err(|e| BatchError::SerializationFailed(format!("Metadata JSON error: {e}")))?;
+        let metadata_len = u32::try_from(metadata_json.len()).map_err(|_| {
+            BatchError::SerializationFailed(
+                "Metadata payload is too large to serialize".to_string(),
+            )
+        })?;
+        bytes.extend_from_slice(&metadata_len.to_be_bytes());
+        bytes.extend_from_slice(&metadata_json);
+
         Ok(bytes)
     }
 
@@ -219,7 +230,7 @@ impl SerializableBatchProof {
 
         // Version
         let version = bytes[pos];
-        if version != Self::VERSION {
+        if version != Self::VERSION && version != Self::LEGACY_VERSION {
             return Err(BatchError::DeserializationFailed(format!(
                 "Unsupported version: {}",
                 version
@@ -247,11 +258,6 @@ impl SerializableBatchProof {
         if proof_len_end > bytes.len() || public_inputs_end > bytes.len() {
             return Err(BatchError::DeserializationFailed(
                 "Input too short for proof and public inputs".to_string(),
-            ));
-        }
-        if public_inputs_end != bytes.len() {
-            return Err(BatchError::DeserializationFailed(
-                "Input contains unexpected trailing bytes".to_string(),
             ));
         }
 
@@ -342,21 +348,92 @@ impl SerializableBatchProof {
         let proof_hash = BatchProof::compute_hash(&proof_bytes).to_hex();
         let proof_size = proof_bytes.len();
 
-        // Construct the proof struct (partial - hash will be recomputed on verification)
-        let proof = BatchProof {
-            proof_bytes,
-            proof_hash,
-            prev_state_root,
-            new_state_root,
-            metadata: crate::prover::BatchProofMetadata {
-                batch_id: batch_id_uuid,
+        let metadata = if version == Self::LEGACY_VERSION {
+            if public_inputs_end != bytes.len() {
+                return Err(BatchError::DeserializationFailed(
+                    "Input contains unexpected trailing bytes".to_string(),
+                ));
+            }
+            crate::prover::BatchProofMetadata {
+                batch_id: batch_id_uuid.clone(),
                 num_events: validated_public_inputs.num_events_usize(),
                 all_compliant: validated_public_inputs.is_all_compliant(),
                 proving_time_ms: 0,
                 trace_length: 0,
                 proof_size,
                 prover_version: String::new(),
-            },
+            }
+        } else {
+            let metadata_len_end = public_inputs_end.checked_add(4).ok_or_else(|| {
+                BatchError::DeserializationFailed(
+                    "metadata length overflows platform usize".to_string(),
+                )
+            })?;
+            if metadata_len_end > bytes.len() {
+                return Err(BatchError::DeserializationFailed(
+                    "Input too short for metadata length".to_string(),
+                ));
+            }
+
+            let metadata_len = u32::from_be_bytes([
+                bytes[public_inputs_end],
+                bytes[public_inputs_end + 1],
+                bytes[public_inputs_end + 2],
+                bytes[public_inputs_end + 3],
+            ]) as usize;
+            let metadata_end = metadata_len_end.checked_add(metadata_len).ok_or_else(|| {
+                BatchError::DeserializationFailed(
+                    "metadata length overflows platform usize".to_string(),
+                )
+            })?;
+            if metadata_end > bytes.len() {
+                return Err(BatchError::DeserializationFailed(
+                    "Input too short for metadata".to_string(),
+                ));
+            }
+            if metadata_end != bytes.len() {
+                return Err(BatchError::DeserializationFailed(
+                    "Input contains unexpected trailing bytes".to_string(),
+                ));
+            }
+
+            let metadata: crate::prover::BatchProofMetadata =
+                serde_json::from_slice(&bytes[metadata_len_end..metadata_end]).map_err(|e| {
+                    BatchError::DeserializationFailed(format!("Metadata JSON error: {e}"))
+                })?;
+
+            if metadata.batch_id != batch_id_uuid {
+                return Err(BatchError::DeserializationFailed(
+                    "metadata batch_id does not match public inputs".to_string(),
+                ));
+            }
+            if metadata.num_events != validated_public_inputs.num_events_usize() {
+                return Err(BatchError::DeserializationFailed(
+                    "metadata num_events does not match public inputs".to_string(),
+                ));
+            }
+            if metadata.all_compliant != validated_public_inputs.is_all_compliant() {
+                return Err(BatchError::DeserializationFailed(
+                    "metadata all_compliant does not match public inputs".to_string(),
+                ));
+            }
+            if metadata.proof_size != proof_size {
+                return Err(BatchError::DeserializationFailed(
+                    "metadata proof_size does not match proof byte length".to_string(),
+                ));
+            }
+
+            metadata
+        };
+
+        // Construct the proof struct with a recomputed proof hash so transport
+        // corruption cannot spoof the digest.
+        let proof = BatchProof {
+            proof_bytes,
+            proof_hash,
+            prev_state_root,
+            new_state_root,
+            metadata,
         };
 
         Ok(Self {
@@ -525,12 +602,12 @@ mod tests {
     fn sample_proof() -> BatchProof {
         BatchProof {
             proof_bytes: vec![1, 2, 3, 4, 5],
-            proof_hash: "abc123".to_string(),
+            proof_hash: BatchProof::compute_hash(&[1, 2, 3, 4, 5]).to_hex(),
             prev_state_root: [1, 2, 3, 4],
             new_state_root: [5, 6, 7, 8],
             metadata: BatchProofMetadata {
-                batch_id: "test-batch".to_string(),
-                num_events: 10,
+                batch_id: uuid_from_batch_id_fields([9, 10, 11, 12]).to_string(),
+                num_events: 4,
                 all_compliant: true,
                 proving_time_ms: 100,
                 trace_length: 256,
@@ -582,6 +659,7 @@ mod tests {
 
         assert_eq!(deserialized.version, SerializableBatchProof::VERSION);
         assert_eq!(deserialized.proof.proof_bytes, proof.proof_bytes);
+        assert_eq!(deserialized.proof.metadata, proof.metadata);
         assert_eq!(
             deserialized.public_inputs.prev_state_root,
             serializable.public_inputs.prev_state_root
@@ -606,12 +684,14 @@ mod tests {
 
     #[test]
     fn test_binary_round_trip_preserves_batch_id_as_uuid() {
-        let proof = sample_proof();
+        let mut proof = sample_proof();
         let mut inputs = sample_public_inputs();
         inputs.batch_id = [11, 22, 33, 44].map(felt_from_u64);
 
-        let serializable = SerializableBatchProof::new(proof, inputs).unwrap();
         let expected_batch_id = uuid_from_batch_id_fields([11, 22, 33, 44]).to_string();
+        proof.metadata.batch_id = expected_batch_id.clone();
+
+        let serializable = SerializableBatchProof::new(proof, inputs).unwrap();
 
         let bytes = serializable.to_bytes().unwrap();
         let deserialized = SerializableBatchProof::from_bytes(&bytes).unwrap();
@@ -702,6 +782,29 @@ mod tests {
         assert_eq!(
             deserialized.proof.proof_hash,
             BatchProof::compute_hash(&proof.proof_bytes).to_hex()
+        );
+    }
+
+    #[test]
+    fn test_binary_deserialization_accepts_legacy_v3_payload() {
+        let proof = sample_proof();
+        let inputs = sample_public_inputs();
+        let serializable = SerializableBatchProof::new(proof, inputs).unwrap();
+        let mut bytes = serializable.to_bytes().unwrap();
+        let metadata_json = serde_json::to_vec(&serializable.proof.metadata).unwrap();
+        let metadata_bytes = 4 + metadata_json.len();
+
+        bytes.truncate(bytes.len() - metadata_bytes);
+        bytes[0] = SerializableBatchProof::LEGACY_VERSION;
+
+        let deserialized = SerializableBatchProof::from_bytes(&bytes).unwrap();
+        assert_eq!(deserialized.version, SerializableBatchProof::LEGACY_VERSION);
+        assert_eq!(deserialized.proof.metadata.proving_time_ms, 0);
+        assert_eq!(deserialized.proof.metadata.trace_length, 0);
+        assert!(deserialized.proof.metadata.prover_version.is_empty());
+        assert_eq!(
+            deserialized.proof.metadata.batch_id,
+            uuid_from_batch_id_fields([9, 10, 11, 12]).to_string()
         );
     }
 

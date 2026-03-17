@@ -284,6 +284,7 @@ impl Default for BatchVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::air::trace_layout::MAX_BATCH_SIZE;
     use crate::public_inputs::BatchPolicyKind;
 
     #[test]
@@ -391,6 +392,29 @@ mod tests {
 
         let err = verify_batch_proof(b"not-a-proof", &public_inputs)
             .expect_err("invalid policy kind should be rejected before proof parsing");
+        assert!(matches!(err, BatchError::InvalidPublicInputs(_)));
+    }
+
+    #[test]
+    fn test_verify_batch_proof_rejects_oversized_batch_before_deserializing_proof() {
+        let public_inputs = BatchPublicInputs::new(
+            [felt_from_u64(1); 4],
+            [felt_from_u64(2); 4],
+            [felt_from_u64(3); 4],
+            [felt_from_u64(4); 4],
+            [felt_from_u64(5); 4],
+            0,
+            MAX_BATCH_SIZE as u64,
+            123,
+            MAX_BATCH_SIZE + 1,
+            true,
+            BatchPolicyKind::AmlThreshold,
+            10_000,
+            [felt_from_u64(9); 8],
+        );
+
+        let err = verify_batch_proof(b"not-a-proof", &public_inputs)
+            .expect_err("oversized batches should fail before proof parsing");
         assert!(matches!(err, BatchError::InvalidPublicInputs(_)));
     }
 }
