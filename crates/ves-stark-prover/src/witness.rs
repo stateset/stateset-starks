@@ -21,12 +21,23 @@ pub struct ComplianceWitness {
 }
 
 impl ComplianceWitness {
-    /// Create a new compliance witness
-    pub fn new(amount: u64, public_inputs: CompliancePublicInputs) -> Self {
-        Self {
+    /// Create a new compliance witness without panicking on malformed public-input bindings.
+    pub fn try_new(
+        amount: u64,
+        public_inputs: CompliancePublicInputs,
+    ) -> Result<Self, ProverError> {
+        let public_inputs = public_inputs
+            .bind_amount(amount)
+            .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?;
+        Ok(Self {
             amount,
             public_inputs,
-        }
+        })
+    }
+
+    /// Create a new compliance witness
+    pub fn new(amount: u64, public_inputs: CompliancePublicInputs) -> Self {
+        Self::try_new(amount, public_inputs).expect("invalid compliance witness public inputs")
     }
 
     /// Validate the witness against the policy
@@ -61,6 +72,23 @@ impl ComplianceWitness {
                 inputs_policy.policy_id(),
                 policy.policy_id()
             )));
+        }
+
+        let expected_bound_inputs = self
+            .public_inputs
+            .bind_amount(self.amount)
+            .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?;
+        if self.public_inputs.witness_commitment != expected_bound_inputs.witness_commitment {
+            return Err(ProverError::InvalidPublicInputs(
+                "public inputs witnessCommitment is missing or does not match the witness amount"
+                    .to_string(),
+            ));
+        }
+        if self.public_inputs.amount_binding_hash != expected_bound_inputs.amount_binding_hash {
+            return Err(ProverError::InvalidPublicInputs(
+                "public inputs amountBindingHash is missing or does not match the witness amount"
+                    .to_string(),
+            ));
         }
 
         // Validate amount limbs are valid u32 values (range check)
@@ -124,7 +152,7 @@ impl WitnessBuilder {
             .public_inputs
             .ok_or_else(|| ProverError::invalid_witness("Public inputs are required"))?;
 
-        Ok(ComplianceWitness::new(amount, public_inputs))
+        ComplianceWitness::try_new(amount, public_inputs)
     }
 }
 
@@ -160,6 +188,7 @@ mod tests {
             policy_hash: hash.to_hex(),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         }
     }
 
@@ -171,6 +200,8 @@ mod tests {
         let policy = Policy::aml_threshold(threshold);
 
         assert!(witness.validate(&policy).is_ok());
+        assert!(witness.public_inputs.witness_commitment.is_some());
+        assert!(witness.public_inputs.amount_binding_hash.is_some());
     }
 
     #[test]
@@ -195,6 +226,30 @@ mod tests {
             .unwrap();
 
         assert_eq!(witness.amount, 5000);
+    }
+
+    #[test]
+    fn test_witness_try_new_rejects_mismatched_binding_fields() {
+        let threshold = 10000u64;
+        let mut inputs = sample_public_inputs(threshold);
+        inputs.witness_commitment = Some("0".repeat(64));
+        inputs.amount_binding_hash = Some("0".repeat(64));
+
+        let err = ComplianceWitness::try_new(5000, inputs).unwrap_err();
+        assert!(matches!(err, ProverError::InvalidPublicInputs(_)));
+    }
+
+    #[test]
+    fn test_witness_validate_rejects_missing_amount_binding_hash() {
+        let threshold = 10000u64;
+        let inputs = sample_public_inputs(threshold);
+        let mut witness = ComplianceWitness::new(5000, inputs);
+        witness.public_inputs.amount_binding_hash = None;
+
+        let err = witness
+            .validate(&Policy::aml_threshold(threshold))
+            .unwrap_err();
+        assert!(matches!(err, ProverError::InvalidPublicInputs(_)));
     }
 
     #[test]
@@ -323,6 +378,7 @@ mod proptests {
             policy_hash: hash.to_hex(),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         }
     }
 

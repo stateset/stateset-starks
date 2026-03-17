@@ -137,27 +137,8 @@ impl ProofOptions {
 
     /// Convert to Winterfell ProofOptions
     pub fn to_winterfell(&self) -> winter_air::ProofOptions {
-        if let Err(err) = self.validate() {
-            debug_assert!(false, "invalid proof options: {err}");
-            let fallback = Self::default();
-            return winter_air::ProofOptions::new(
-                fallback.num_queries,
-                fallback.blowup_factor,
-                fallback.grinding_factor,
-                fallback.field_extension,
-                fallback.fri_folding_factor,
-                31,
-            );
-        }
-
-        winter_air::ProofOptions::new(
-            self.num_queries,
-            self.blowup_factor,
-            self.grinding_factor,
-            self.field_extension,
-            self.fri_folding_factor,
-            31,
-        )
+        self.try_to_winterfell()
+            .expect("invalid proof options; use try_to_winterfell() to handle this error")
     }
 
     /// Convert to Winterfell ProofOptions without panicking
@@ -195,5 +176,15 @@ mod tests {
         let opts = ProofOptions::default();
         let winterfell_opts = opts.try_to_winterfell().unwrap();
         assert_eq!(winterfell_opts.num_queries(), opts.num_queries);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid proof options")]
+    fn test_to_winterfell_panics_on_invalid_options() {
+        let opts = ProofOptions {
+            blowup_factor: 3,
+            ..ProofOptions::default()
+        };
+        let _ = opts.to_winterfell();
     }
 }

@@ -23,17 +23,21 @@ use std::path::PathBuf;
 use std::time::Instant;
 use uuid::Uuid;
 
-use ves_stark_client::{ProofSubmission, SequencerClient};
+use ves_stark_client::{AgentAuthorizationProofBundle, ComplianceProofBundle, SequencerClient};
 use ves_stark_primitives::public_inputs::{
     compute_policy_hash, witness_commitment_hex_to_u64, witness_commitment_u64_to_hex,
-    CompliancePublicInputs, PolicyParams,
+    CompliancePublicInputs, PayloadAmountBinding, PolicyParams,
 };
 use ves_stark_primitives::{hash_to_felts, CommerceAuthorizationReceipt, Felt};
 use ves_stark_prover::{ComplianceProof, ComplianceProver, ComplianceWitness, Policy};
 use ves_stark_verifier::{
     verify_agent_authorization_proof_auto_bound,
-    verify_agent_authorization_proof_auto_bound_strict, verify_compliance_proof_auto_bound,
-    verify_compliance_proof_auto_bound_strict, MAX_PROOF_SIZE,
+    verify_agent_authorization_proof_auto_bound_witness_strict,
+    verify_agent_authorization_proof_auto_with_amount_binding,
+    verify_agent_authorization_proof_auto_with_amount_binding_strict,
+    verify_compliance_proof_auto_bound, verify_compliance_proof_auto_bound_witness_strict,
+    verify_compliance_proof_auto_with_amount_binding,
+    verify_compliance_proof_auto_with_amount_binding_strict, MAX_PROOF_SIZE,
 };
 
 // Batch proving imports
@@ -146,6 +150,10 @@ enum Commands {
         #[arg(short, long)]
         inputs: Option<PathBuf>,
 
+        /// Authorization receipt JSON for emitting a canonical agent authorization bundle
+        #[arg(long)]
+        authorization_receipt: Option<PathBuf>,
+
         /// Output file for the proof (default: stdout as base64)
         #[arg(short, long)]
         output: Option<PathBuf>,
@@ -183,6 +191,10 @@ enum Commands {
         #[arg(long)]
         intent_hash: Option<String>,
 
+        /// Authorization receipt JSON for canonical agent authorization bundle submission
+        #[arg(long)]
+        authorization_receipt: Option<PathBuf>,
+
         /// Verify the stored proof after submission
         #[arg(long)]
         verify: bool,
@@ -194,9 +206,10 @@ enum Commands {
         #[arg(short = 'f', long)]
         proof: PathBuf,
 
-        /// Path to public inputs JSON file
+        /// Path to public inputs JSON file. Optional when the proof JSON embeds canonical
+        /// `publicInputs` (for example, canonical proof bundles).
         #[arg(short, long)]
-        inputs: PathBuf,
+        inputs: Option<PathBuf>,
 
         /// Witness commitment hex for raw base64 proofs. If omitted, the CLI
         /// falls back to `public_inputs.witnessCommitment`.
@@ -206,6 +219,10 @@ enum Commands {
         /// Authorization receipt JSON to bind an agent.authorization.v1 proof to a canonical receipt
         #[arg(long)]
         authorization_receipt: Option<PathBuf>,
+
+        /// Payload amount binding JSON to bind the proved witness back to payload hashes
+        #[arg(long)]
+        amount_binding: Option<PathBuf>,
 
         /// The limit value used for the proof
         #[arg(short, long)]
@@ -340,9 +357,19 @@ fn main() -> Result<()> {
             policy,
             intent_hash,
             inputs,
+            authorization_receipt,
             output,
             json,
-        } => prove(amount, limit, policy, intent_hash, inputs, output, json),
+        } => prove(
+            amount,
+            limit,
+            policy,
+            intent_hash,
+            inputs,
+            authorization_receipt,
+            output,
+            json,
+        ),
 
         Commands::ProveSubmit {
             sequencer_url,
@@ -351,6 +378,7 @@ fn main() -> Result<()> {
             limit,
             policy,
             intent_hash,
+            authorization_receipt,
             verify,
         } => prove_submit(
             sequencer_url,
@@ -359,6 +387,7 @@ fn main() -> Result<()> {
             limit,
             policy,
             intent_hash,
+            authorization_receipt,
             verify,
         ),
 
@@ -367,6 +396,7 @@ fn main() -> Result<()> {
             inputs,
             witness_commitment_hex,
             authorization_receipt,
+            amount_binding,
             limit,
             policy,
             intent_hash,
@@ -375,6 +405,7 @@ fn main() -> Result<()> {
             inputs,
             witness_commitment_hex,
             authorization_receipt,
+            amount_binding,
             limit,
             policy,
             intent_hash,
@@ -515,15 +546,265 @@ fn ensure_batch_policy_supported(policy_type: PolicyType) -> Result<()> {
     }
 }
 
+fn parse_public_inputs_value(
+    value: &serde_json::Value,
+    context: &str,
+) -> Result<CompliancePublicInputs> {
+    serde_json::from_value(value.clone())
+        .with_context(|| format!("Failed to parse {context} public inputs JSON"))
+}
+
+fn parse_payload_amount_binding_value(
+    value: &serde_json::Value,
+    context: &str,
+) -> Result<PayloadAmountBinding> {
+    serde_json::from_value(value.clone())
+        .with_context(|| format!("Failed to parse {context} payload amount binding JSON"))
+}
+
+fn parse_authorization_receipt_value(
+    value: &serde_json::Value,
+    context: &str,
+) -> Result<CommerceAuthorizationReceipt> {
+    serde_json::from_value(value.clone())
+        .with_context(|| format!("Failed to parse {context} authorization receipt JSON"))
+}
+
+fn ensure_public_inputs_match(
+    expected: &CompliancePublicInputs,
+    actual: &CompliancePublicInputs,
+    context: &str,
+) -> Result<()> {
+    let expected_hash = expected
+        .compute_full_hash()
+        .map_err(|e| anyhow::anyhow!("Failed to hash expected {context} public inputs: {e}"))?
+        .to_hex();
+    let actual_hash = actual
+        .compute_full_hash()
+        .map_err(|e| anyhow::anyhow!("Failed to hash provided {context} public inputs: {e}"))?
+        .to_hex();
+
+    if expected_hash != actual_hash {
+        anyhow::bail!("{context} public inputs do not match the canonical proof bundle");
+    }
+
+    Ok(())
+}
+
+fn ensure_payload_amount_binding_match(
+    expected: &PayloadAmountBinding,
+    actual: &PayloadAmountBinding,
+    context: &str,
+) -> Result<()> {
+    if expected
+        .normalized()
+        .map_err(|e| anyhow::anyhow!("Invalid canonical {context} amount binding: {e}"))?
+        != actual
+            .normalized()
+            .map_err(|e| anyhow::anyhow!("Invalid provided {context} amount binding: {e}"))?
+    {
+        anyhow::bail!("{context} amount binding does not match the canonical proof bundle");
+    }
+
+    Ok(())
+}
+
+fn ensure_authorization_receipt_match(
+    expected: &CommerceAuthorizationReceipt,
+    actual: &CommerceAuthorizationReceipt,
+    context: &str,
+) -> Result<()> {
+    if expected
+        .normalized()
+        .map_err(|e| anyhow::anyhow!("Invalid canonical {context} authorization receipt: {e}"))?
+        != actual
+            .normalized()
+            .map_err(|e| anyhow::anyhow!("Invalid provided {context} authorization receipt: {e}"))?
+    {
+        anyhow::bail!("{context} authorization receipt does not match the canonical proof bundle");
+    }
+
+    Ok(())
+}
+
+fn verify_compliance_bundle(
+    bundle: ComplianceProofBundle,
+    inputs_path: Option<PathBuf>,
+    witness_commitment_hex: Option<String>,
+    amount_binding_path: Option<PathBuf>,
+    limit: u64,
+    policy_type: PolicyType,
+    intent_hash: Option<String>,
+) -> Result<()> {
+    let intent_hash = resolve_intent_hash(policy_type, intent_hash, Some(&bundle.public_inputs))?;
+    validate_public_inputs_match_policy(
+        &bundle.public_inputs,
+        policy_type,
+        limit,
+        intent_hash.as_deref(),
+    )?;
+
+    if let Some(path) = inputs_path.as_ref() {
+        let inputs_str = read_text_input(path, "inputs")?;
+        let inputs = serde_json::from_str::<CompliancePublicInputs>(&inputs_str)
+            .with_context(|| "Failed to parse public inputs JSON")?;
+        ensure_public_inputs_match(&bundle.public_inputs, &inputs, "provided")?;
+    }
+
+    if let Some(path) = amount_binding_path.as_ref() {
+        let binding_str = read_text_input(path, "payload amount binding")?;
+        let binding = serde_json::from_str::<PayloadAmountBinding>(&binding_str)
+            .with_context(|| "Failed to parse payload amount binding JSON")?;
+        ensure_payload_amount_binding_match(&bundle.amount_binding, &binding, "provided")?;
+    }
+
+    if let Some(hex) = witness_commitment_hex.as_deref() {
+        let expected = bundle
+            .witness_commitment_hex
+            .clone()
+            .unwrap_or_else(|| witness_commitment_u64_to_hex(&bundle.witness_commitment));
+        if hex != expected {
+            anyhow::bail!("--witness-commitment-hex does not match the canonical proof bundle");
+        }
+    }
+
+    eprintln!("Verifying canonical proof bundle...");
+    eprintln!("  Policy: {}", bundle.public_inputs.policy_id);
+    eprintln!("  Limit: {}", limit);
+    eprintln!("  Event ID: {}", bundle.public_inputs.event_id);
+    eprintln!("  Bundle hash: {}", bundle.bundle_hash);
+
+    let result = bundle
+        .verify_strict()
+        .map_err(|e| anyhow::anyhow!("Verification error: {e}"))?;
+
+    eprintln!(
+        "Proof VALID (verified in {} ms)",
+        result.verification_time_ms
+    );
+    println!("VALID");
+    Ok(())
+}
+
+fn verify_agent_authorization_bundle(
+    bundle: AgentAuthorizationProofBundle,
+    inputs_path: Option<PathBuf>,
+    witness_commitment_hex: Option<String>,
+    authorization_receipt_path: Option<PathBuf>,
+    amount_binding_path: Option<PathBuf>,
+    limit: u64,
+    policy_type: PolicyType,
+    intent_hash: Option<String>,
+) -> Result<()> {
+    let intent_hash = resolve_intent_hash(policy_type, intent_hash, Some(&bundle.public_inputs))?;
+    validate_public_inputs_match_policy(
+        &bundle.public_inputs,
+        policy_type,
+        limit,
+        intent_hash.as_deref(),
+    )?;
+
+    if let Some(path) = inputs_path.as_ref() {
+        let inputs_str = read_text_input(path, "inputs")?;
+        let inputs = serde_json::from_str::<CompliancePublicInputs>(&inputs_str)
+            .with_context(|| "Failed to parse public inputs JSON")?;
+        ensure_public_inputs_match(&bundle.public_inputs, &inputs, "provided")?;
+    }
+
+    if let Some(path) = amount_binding_path.as_ref() {
+        let binding_str = read_text_input(path, "payload amount binding")?;
+        let binding = serde_json::from_str::<PayloadAmountBinding>(&binding_str)
+            .with_context(|| "Failed to parse payload amount binding JSON")?;
+        ensure_payload_amount_binding_match(&bundle.amount_binding, &binding, "provided")?;
+    }
+
+    if let Some(path) = authorization_receipt_path.as_ref() {
+        let receipt_str = read_text_input(path, "authorization receipt")?;
+        let receipt = serde_json::from_str::<CommerceAuthorizationReceipt>(&receipt_str)
+            .with_context(|| "Failed to parse authorization receipt JSON")?;
+        ensure_authorization_receipt_match(&bundle.receipt, &receipt, "provided")?;
+    }
+
+    if let Some(hex) = witness_commitment_hex.as_deref() {
+        let expected = bundle
+            .witness_commitment_hex
+            .clone()
+            .unwrap_or_else(|| witness_commitment_u64_to_hex(&bundle.witness_commitment));
+        if hex != expected {
+            anyhow::bail!("--witness-commitment-hex does not match the canonical proof bundle");
+        }
+    }
+
+    eprintln!("Verifying canonical authorization proof bundle...");
+    eprintln!("  Policy: {}", bundle.public_inputs.policy_id);
+    eprintln!("  Limit: {}", limit);
+    eprintln!("  Event ID: {}", bundle.public_inputs.event_id);
+    eprintln!("  Bundle hash: {}", bundle.bundle_hash);
+
+    let result = bundle
+        .verify_strict()
+        .map_err(|e| anyhow::anyhow!("Verification error: {e}"))?;
+
+    eprintln!(
+        "Proof VALID (verified in {} ms)",
+        result.verification_time_ms
+    );
+    println!("VALID");
+    Ok(())
+}
+
 fn prove(
     amount: u64,
     limit: u64,
     policy_type: PolicyType,
     intent_hash: Option<String>,
     inputs_path: Option<PathBuf>,
+    authorization_receipt_path: Option<PathBuf>,
     output_path: Option<PathBuf>,
     json_output: bool,
 ) -> Result<()> {
+    if authorization_receipt_path.is_some()
+        && !matches!(policy_type, PolicyType::AgentAuthorization)
+    {
+        anyhow::bail!("--authorization-receipt requires --policy agent.authorization.v1");
+    }
+    if authorization_receipt_path.is_some() && !json_output {
+        anyhow::bail!(
+            "--authorization-receipt requires --json so the receipt-bound bundle can be emitted"
+        );
+    }
+
+    let authorization_receipt = if let Some(path) = authorization_receipt_path.as_ref() {
+        let receipt_str = read_text_input(path, "authorization receipt")?;
+        Some(
+            serde_json::from_str::<CommerceAuthorizationReceipt>(&receipt_str)
+                .with_context(|| "Failed to parse authorization receipt JSON")?,
+        )
+    } else {
+        None
+    };
+
+    if let Some(receipt) = authorization_receipt.as_ref() {
+        if amount != receipt.amount {
+            anyhow::bail!(
+                "Amount ({}) must match authorization receipt amount ({})",
+                amount,
+                receipt.amount
+            );
+        }
+    }
+    let mut intent_hash = intent_hash;
+    if let Some(receipt) = authorization_receipt.as_ref() {
+        let receipt_intent_hash = normalize_intent_hash(&receipt.intent_hash)?;
+        if let Some(provided) = intent_hash.as_deref() {
+            if normalize_intent_hash(provided)? != receipt_intent_hash {
+                anyhow::bail!("--intent-hash does not match authorization receipt.intentHash");
+            }
+        } else {
+            intent_hash = Some(receipt_intent_hash);
+        }
+    }
+
     // Load or generate public inputs
     let public_inputs = if let Some(path) = inputs_path {
         let contents = fs::read_to_string(&path)
@@ -565,7 +846,8 @@ fn prove(
     let start = Instant::now();
 
     // Create witness and prover
-    let witness = ComplianceWitness::new(amount, public_inputs.clone());
+    let witness = ComplianceWitness::try_new(amount, public_inputs.clone())
+        .map_err(|e| anyhow::anyhow!("Invalid witness/public inputs: {e}"))?;
     let prover = ComplianceProver::with_policy(policy);
 
     // Generate proof
@@ -584,20 +866,21 @@ fn prove(
 
     // Output proof
     if json_output {
-        let output = serde_json::json!({
-            "proof_b64": base64::engine::general_purpose::STANDARD.encode(&proof.proof_bytes),
-            "proof_hash": proof.proof_hash,
-            "metadata": proof.metadata,
-            "witness_commitment": proof.witness_commitment,
-            "witness_commitment_hex": proof.witness_commitment_hex,
-            "policy": {
-                "type": policy_type.policy_id(),
-                "limit": limit,
-            },
-            "public_inputs": public_inputs,
-        });
-
-        let json_str = serde_json::to_string_pretty(&output)?;
+        let binding = public_inputs
+            .payload_amount_binding(amount)
+            .map_err(|e| anyhow::anyhow!("Failed to derive payload amount binding: {e}"))?;
+        let json_str = if let Some(receipt) = authorization_receipt.as_ref() {
+            let bundle =
+                AgentAuthorizationProofBundle::new(&proof, &public_inputs, &binding, receipt)
+                    .map_err(|e| {
+                        anyhow::anyhow!("Failed to build authorization proof bundle: {e}")
+                    })?;
+            bundle.to_json()?
+        } else {
+            let bundle = ComplianceProofBundle::new(&proof, &public_inputs, &binding)
+                .map_err(|e| anyhow::anyhow!("Failed to build compliance proof bundle: {e}"))?;
+            bundle.to_json()?
+        };
 
         if let Some(path) = output_path {
             fs::write(&path, &json_str)
@@ -628,8 +911,53 @@ fn prove_submit(
     limit: u64,
     policy_type: PolicyType,
     intent_hash: Option<String>,
+    authorization_receipt_path: Option<PathBuf>,
     verify_after: bool,
 ) -> Result<()> {
+    if authorization_receipt_path.is_some()
+        && !matches!(policy_type, PolicyType::AgentAuthorization)
+    {
+        anyhow::bail!("--authorization-receipt requires --policy agent.authorization.v1");
+    }
+
+    let authorization_receipt = if let Some(path) = authorization_receipt_path.as_ref() {
+        let receipt_str = read_text_input(path, "authorization receipt")?;
+        Some(
+            serde_json::from_str::<CommerceAuthorizationReceipt>(&receipt_str)
+                .with_context(|| "Failed to parse authorization receipt JSON")?,
+        )
+    } else {
+        None
+    };
+
+    if let Some(receipt) = authorization_receipt.as_ref() {
+        if receipt.event_id != event_id {
+            anyhow::bail!(
+                "event_id mismatch: submission targets {}, but authorization receipt is for {}",
+                event_id,
+                receipt.event_id
+            );
+        }
+        if amount != receipt.amount {
+            anyhow::bail!(
+                "Amount ({}) must match authorization receipt amount ({})",
+                amount,
+                receipt.amount
+            );
+        }
+    }
+    let mut intent_hash = intent_hash;
+    if let Some(receipt) = authorization_receipt.as_ref() {
+        let receipt_intent_hash = normalize_intent_hash(&receipt.intent_hash)?;
+        if let Some(provided) = intent_hash.as_deref() {
+            if normalize_intent_hash(provided)? != receipt_intent_hash {
+                anyhow::bail!("--intent-hash does not match authorization receipt.intentHash");
+            }
+        } else {
+            intent_hash = Some(receipt_intent_hash);
+        }
+    }
+
     let intent_hash = resolve_intent_hash(policy_type, intent_hash, None)?;
     let policy = policy_type.as_policy(limit, intent_hash.as_deref())?;
     if !policy.validate_amount(amount) {
@@ -665,10 +993,17 @@ fn prove_submit(
         eprintln!("  Event ID: {}", event_id);
         eprintln!("  Policy: {}", policy_id);
 
-        let public_inputs = client
-            .get_public_inputs_validated_with_params(event_id, policy_id, policy_params.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("failed to fetch public inputs: {e}"))?;
+        let public_inputs = if let Some(receipt) = authorization_receipt.as_ref() {
+            client
+                .get_authorization_public_inputs_validated_for_receipt(limit, receipt)
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to fetch authorization public inputs: {e}"))?
+        } else {
+            client
+                .get_public_inputs_validated_with_params(event_id, policy_id, policy_params.clone())
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to fetch public inputs: {e}"))?
+        };
         validate_public_inputs_match_policy(
             &public_inputs,
             policy_type,
@@ -683,27 +1018,29 @@ fn prove_submit(
             policy_type.comparison_desc(),
             limit
         );
-
-        let witness = ComplianceWitness::new(amount, public_inputs);
-        let prover = ComplianceProver::with_policy(policy);
-        let proof = prover
-            .prove(&witness)
-            .map_err(|e| anyhow::anyhow!("proof generation failed: {e:?}"))?;
-
         eprintln!("Submitting proof to sequencer...");
-        let submission = ProofSubmission {
-            event_id,
-            policy_id: policy_id.to_string(),
-            policy_params,
-            proof_bytes: proof.proof_bytes,
-            witness_commitment: proof.witness_commitment,
-            public_inputs: None,
+        let resp = if let Some(receipt) = authorization_receipt.as_ref() {
+            let bundle = client
+                .prove_agent_authorization_bundle(limit, receipt, &public_inputs)
+                .map_err(|e| anyhow::anyhow!("proof generation failed: {e}"))?;
+            client
+                .submit_agent_authorization_bundle(&bundle)
+                .await
+                .map_err(|e| anyhow::anyhow!("proof submission failed: {e}"))?
+        } else {
+            if matches!(policy_type, PolicyType::AgentAuthorization) {
+                eprintln!(
+                    "  Note: submitting a payload-bound proof only; no authorization receipt provided"
+                );
+            }
+            let bundle = client
+                .prove_compliance_bundle(amount, limit, &public_inputs)
+                .map_err(|e| anyhow::anyhow!("proof generation failed: {e}"))?;
+            client
+                .submit_compliance_bundle(&bundle)
+                .await
+                .map_err(|e| anyhow::anyhow!("proof submission failed: {e}"))?
         };
-
-        let resp = client
-            .submit_proof(submission)
-            .await
-            .map_err(|e| anyhow::anyhow!("proof submission failed: {e}"))?;
 
         println!("Submitted proof_id={}", resp.proof_id);
         println!("  proof_hash={}", resp.proof_hash);
@@ -734,19 +1071,77 @@ fn prove_submit(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn verify(
     proof_path: PathBuf,
-    inputs_path: PathBuf,
-    witness_commitment_hex: Option<String>,
+    inputs_path: Option<PathBuf>,
+    cli_witness_commitment_hex: Option<String>,
     authorization_receipt_path: Option<PathBuf>,
+    amount_binding_path: Option<PathBuf>,
     limit: u64,
     policy_type: PolicyType,
     intent_hash: Option<String>,
 ) -> Result<()> {
-    // Load public inputs
-    let inputs_str = read_text_input(&inputs_path, "inputs")?;
-    let public_inputs: CompliancePublicInputs =
-        serde_json::from_str(&inputs_str).with_context(|| "Failed to parse public inputs JSON")?;
+    if authorization_receipt_path.is_some()
+        && !matches!(policy_type, PolicyType::AgentAuthorization)
+    {
+        anyhow::bail!("--authorization-receipt requires --policy agent.authorization.v1");
+    }
+
+    let proof_str = read_text_input(&proof_path, "proof")?;
+    let proof_json = if proof_str.trim().starts_with('{') {
+        Some(serde_json::from_str::<serde_json::Value>(&proof_str)?)
+    } else {
+        None
+    };
+
+    if let Some(json) = proof_json.as_ref() {
+        let is_bundle = json.get("bundleHash").is_some()
+            && json.get("publicInputs").is_some()
+            && json.get("amountBinding").is_some();
+        if is_bundle {
+            if json.get("receipt").is_some() {
+                let bundle = AgentAuthorizationProofBundle::from_json(&proof_str)
+                    .map_err(|e| anyhow::anyhow!("Invalid authorization proof bundle: {e}"))?;
+                return verify_agent_authorization_bundle(
+                    bundle,
+                    inputs_path,
+                    cli_witness_commitment_hex,
+                    authorization_receipt_path,
+                    amount_binding_path,
+                    limit,
+                    policy_type,
+                    intent_hash,
+                );
+            }
+
+            let bundle = ComplianceProofBundle::from_json(&proof_str)
+                .map_err(|e| anyhow::anyhow!("Invalid compliance proof bundle: {e}"))?;
+            return verify_compliance_bundle(
+                bundle,
+                inputs_path,
+                cli_witness_commitment_hex,
+                amount_binding_path,
+                limit,
+                policy_type,
+                intent_hash,
+            );
+        }
+    }
+
+    let public_inputs: CompliancePublicInputs = if let Some(path) = inputs_path.as_ref() {
+        let inputs_str = read_text_input(path, "inputs")?;
+        serde_json::from_str(&inputs_str).with_context(|| "Failed to parse public inputs JSON")?
+    } else if let Some(value) = proof_json.as_ref().and_then(|json| {
+        json.get("public_inputs")
+            .or_else(|| json.get("publicInputs"))
+    }) {
+        parse_public_inputs_value(value, "proof JSON")?
+    } else {
+        anyhow::bail!(
+            "Verification requires --inputs unless the proof JSON embeds canonical publicInputs"
+        );
+    };
     let intent_hash = resolve_intent_hash(policy_type, intent_hash, Some(&public_inputs))?;
     validate_public_inputs_match_policy(
         &public_inputs,
@@ -754,28 +1149,50 @@ fn verify(
         limit,
         intent_hash.as_deref(),
     )?;
-    let authorization_receipt = if let Some(path) = authorization_receipt_path {
-        let receipt_str = read_text_input(&path, "authorization receipt")?;
+
+    let authorization_receipt = if let Some(path) = authorization_receipt_path.as_ref() {
+        let receipt_str = read_text_input(path, "authorization receipt")?;
         Some(
             serde_json::from_str::<CommerceAuthorizationReceipt>(&receipt_str)
                 .with_context(|| "Failed to parse authorization receipt JSON")?,
         )
+    } else if let Some(value) = proof_json.as_ref().and_then(|json| json.get("receipt")) {
+        Some(parse_authorization_receipt_value(value, "proof JSON")?)
     } else {
         None
     };
-    if authorization_receipt.is_some() && !matches!(policy_type, PolicyType::AgentAuthorization) {
-        anyhow::bail!("--authorization-receipt requires --policy agent.authorization.v1");
-    }
-
-    // Load proof
-    let proof_str = read_text_input(&proof_path, "proof")?;
+    let amount_binding = if let Some(path) = amount_binding_path.as_ref() {
+        let binding_str = read_text_input(path, "payload amount binding")?;
+        Some(
+            serde_json::from_str::<PayloadAmountBinding>(&binding_str)
+                .with_context(|| "Failed to parse payload amount binding JSON")?,
+        )
+    } else if let Some(value) = proof_json
+        .as_ref()
+        .and_then(|json| json.get("amountBinding"))
+    {
+        Some(parse_payload_amount_binding_value(value, "proof JSON")?)
+    } else if let Some(receipt) = authorization_receipt.as_ref() {
+        Some(
+            public_inputs
+                .payload_amount_binding(receipt.amount)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to derive payload amount binding from authorization receipt: {e}"
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
 
     // Try to parse as JSON first, then as raw base64
     let (proof_bytes, witness_commitment, witness_commitment_hex): (Vec<u8>, [u64; 4], String) =
-        if proof_str.trim().starts_with('{') {
-            let json: serde_json::Value = serde_json::from_str(&proof_str)?;
-            let b64 = json["proof_b64"]
-                .as_str()
+        if let Some(json) = proof_json.as_ref() {
+            let b64 = json
+                .get("proof_b64")
+                .or_else(|| json.get("proofB64"))
+                .and_then(|value| value.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing proof_b64 field in JSON"))?;
             let bytes = base64::engine::general_purpose::STANDARD.decode(b64)?;
 
@@ -809,8 +1226,10 @@ fn verify(
                 Ok(commitment)
             };
 
-            let (commitment, commitment_hex) = if let Some(wc_hex) =
-                json.get("witness_commitment_hex").and_then(|v| v.as_str())
+            let (commitment, commitment_hex) = if let Some(wc_hex) = json
+                .get("witness_commitment_hex")
+                .or_else(|| json.get("witnessCommitmentHex"))
+                .and_then(|v| v.as_str())
             {
                 (
                     witness_commitment_hex_to_u64(wc_hex)
@@ -833,13 +1252,17 @@ fn verify(
                 .decode(proof_str.trim())
                 .context("Failed to decode raw base64 proof")?;
 
-            let (commitment, commitment_hex) = if let Some(hex) = witness_commitment_hex.as_deref()
+            let (commitment, commitment_hex) = if let Some(hex) =
+                cli_witness_commitment_hex.as_deref()
             {
                 (
                     witness_commitment_hex_to_u64(hex)
                         .map_err(|e| anyhow::anyhow!("Invalid --witness-commitment-hex: {e}"))?,
                     hex.to_string(),
                 )
+            } else if let Some(binding) = amount_binding.as_ref() {
+                let commitment = binding.witness_commitment_u64();
+                (commitment, witness_commitment_u64_to_hex(&commitment))
             } else if let Some(commitment) = public_inputs
                 .witness_commitment_u64()
                 .map_err(|e| anyhow::anyhow!("Invalid witnessCommitment in public inputs: {e}"))?
@@ -847,7 +1270,7 @@ fn verify(
                 (commitment, witness_commitment_u64_to_hex(&commitment))
             } else {
                 anyhow::bail!(
-                "Raw base64 proofs require --witness-commitment-hex or inputs.witnessCommitment"
+                "Raw base64 proofs require --witness-commitment-hex, --amount-binding, or inputs.witnessCommitment"
             );
             };
 
@@ -870,31 +1293,77 @@ fn verify(
 
     let start = Instant::now();
 
-    let bound_public_inputs = public_inputs
-        .bind_witness_commitment(&witness_commitment)
-        .map_err(|e| anyhow::anyhow!("Verification error: {e}"))?;
+    let bound_public_inputs = match (amount_binding.as_ref(), authorization_receipt.as_ref()) {
+        (Some(binding), Some(receipt)) => public_inputs
+            .bind_payload_amount_binding_and_authorization_receipt(binding, receipt)
+            .map_err(|e| anyhow::anyhow!("Verification error: {e}"))?,
+        (Some(binding), None) => public_inputs
+            .bind_payload_amount_binding(binding)
+            .map_err(|e| anyhow::anyhow!("Verification error: {e}"))?,
+        (None, Some(receipt)) => public_inputs
+            .bind_amount_and_authorization_receipt(receipt)
+            .map_err(|e| anyhow::anyhow!("Verification error: {e}"))?,
+        (None, None) => public_inputs
+            .bind_witness_commitment(&witness_commitment)
+            .map_err(|e| anyhow::anyhow!("Verification error: {e}"))?,
+    };
     if bound_public_inputs.witness_commitment.as_deref() != Some(witness_commitment_hex.as_str()) {
         anyhow::bail!("witness commitment hex does not match the bound public inputs");
     }
 
-    let result = if let Some(receipt) = authorization_receipt.as_ref() {
-        verify_agent_authorization_proof_auto_bound(&proof_bytes, &bound_public_inputs, receipt)
-    } else {
-        verify_compliance_proof_auto_bound(&proof_bytes, &bound_public_inputs)
+    let result = match (amount_binding.as_ref(), authorization_receipt.as_ref()) {
+        (Some(binding), Some(receipt)) => {
+            verify_agent_authorization_proof_auto_with_amount_binding(
+                &proof_bytes,
+                &bound_public_inputs,
+                binding,
+                receipt,
+            )
+        }
+        (Some(binding), None) => verify_compliance_proof_auto_with_amount_binding(
+            &proof_bytes,
+            &bound_public_inputs,
+            binding,
+        ),
+        (None, Some(receipt)) => {
+            eprintln!(
+                "  Note: verifying a witness-bound proof only; no payload amount binding provided"
+            );
+            verify_agent_authorization_proof_auto_bound(&proof_bytes, &bound_public_inputs, receipt)
+        }
+        (None, None) => {
+            eprintln!(
+                "  Note: verifying a witness-bound proof only; no payload amount binding provided"
+            );
+            verify_compliance_proof_auto_bound(&proof_bytes, &bound_public_inputs)
+        }
     }
     .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
 
-    if let Some(receipt) = authorization_receipt.as_ref() {
-        verify_agent_authorization_proof_auto_bound_strict(
+    match (amount_binding.as_ref(), authorization_receipt.as_ref()) {
+        (Some(binding), Some(receipt)) => {
+            verify_agent_authorization_proof_auto_with_amount_binding_strict(
+                &proof_bytes,
+                &bound_public_inputs,
+                binding,
+                receipt,
+            )
+        }
+        (Some(binding), None) => verify_compliance_proof_auto_with_amount_binding_strict(
+            &proof_bytes,
+            &bound_public_inputs,
+            binding,
+        ),
+        (None, Some(receipt)) => verify_agent_authorization_proof_auto_bound_witness_strict(
             &proof_bytes,
             &bound_public_inputs,
             receipt,
-        )
-        .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
-    } else {
-        verify_compliance_proof_auto_bound_strict(&proof_bytes, &bound_public_inputs)
-            .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
+        ),
+        (None, None) => {
+            verify_compliance_proof_auto_bound_witness_strict(&proof_bytes, &bound_public_inputs)
+        }
     }
+    .map_err(|e| anyhow::anyhow!("Verification error: {:?}", e))?;
 
     let elapsed = start.elapsed();
 
@@ -921,7 +1390,10 @@ fn inspect(proof_path: PathBuf) -> Result<()> {
         println!("Proof Inspection:");
         println!("  Format: JSON with metadata");
 
-        if let Some(hash) = json.get("proof_hash") {
+        if let Some(hash) = json.get("bundleHash") {
+            println!("  Bundle Hash: {}", hash.as_str().unwrap_or("unknown"));
+        }
+        if let Some(hash) = json.get("proof_hash").or_else(|| json.get("proofHash")) {
             println!("  Proof Hash: {}", hash.as_str().unwrap_or("unknown"));
         }
 
@@ -955,7 +1427,10 @@ fn inspect(proof_path: PathBuf) -> Result<()> {
             }
         }
 
-        if let Some(inputs) = json.get("public_inputs") {
+        if let Some(inputs) = json
+            .get("public_inputs")
+            .or_else(|| json.get("publicInputs"))
+        {
             if let Some(event_id) = inputs.get("eventId") {
                 println!("  Event ID: {}", event_id.as_str().unwrap_or("unknown"));
             }
@@ -967,11 +1442,45 @@ fn inspect(proof_path: PathBuf) -> Result<()> {
             }
         }
 
-        if let Some(b64) = json.get("proof_b64") {
+        if let Some(hash) = json.get("publicInputsHash") {
+            println!(
+                "  Public Inputs Hash: {}",
+                hash.as_str().unwrap_or("unknown")
+            );
+        }
+        if let Some(hash) = json.get("boundPublicInputsHash") {
+            println!(
+                "  Bound Public Inputs Hash: {}",
+                hash.as_str().unwrap_or("unknown")
+            );
+        }
+        if let Some(b64) = json.get("proof_b64").or_else(|| json.get("proofB64")) {
             if let Some(s) = b64.as_str() {
                 if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(s) {
                     println!("  Raw Proof Size: {} bytes", bytes.len());
                 }
+            }
+        }
+        if let Some(binding) = json.get("amountBinding") {
+            if let Some(amount) = binding.get("amount") {
+                println!("  Bound Amount: {}", amount);
+            }
+            if let Some(binding_hash) = binding.get("bindingHash") {
+                println!(
+                    "  Amount Binding Hash: {}",
+                    binding_hash.as_str().unwrap_or("unknown")
+                );
+            }
+        }
+        if let Some(receipt) = json.get("receipt") {
+            if let Some(amount) = receipt.get("amount") {
+                println!("  Receipt Amount: {}", amount);
+            }
+            if let Some(receipt_hash) = receipt.get("receiptHash") {
+                println!(
+                    "  Authorization Receipt Hash: {}",
+                    receipt_hash.as_str().unwrap_or("unknown")
+                );
             }
         }
     } else {
@@ -1034,6 +1543,7 @@ fn generate_random_public_inputs(
         policy_hash: hash.to_hex(),
         witness_commitment: None,
         authorization_receipt_hash: None,
+        amount_binding_hash: None,
     })
 }
 
@@ -1516,6 +2026,7 @@ fn generate_batch_public_inputs(
         policy_hash: hash.to_hex(),
         witness_commitment: None,
         authorization_receipt_hash: None,
+        amount_binding_hash: None,
     })
 }
 

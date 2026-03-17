@@ -64,6 +64,10 @@ pub enum VerifierError {
     )]
     WitnessCommitmentMismatch,
 
+    /// Strict verification requires a payload-derived amount binding artifact.
+    #[error("Payload amount binding required: {0}")]
+    PayloadAmountBindingRequired(String),
+
     /// Proof is too large
     #[error("Proof too large: {size} bytes exceeds maximum of {max_size} bytes")]
     ProofTooLarge { size: usize, max_size: usize },

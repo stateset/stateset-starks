@@ -8,7 +8,9 @@ use std::time::Instant;
 use ves_stark_air::compliance::{ComplianceAir, PublicInputs};
 use ves_stark_air::policy::Policy;
 use ves_stark_primitives::public_inputs::CompliancePublicInputs;
-use ves_stark_primitives::{felt_from_u64, CommerceAuthorizationReceipt, Felt, Hash256};
+use ves_stark_primitives::{
+    felt_from_u64, CommerceAuthorizationReceipt, Felt, Hash256, PayloadAmountBinding,
+};
 use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
 use winter_verifier::{verify, AcceptableOptions};
 
@@ -98,6 +100,9 @@ fn verify_compliance_proof_with_options(
     validate_hex_string("policy_hash", &public_inputs.policy_hash, 64)?;
     if let Some(receipt_hash) = public_inputs.authorization_receipt_hash.as_deref() {
         validate_hex_string("authorization_receipt_hash", receipt_hash, 64)?;
+    }
+    if let Some(amount_binding_hash) = public_inputs.amount_binding_hash.as_deref() {
+        validate_hex_string("amount_binding_hash", amount_binding_hash, 64)?;
     }
 
     // Optional hardening: if the canonical public inputs include a witness commitment, enforce
@@ -248,6 +253,24 @@ fn validate_agent_authorization_receipt_binding(
     Ok(normalized_receipt)
 }
 
+fn bind_public_inputs_to_payload_amount_binding(
+    public_inputs: &CompliancePublicInputs,
+    binding: &PayloadAmountBinding,
+) -> Result<CompliancePublicInputs, VerifierError> {
+    public_inputs
+        .bind_payload_amount_binding(binding)
+        .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))
+}
+
+fn strict_payload_binding_required(
+    payload_complete_fn: &str,
+    witness_only_fn: &str,
+) -> VerifierError {
+    VerifierError::PayloadAmountBindingRequired(format!(
+        "strict verification requires a canonical payload amount binding; use {payload_complete_fn} for payload-complete verification or {witness_only_fn} for witness-only verification"
+    ))
+}
+
 fn verify_agent_authorization_proof_with_options(
     proof_bytes: &[u8],
     public_inputs: &CompliancePublicInputs,
@@ -301,6 +324,23 @@ pub fn verify_compliance_proof_strict(
     policy: &Policy,
     witness_commitment: &[u64; 4],
 ) -> Result<VerificationResult, VerifierError> {
+    let _ = (proof_bytes, public_inputs, policy, witness_commitment);
+    Err(strict_payload_binding_required(
+        "verify_compliance_proof_with_amount_binding_strict",
+        "verify_compliance_proof_witness_strict",
+    ))
+}
+
+/// Verify a witness-bound compliance proof and return an error on invalid proofs.
+///
+/// This helper is explicit about the weaker statement it checks: the proof is bound to the
+/// witness commitment, but no payload-derived amount binding artifact is validated.
+pub fn verify_compliance_proof_witness_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    policy: &Policy,
+    witness_commitment: &[u64; 4],
+) -> Result<VerificationResult, VerifierError> {
     verify_compliance_proof(proof_bytes, public_inputs, policy, witness_commitment)?.ensure_valid()
 }
 
@@ -331,11 +371,101 @@ pub fn verify_agent_authorization_proof_strict(
     witness_commitment: &[u64; 4],
     receipt: &CommerceAuthorizationReceipt,
 ) -> Result<VerificationResult, VerifierError> {
+    let _ = (
+        proof_bytes,
+        public_inputs,
+        policy,
+        witness_commitment,
+        receipt,
+    );
+    Err(strict_payload_binding_required(
+        "verify_agent_authorization_proof_with_amount_binding_strict",
+        "verify_agent_authorization_proof_witness_strict",
+    ))
+}
+
+/// Verify a witness-bound `agent.authorization.v1` proof and return an error on invalid proofs.
+///
+/// This validates the authorization receipt and witness commitment, but does not validate a
+/// payload-derived amount binding artifact.
+pub fn verify_agent_authorization_proof_witness_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    policy: &Policy,
+    witness_commitment: &[u64; 4],
+    receipt: &CommerceAuthorizationReceipt,
+) -> Result<VerificationResult, VerifierError> {
     verify_agent_authorization_proof(
         proof_bytes,
         public_inputs,
         policy,
         witness_commitment,
+        receipt,
+    )?
+    .ensure_valid()
+}
+
+/// Verify a compliance proof against an explicit policy and a payload-derived amount binding.
+pub fn verify_compliance_proof_with_amount_binding(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    policy: &Policy,
+    binding: &PayloadAmountBinding,
+) -> Result<VerificationResult, VerifierError> {
+    let bound_public_inputs = bind_public_inputs_to_payload_amount_binding(public_inputs, binding)?;
+    verify_compliance_proof(
+        proof_bytes,
+        &bound_public_inputs,
+        policy,
+        &binding.witness_commitment_u64(),
+    )
+}
+
+/// Verify a compliance proof against an explicit policy and a payload-derived amount binding, and
+/// return an error on invalid proofs.
+pub fn verify_compliance_proof_with_amount_binding_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    policy: &Policy,
+    binding: &PayloadAmountBinding,
+) -> Result<VerificationResult, VerifierError> {
+    verify_compliance_proof_with_amount_binding(proof_bytes, public_inputs, policy, binding)?
+        .ensure_valid()
+}
+
+/// Verify an `agent.authorization.v1` proof against an explicit policy, payload-derived amount
+/// binding artifact, and canonical authorization receipt.
+pub fn verify_agent_authorization_proof_with_amount_binding(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    policy: &Policy,
+    binding: &PayloadAmountBinding,
+    receipt: &CommerceAuthorizationReceipt,
+) -> Result<VerificationResult, VerifierError> {
+    let bound_public_inputs = bind_public_inputs_to_payload_amount_binding(public_inputs, binding)?;
+    verify_agent_authorization_proof(
+        proof_bytes,
+        &bound_public_inputs,
+        policy,
+        &binding.witness_commitment_u64(),
+        receipt,
+    )
+}
+
+/// Verify an `agent.authorization.v1` proof against an explicit policy, payload-derived amount
+/// binding artifact, and canonical authorization receipt, and return an error on invalid proofs.
+pub fn verify_agent_authorization_proof_with_amount_binding_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    policy: &Policy,
+    binding: &PayloadAmountBinding,
+    receipt: &CommerceAuthorizationReceipt,
+) -> Result<VerificationResult, VerifierError> {
+    verify_agent_authorization_proof_with_amount_binding(
+        proof_bytes,
+        public_inputs,
+        policy,
+        binding,
         receipt,
     )?
     .ensure_valid()
@@ -379,6 +509,21 @@ pub fn verify_agent_authorization_proof_auto_strict(
     witness_commitment: &[u64; 4],
     receipt: &CommerceAuthorizationReceipt,
 ) -> Result<VerificationResult, VerifierError> {
+    let _ = (proof_bytes, public_inputs, witness_commitment, receipt);
+    Err(strict_payload_binding_required(
+        "verify_agent_authorization_proof_auto_with_amount_binding_strict",
+        "verify_agent_authorization_proof_auto_witness_strict",
+    ))
+}
+
+/// Verify a witness-bound `agent.authorization.v1` proof using policy parameters from the public
+/// inputs and return an error on invalid proofs.
+pub fn verify_agent_authorization_proof_auto_witness_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    witness_commitment: &[u64; 4],
+    receipt: &CommerceAuthorizationReceipt,
+) -> Result<VerificationResult, VerifierError> {
     verify_agent_authorization_proof_auto(proof_bytes, public_inputs, witness_commitment, receipt)?
         .ensure_valid()
 }
@@ -390,7 +535,72 @@ pub fn verify_compliance_proof_auto_strict(
     public_inputs: &CompliancePublicInputs,
     witness_commitment: &[u64; 4],
 ) -> Result<VerificationResult, VerifierError> {
+    let _ = (proof_bytes, public_inputs, witness_commitment);
+    Err(strict_payload_binding_required(
+        "verify_compliance_proof_auto_with_amount_binding_strict",
+        "verify_compliance_proof_auto_witness_strict",
+    ))
+}
+
+/// Verify a witness-bound compliance proof using policy parameters from the public inputs and
+/// return an error on invalid proofs.
+pub fn verify_compliance_proof_auto_witness_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    witness_commitment: &[u64; 4],
+) -> Result<VerificationResult, VerifierError> {
     verify_compliance_proof_auto(proof_bytes, public_inputs, witness_commitment)?.ensure_valid()
+}
+
+/// Verify a compliance proof using policy parameters from the public inputs and a payload-derived
+/// amount binding artifact.
+pub fn verify_compliance_proof_auto_with_amount_binding(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    binding: &PayloadAmountBinding,
+) -> Result<VerificationResult, VerifierError> {
+    let bound_public_inputs = bind_public_inputs_to_payload_amount_binding(public_inputs, binding)?;
+    verify_compliance_proof_auto_bound(proof_bytes, &bound_public_inputs)
+}
+
+/// Verify a compliance proof using a payload-derived amount binding artifact and return an error
+/// on invalid proofs.
+pub fn verify_compliance_proof_auto_with_amount_binding_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    binding: &PayloadAmountBinding,
+) -> Result<VerificationResult, VerifierError> {
+    verify_compliance_proof_auto_with_amount_binding(proof_bytes, public_inputs, binding)?
+        .ensure_valid()
+}
+
+/// Verify an `agent.authorization.v1` proof using policy parameters from the public inputs, a
+/// payload-derived amount binding artifact, and a canonical authorization receipt.
+pub fn verify_agent_authorization_proof_auto_with_amount_binding(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    binding: &PayloadAmountBinding,
+    receipt: &CommerceAuthorizationReceipt,
+) -> Result<VerificationResult, VerifierError> {
+    let bound_public_inputs = bind_public_inputs_to_payload_amount_binding(public_inputs, binding)?;
+    verify_agent_authorization_proof_auto_bound(proof_bytes, &bound_public_inputs, receipt)
+}
+
+/// Verify an `agent.authorization.v1` proof using a payload-derived amount binding artifact and
+/// return an error on invalid proofs.
+pub fn verify_agent_authorization_proof_auto_with_amount_binding_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    binding: &PayloadAmountBinding,
+    receipt: &CommerceAuthorizationReceipt,
+) -> Result<VerificationResult, VerifierError> {
+    verify_agent_authorization_proof_auto_with_amount_binding(
+        proof_bytes,
+        public_inputs,
+        binding,
+        receipt,
+    )?
+    .ensure_valid()
 }
 
 /// Verify a compliance proof using policy parameters and witness commitment from the public inputs.
@@ -422,12 +632,39 @@ pub fn verify_agent_authorization_proof_auto_bound_strict(
     public_inputs: &CompliancePublicInputs,
     receipt: &CommerceAuthorizationReceipt,
 ) -> Result<VerificationResult, VerifierError> {
+    let _ = (proof_bytes, public_inputs, receipt);
+    Err(strict_payload_binding_required(
+        "verify_agent_authorization_proof_auto_with_amount_binding_strict",
+        "verify_agent_authorization_proof_auto_bound_witness_strict",
+    ))
+}
+
+/// Verify a witness-bound `agent.authorization.v1` proof using policy parameters and witness
+/// commitment from public inputs and return an error on invalid proofs.
+pub fn verify_agent_authorization_proof_auto_bound_witness_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    receipt: &CommerceAuthorizationReceipt,
+) -> Result<VerificationResult, VerifierError> {
     verify_agent_authorization_proof_auto_bound(proof_bytes, public_inputs, receipt)?.ensure_valid()
 }
 
 /// Verify a compliance proof using policy parameters and witness commitment from
 /// public inputs and return an error on invalid proofs.
 pub fn verify_compliance_proof_auto_bound_strict(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+) -> Result<VerificationResult, VerifierError> {
+    let _ = (proof_bytes, public_inputs);
+    Err(strict_payload_binding_required(
+        "verify_compliance_proof_auto_with_amount_binding_strict",
+        "verify_compliance_proof_auto_bound_witness_strict",
+    ))
+}
+
+/// Verify a witness-bound compliance proof using policy parameters and witness commitment from
+/// public inputs and return an error on invalid proofs.
+pub fn verify_compliance_proof_auto_bound_witness_strict(
     proof_bytes: &[u8],
     public_inputs: &CompliancePublicInputs,
 ) -> Result<VerificationResult, VerifierError> {
@@ -444,29 +681,7 @@ pub struct ComplianceVerifier {
 impl ComplianceVerifier {
     /// Create a new verifier with default options
     pub fn new() -> Self {
-        Self::try_new().unwrap_or_else(|_| Self {
-            acceptable_options: Self::fallback_options(),
-        })
-    }
-
-    fn fallback_options() -> AcceptableOptions {
-        AcceptableOptions::OptionSet(vec![
-            Self::to_winterfell_unchecked(&ves_stark_air::options::ProofOptions::default()),
-            Self::to_winterfell_unchecked(&ves_stark_air::options::ProofOptions::secure()),
-        ])
-    }
-
-    fn to_winterfell_unchecked(
-        options: &ves_stark_air::options::ProofOptions,
-    ) -> winter_air::ProofOptions {
-        winter_air::ProofOptions::new(
-            options.num_queries,
-            options.blowup_factor,
-            options.grinding_factor,
-            options.field_extension,
-            options.fri_folding_factor,
-            31,
-        )
+        Self::try_new().expect("built-in verifier proof options must remain valid")
     }
 
     /// Create a new verifier with default options without panicking
@@ -619,7 +834,7 @@ impl Default for ComplianceVerifier {
 mod tests {
     use super::*;
     use uuid::Uuid;
-    use ves_stark_primitives::public_inputs::PolicyParams;
+    use ves_stark_primitives::public_inputs::{PayloadAmountBinding, PolicyParams};
     use ves_stark_primitives::{CommerceExecution, CommerceIntent};
 
     fn sample_inputs(threshold: u64) -> CompliancePublicInputs {
@@ -641,6 +856,7 @@ mod tests {
             policy_hash: hash.to_hex(),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         }
     }
 
@@ -694,9 +910,30 @@ mod tests {
             policy_hash: policy_hash.to_hex(),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         };
 
         (receipt, inputs, policy)
+    }
+
+    fn sample_payload_amount_binding(
+        inputs: &CompliancePublicInputs,
+        amount: u64,
+    ) -> PayloadAmountBinding {
+        let mut binding = PayloadAmountBinding {
+            event_id: inputs.event_id,
+            tenant_id: inputs.tenant_id,
+            store_id: inputs.store_id,
+            sequence_number: inputs.sequence_number,
+            payload_kind: inputs.payload_kind,
+            payload_plain_hash: inputs.payload_plain_hash.clone(),
+            payload_cipher_hash: inputs.payload_cipher_hash.clone(),
+            event_signing_hash: inputs.event_signing_hash.clone(),
+            amount,
+            binding_hash: String::new(),
+        };
+        binding.binding_hash = binding.compute_hash_hex().unwrap();
+        binding
     }
 
     // =========================================================================
@@ -788,7 +1025,7 @@ mod tests {
         )
         .unwrap();
         assert!(!result.valid);
-        assert!(verify_compliance_proof_strict(
+        assert!(verify_compliance_proof_witness_strict(
             &proof.proof_bytes,
             &inputs,
             &policy,
@@ -1116,6 +1353,7 @@ mod tests {
                 policy_hash: hash.to_hex(),
                 witness_commitment: None,
                 authorization_receipt_hash: None,
+                amount_binding_hash: None,
             };
             assert!(inputs.validate_policy_hash().unwrap());
         }
@@ -1142,6 +1380,66 @@ mod tests {
         let inputs = sample_inputs(threshold);
         let err = verify_compliance_proof_auto_bound(&[], &inputs).unwrap_err();
         assert!(matches!(err, VerifierError::PublicInputMismatch(_)));
+    }
+
+    #[test]
+    fn test_verify_with_amount_binding_accepts_valid_binding() {
+        let threshold = 10_000u64;
+        let amount = 5_000u64;
+        let inputs = sample_inputs(threshold);
+        let binding = sample_payload_amount_binding(&inputs, amount);
+        let witness = ves_stark_prover::ComplianceWitness::new(amount, inputs.clone());
+        let proof =
+            ves_stark_prover::ComplianceProver::with_policy(Policy::aml_threshold(threshold))
+                .prove(&witness)
+                .unwrap();
+
+        let result =
+            verify_compliance_proof_auto_with_amount_binding(&proof.proof_bytes, &inputs, &binding)
+                .unwrap();
+        assert!(result.valid, "{:?}", result.error);
+    }
+
+    #[test]
+    fn test_verify_with_amount_binding_rejects_payload_mismatch() {
+        let threshold = 10_000u64;
+        let amount = 5_000u64;
+        let inputs = sample_inputs(threshold);
+        let mut binding = sample_payload_amount_binding(&inputs, amount);
+        binding.payload_plain_hash = "f".repeat(64);
+        binding.binding_hash = binding.compute_hash_hex().unwrap();
+
+        let witness = ves_stark_prover::ComplianceWitness::new(amount, inputs.clone());
+        let proof =
+            ves_stark_prover::ComplianceProver::with_policy(Policy::aml_threshold(threshold))
+                .prove(&witness)
+                .unwrap();
+
+        let err =
+            verify_compliance_proof_auto_with_amount_binding(&proof.proof_bytes, &inputs, &binding)
+                .unwrap_err();
+        assert!(matches!(err, VerifierError::PublicInputMismatch(_)));
+    }
+
+    #[test]
+    fn test_strict_verification_requires_payload_binding_artifact() {
+        let threshold = 10_000u64;
+        let inputs = sample_inputs(threshold);
+        let policy = Policy::aml_threshold(threshold);
+        let witness_commitment = [0u64; 4];
+
+        assert!(matches!(
+            verify_compliance_proof_strict(&[], &inputs, &policy, &witness_commitment),
+            Err(VerifierError::PayloadAmountBindingRequired(_))
+        ));
+        assert!(matches!(
+            verify_compliance_proof_auto_strict(&[], &inputs, &witness_commitment),
+            Err(VerifierError::PayloadAmountBindingRequired(_))
+        ));
+        assert!(matches!(
+            verify_compliance_proof_auto_bound_strict(&[], &inputs),
+            Err(VerifierError::PayloadAmountBindingRequired(_))
+        ));
     }
 
     #[test]

@@ -106,39 +106,7 @@ impl TraceBuilder {
 
     /// Build the execution trace
     pub fn build(self) -> Result<TraceTable<Felt>, ProverError> {
-        // Validate witness against the policy
-        if !self.policy.validate_amount(self.witness.amount) {
-            return Err(ProverError::policy_validation_failed(format!(
-                "Amount {} does not satisfy policy {} with limit {}",
-                self.witness.amount,
-                self.policy.policy_id(),
-                self.policy.limit()
-            )));
-        }
-
-        // Validate public inputs policy hash + match policy parameters
-        let policy_hash_valid = self
-            .witness
-            .public_inputs
-            .validate_policy_hash()
-            .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?;
-        if !policy_hash_valid {
-            return Err(ProverError::InvalidPublicInputs(
-                "Policy hash mismatch".to_string(),
-            ));
-        }
-        let inputs_policy = Policy::from_public_inputs(
-            &self.witness.public_inputs.policy_id,
-            &self.witness.public_inputs.policy_params,
-        )
-        .map_err(|e| ProverError::InvalidPublicInputs(format!("Invalid policy params: {e}")))?;
-        if inputs_policy != self.policy {
-            return Err(ProverError::InvalidPublicInputs(format!(
-                "Policy mismatch: public inputs are for {}, trace built for {}",
-                inputs_policy.policy_id(),
-                self.policy.policy_id()
-            )));
-        }
+        self.witness.validate(&self.policy)?;
 
         // Initialize trace columns
         let mut trace = vec![vec![FELT_ZERO; self.trace_length]; TRACE_WIDTH];
@@ -348,6 +316,7 @@ mod tests {
             policy_hash: hash.to_hex(),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         }
     }
 
@@ -370,6 +339,7 @@ mod tests {
             policy_hash: hash.to_hex(),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         }
     }
 

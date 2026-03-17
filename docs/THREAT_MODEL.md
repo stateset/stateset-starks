@@ -10,7 +10,7 @@ This threat model covers:
 
 It explicitly does not cover:
 - Payload encryption/decryption correctness
-- Payload-to-amount linkage
+- Payload-to-amount linkage inside the AIR
 
 ## Statement Proven (Per-Event Compliance)
 
@@ -31,13 +31,19 @@ Optional hardening: the canonical public inputs may include `witnessCommitment` 
 hex-encoded). If present, verifiers should require it matches the proof's witness commitment to
 bind the proved witness to the canonical public inputs.
 
+Optional protocol-level hardening: the canonical public inputs may also include
+`amountBindingHash`, the hash of a canonical `PayloadAmountBinding` artifact derived from the event
+payload. When present, verifiers should require the binding artifact to match the event metadata,
+payload hashes, and witness commitment.
+
 Repository hardening note: the CLI and the Node/Python bindings now bind `witnessCommitment` into
 the public-input object before verification by default, and local bound-hash helpers include that
 field in hashed artifacts.
 
-Important: the current AIR does **not** prove that `amount` is derived from, equal to, or otherwise
-consistent with the payload hashes in the public inputs. That linkage must be enforced by the
-surrounding protocol/pipeline (or by extending the AIR).
+Important: the current AIR still does **not** prove that `amount` is derived from, equal to, or
+otherwise consistent with the payload hashes in the public inputs. This repository now supports a
+canonical protocol-level binding artifact for that purpose, but the payload parser/derivation logic
+and any signatures or attestations around it remain part of the surrounding protocol.
 
 ## Adversary Model
 
@@ -84,8 +90,9 @@ limit into the trace via boundary assertions.
 ### Amount-to-Payload Binding
 
 The AIR does not bind `amount` to payload hashes. Applications must not interpret a valid proof as
-meaning "the encrypted payload's amount is compliant" unless the surrounding protocol enforces the
-link (e.g., decryption/parsing + signed statement that binds `amount` to the payload hashes).
+meaning "the encrypted payload's amount is compliant" unless the surrounding protocol also enforces
+the link. This repository now provides a canonical `PayloadAmountBinding` artifact and
+`amountBindingHash` public-input support for that protocol-level enforcement.
 
 ### Replay Protection
 
@@ -127,8 +134,9 @@ Attack: swap event metadata or payload hashes while reusing a proof.
 Mitigation: the AIR binds public inputs into dedicated trace columns via boundary assertions.
 
 Important caveat: because public inputs are not linked to `amount` inside the AIR, a malicious
-prover could generate a valid proof for a chosen `amount` and arbitrary payload hashes. Preventing
-this requires amount-to-payload binding in the surrounding protocol (or in the AIR).
+prover could still generate a valid proof for a chosen `amount` and arbitrary payload hashes unless
+verifiers also require a matching protocol-level payload amount binding. Preventing this entirely
+inside the proof statement would require extending the AIR.
 
 When applications maintain ordered streams of public-input hashes locally, they should prefer the
 bound public-input hash that includes `witnessCommitment` so the stream commits to the proved

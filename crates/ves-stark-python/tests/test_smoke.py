@@ -58,6 +58,21 @@ def test_prove_verify_bound_smoke() -> None:
         ves_stark.verify(proof.proof_bytes, inputs_wrong, proof.witness_commitment)
 
 
+def test_verify_with_amount_binding_smoke() -> None:
+    policy = ves_stark.Policy.aml_threshold(10_000)
+    inputs = _mk_public_inputs()
+    proof = ves_stark.prove(5_000, inputs, policy)
+
+    amount_binding = ves_stark.create_payload_amount_binding(inputs, 5_000)
+    ok = ves_stark.verify_with_amount_binding(proof.proof_bytes, inputs, amount_binding)
+    assert ok.valid, ok.error
+
+    tampered_binding = dict(amount_binding)
+    tampered_binding["amount"] = 5_001
+    with pytest.raises(ValueError, match="payload amount binding"):
+        ves_stark.verify_with_amount_binding(proof.proof_bytes, inputs, tampered_binding)
+
+
 def test_prove_verify_order_total_cap_smoke() -> None:
     policy_id = "order_total.cap"
     policy_params = {"cap": 10_000}

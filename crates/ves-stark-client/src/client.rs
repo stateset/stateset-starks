@@ -249,7 +249,8 @@ impl SequencerClient {
     }
 
     /// Get public inputs for an agent.authorization.v1 policy from a receipt, validate the
-    /// sequencer hash, and bind the receipt hash plus witness commitment locally.
+    /// sequencer hash, and bind both the receipt hash and the implied payload amount binding
+    /// locally.
     pub async fn get_authorization_public_inputs_bound_for_receipt(
         &self,
         max_total: u64,
@@ -259,8 +260,20 @@ impl SequencerClient {
             .get_authorization_public_inputs_validated_for_receipt(max_total, receipt)
             .await?;
         inputs
-            .bind_authorization_receipt(receipt)
+            .bind_amount_and_authorization_receipt(receipt)
             .map_err(|e| ClientError::InvalidPublicInputs(format!("{e}")))
+    }
+
+    /// Get public inputs for an agent.authorization.v1 policy from a receipt, validate the
+    /// sequencer hash, and bind both the canonical payload amount binding and receipt hash
+    /// locally.
+    pub async fn get_authorization_public_inputs_canonical_for_receipt(
+        &self,
+        max_total: u64,
+        receipt: &ves_stark_primitives::CommerceAuthorizationReceipt,
+    ) -> Result<ves_stark_primitives::public_inputs::CompliancePublicInputs> {
+        self.get_authorization_public_inputs_bound_for_receipt(max_total, receipt)
+            .await
     }
 
     /// Get public inputs and validate that the sequencer-provided hash matches the
@@ -339,6 +352,14 @@ impl SequencerClient {
         self.submit_proof(bundle.to_submission()?).await
     }
 
+    /// Submit a canonical payload-bound compliance proof bundle.
+    pub async fn submit_compliance_bundle(
+        &self,
+        bundle: &ComplianceProofBundle,
+    ) -> Result<SubmitProofResponse> {
+        self.submit_proof(bundle.to_submission()?).await
+    }
+
     /// List all proofs for an event
     pub async fn list_proofs(&self, event_id: Uuid) -> Result<ListProofsResponse> {
         let url = format!(
@@ -413,22 +434,15 @@ impl SequencerClient {
     /// This is a convenience method that:
     /// 1. Creates a witness from the amount and public inputs
     /// 2. Generates a STARK proof
-    /// 3. Submits the proof to the sequencer
-    pub async fn prove_and_submit(
+    /// 3. Builds a canonical payload-bound proof bundle
+    /// 4. Submits the derived proof submission to the sequencer
+    pub fn prove_compliance_bundle(
         &self,
-        event_id: Uuid,
         amount: u64,
         policy_limit: u64,
         public_inputs: &ves_stark_primitives::public_inputs::CompliancePublicInputs,
-    ) -> Result<SubmitProofResponse> {
+    ) -> Result<ComplianceProofBundle> {
         use ves_stark_prover::{ComplianceProver, ComplianceWitness};
-
-        if public_inputs.event_id != event_id {
-            return Err(ClientError::InvalidPublicInputs(format!(
-                "event_id mismatch: submission targets {}, but public inputs are for {}",
-                event_id, public_inputs.event_id
-            )));
-        }
 
         let policy =
             Policy::from_public_inputs(&public_inputs.policy_id, &public_inputs.policy_params)
@@ -445,32 +459,105 @@ impl SequencerClient {
             )));
         }
 
-        // Create witness
-        let witness = ComplianceWitness::new(amount, public_inputs.clone());
+        let witness = ComplianceWitness::try_new(amount, public_inputs.clone())
+            .map_err(|e| ClientError::InvalidPublicInputs(format!("{e}")))?;
         let prover = ComplianceProver::with_policy(policy);
-
-        // Generate proof
         let proof = prover
             .prove(&witness)
             .map_err(|e| ClientError::ProofGeneration(format!("{e}")))?;
+        let binding = public_inputs
+            .payload_amount_binding(amount)
+            .map_err(|e| ClientError::InvalidPublicInputs(format!("{e}")))?;
 
-        // Submit proof
-        let submission = ProofSubmission {
-            event_id,
-            policy_id: public_inputs.policy_id.clone(),
-            policy_params: public_inputs.policy_params.to_json_value(),
-            proof_bytes: proof.proof_bytes,
-            witness_commitment: proof.witness_commitment,
-            public_inputs: None,
+        ComplianceProofBundle::new(&proof, public_inputs, &binding)
+    }
+
+    /// Generate a canonical `agent.authorization.v1` proof bundle from public inputs and a
+    /// delegated-commerce receipt.
+    pub fn prove_agent_authorization_bundle(
+        &self,
+        max_total: u64,
+        receipt: &ves_stark_primitives::CommerceAuthorizationReceipt,
+        public_inputs: &ves_stark_primitives::public_inputs::CompliancePublicInputs,
+    ) -> Result<AgentAuthorizationProofBundle> {
+        use ves_stark_prover::{ComplianceProver, ComplianceWitness};
+
+        let policy =
+            Policy::from_public_inputs(&public_inputs.policy_id, &public_inputs.policy_params)
+                .map_err(|e| {
+                    ClientError::InvalidPublicInputs(format!("invalid public inputs policy: {e}"))
+                })?;
+
+        if policy.policy_id() != "agent.authorization.v1" {
+            return Err(ClientError::InvalidPublicInputs(format!(
+                "Policy mismatch for authorization bundle: expected agent.authorization.v1, got {}",
+                public_inputs.policy_id
+            )));
         }
-        .with_public_inputs(public_inputs.clone())?;
-        self.submit_proof(submission).await
+        if policy.limit() != max_total {
+            return Err(ClientError::InvalidPublicInputs(format!(
+                "Policy limit mismatch for policy {}: expected {}, got {}",
+                public_inputs.policy_id,
+                policy.limit(),
+                max_total
+            )));
+        }
+
+        public_inputs
+            .validate_authorization_receipt(receipt)
+            .map_err(|e| ClientError::InvalidPublicInputs(format!("{e}")))?;
+
+        let witness = ComplianceWitness::try_new(receipt.amount, public_inputs.clone())
+            .map_err(|e| ClientError::InvalidPublicInputs(format!("{e}")))?;
+        let prover = ComplianceProver::with_policy(policy);
+        let proof = prover
+            .prove(&witness)
+            .map_err(|e| ClientError::ProofGeneration(format!("{e}")))?;
+        let binding = public_inputs
+            .payload_amount_binding(receipt.amount)
+            .map_err(|e| ClientError::InvalidPublicInputs(format!("{e}")))?;
+
+        AgentAuthorizationProofBundle::new(&proof, public_inputs, &binding, receipt)
+    }
+
+    /// Generate and submit a proof for an event.
+    pub async fn prove_and_submit(
+        &self,
+        event_id: Uuid,
+        amount: u64,
+        policy_limit: u64,
+        public_inputs: &ves_stark_primitives::public_inputs::CompliancePublicInputs,
+    ) -> Result<SubmitProofResponse> {
+        if public_inputs.event_id != event_id {
+            return Err(ClientError::InvalidPublicInputs(format!(
+                "event_id mismatch: submission targets {}, but public inputs are for {}",
+                event_id, public_inputs.event_id
+            )));
+        }
+        let bundle = self.prove_compliance_bundle(amount, policy_limit, public_inputs)?;
+        self.submit_compliance_bundle(&bundle).await
+    }
+
+    /// Generate and submit an `agent.authorization.v1` proof bundle for a delegated-commerce
+    /// receipt.
+    pub async fn prove_agent_authorization_and_submit(
+        &self,
+        max_total: u64,
+        receipt: &ves_stark_primitives::CommerceAuthorizationReceipt,
+        public_inputs: &ves_stark_primitives::public_inputs::CompliancePublicInputs,
+    ) -> Result<SubmitProofResponse> {
+        let bundle = self.prove_agent_authorization_bundle(max_total, receipt, public_inputs)?;
+        self.submit_agent_authorization_bundle(&bundle).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ves_stark_primitives::public_inputs::{
+        compute_policy_hash, CompliancePublicInputs, PolicyParams,
+    };
+    use ves_stark_primitives::{CommerceAuthorizationReceipt, CommerceExecution, CommerceIntent};
 
     #[test]
     fn test_client_creation() {
@@ -536,5 +623,113 @@ mod tests {
             ProofSubmission::order_total_cap(event_id, 10000, vec![1, 2, 3, 4], [0, 0, 0, 0]);
         assert_eq!(submission.policy_id, "order_total.cap");
         assert_eq!(submission.event_id, event_id);
+    }
+
+    #[test]
+    fn test_prove_compliance_bundle_binds_amount_artifact() {
+        let threshold = 10_000u64;
+        let params = PolicyParams::threshold(threshold);
+        let policy_hash = compute_policy_hash("aml.threshold", &params).unwrap();
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "a".repeat(64),
+            payload_cipher_hash: "b".repeat(64),
+            event_signing_hash: "c".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: params,
+            policy_hash: policy_hash.to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+            amount_binding_hash: None,
+        };
+
+        let client = SequencerClient::new("http://localhost:8080", "test_key").unwrap();
+        let bundle = client
+            .prove_compliance_bundle(5_000, threshold, &inputs)
+            .unwrap();
+
+        assert!(bundle.public_inputs.witness_commitment.is_some());
+        assert!(bundle.public_inputs.amount_binding_hash.is_some());
+        assert_eq!(bundle.amount_binding.amount, 5_000);
+    }
+
+    fn sample_authorization_receipt() -> CommerceAuthorizationReceipt {
+        let intent = CommerceIntent {
+            intent_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+            delegation_id: Uuid::new_v4(),
+            currency: "USD".to_string(),
+            max_total: 25_000,
+            merchant: Some("Acme Market".to_string()),
+            payee: Some("settlement@stateset.app".to_string()),
+            allowed_skus: vec!["sku-a".to_string()],
+            allowed_categories: vec!["produce".to_string()],
+            shipping_country: Some("US".to_string()),
+            expires_at: 1_900_000_000,
+            nonce: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+        };
+        let execution = CommerceExecution {
+            event_id: Uuid::new_v4(),
+            sequence_number: 7,
+            currency: "USD".to_string(),
+            amount: 5_000,
+            merchant: "Acme Market".to_string(),
+            payee: "settlement@stateset.app".to_string(),
+            sku_ids: vec!["sku-a".to_string()],
+            category_ids: vec!["produce".to_string()],
+            shipping_country: Some("US".to_string()),
+            executed_at: 1_800_000_000,
+        };
+        intent.authorize_execution(&execution).unwrap()
+    }
+
+    fn sample_authorization_inputs(
+        max_total: u64,
+        receipt: &CommerceAuthorizationReceipt,
+    ) -> CompliancePublicInputs {
+        let params = PolicyParams::agent_authorization(max_total, &receipt.intent_hash).unwrap();
+        let policy_hash = compute_policy_hash("agent.authorization.v1", &params).unwrap();
+
+        CompliancePublicInputs {
+            event_id: receipt.event_id,
+            tenant_id: receipt.tenant_id,
+            store_id: receipt.store_id,
+            sequence_number: receipt.sequence_number,
+            payload_kind: 1,
+            payload_plain_hash: "a".repeat(64),
+            payload_cipher_hash: "b".repeat(64),
+            event_signing_hash: "c".repeat(64),
+            policy_id: "agent.authorization.v1".to_string(),
+            policy_params: params,
+            policy_hash: policy_hash.to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+            amount_binding_hash: None,
+        }
+    }
+
+    #[test]
+    fn test_prove_agent_authorization_bundle_binds_receipt_and_amount_artifact() {
+        let receipt = sample_authorization_receipt();
+        let inputs = sample_authorization_inputs(25_000, &receipt);
+        let client = SequencerClient::new("http://localhost:8080", "test_key").unwrap();
+
+        let bundle = client
+            .prove_agent_authorization_bundle(25_000, &receipt, &inputs)
+            .unwrap();
+
+        assert!(bundle.public_inputs.witness_commitment.is_some());
+        assert!(bundle.public_inputs.amount_binding_hash.is_some());
+        assert_eq!(
+            bundle.public_inputs.authorization_receipt_hash,
+            Some(receipt.receipt_hash.clone())
+        );
+        assert_eq!(bundle.amount_binding.amount, receipt.amount);
     }
 }

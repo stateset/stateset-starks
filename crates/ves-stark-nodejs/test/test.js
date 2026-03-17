@@ -56,6 +56,28 @@ assert.strictEqual(ok.valid, true, ok.error || 'verification failed')
 assert.strictEqual(typeof ok.policyLimit, 'bigint')
 assert.strictEqual(ok.policyLimit, policyLimit)
 
+const amountBinding = ves.createPayloadAmountBinding(publicInputsBase, amount)
+assert.strictEqual(typeof amountBinding.bindingHash, 'string')
+assert.strictEqual(amountBinding.bindingHash.length, 64)
+
+const okWithBinding = ves.verifyWithAmountBinding(
+  proof.proofBytes,
+  publicInputsBase,
+  amountBinding
+)
+assert.strictEqual(okWithBinding.valid, true, okWithBinding.error || 'binding verification failed')
+assert.strictEqual(okWithBinding.policyLimit, policyLimit)
+
+const tamperedBinding = {
+  ...amountBinding,
+  amount: Number(amount) + 1,
+}
+
+assert.throws(
+  () => ves.verifyWithAmountBinding(proof.proofBytes, publicInputsBase, tamperedBinding),
+  /payload amount binding/i
+)
+
 // Negative test: mismatch between public_inputs.witnessCommitment and provided witness commitment must fail.
 const wrongWitnessCommitmentHex =
   proof.witnessCommitmentHex.slice(0, -1) + (proof.witnessCommitmentHex.endsWith('0') ? '1' : '0')

@@ -1,0 +1,2550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StateSet STARK &mdash; Privacy-Preserving Commerce Compliance</title>
+
+<!-- Typography -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,500;1,600&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+
+<style>
+/* ================================================================
+   RESET & BASE
+   ================================================================ */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --navy: #0a1628;
+  --navy-90: #0f1d33;
+  --navy-80: #162644;
+  --navy-60: #2a3f66;
+  --navy-40: #4d6491;
+  --navy-20: #8fa2c4;
+  --off-white: #faf8f5;
+  --paper: #f5f2ed;
+  --paper-dark: #ebe7e0;
+  --blue: #2563eb;
+  --blue-light: #3b82f6;
+  --blue-muted: #93b4f7;
+  --gold: #c9a84c;
+  --gold-light: #d4bc72;
+  --gold-dark: #a08530;
+  --text: #1a1a1a;
+  --text-secondary: #4a4a4a;
+  --text-light: #6b6b6b;
+  --rule: rgba(10, 22, 40, 0.12);
+  --rule-dark: rgba(10, 22, 40, 0.25);
+}
+
+html {
+  font-size: 17px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--text);
+  background: var(--off-white);
+  line-height: 1.7;
+  overflow-x: hidden;
+}
+
+/* Paper grain texture via CSS */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='1'/%3E%3C/svg%3E");
+  background-size: 256px 256px;
+}
+
+/* ================================================================
+   TYPOGRAPHY
+   ================================================================ */
+h1, h2, h3, h4 {
+  font-family: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--navy);
+}
+
+h1 { font-size: 3.8rem; line-height: 1.08; font-weight: 700; letter-spacing: -0.025em; }
+h2 { font-size: 2.2rem; line-height: 1.18; margin-bottom: 1.5rem; }
+h3 { font-size: 1.45rem; line-height: 1.3; margin-bottom: 1rem; font-weight: 500; }
+h4 { font-size: 1.1rem; line-height: 1.35; margin-bottom: 0.75rem; font-weight: 600; }
+
+p {
+  margin-bottom: 1.25rem;
+  font-weight: 400;
+  font-size: 1rem;
+}
+
+.lead {
+  font-size: 1.2rem;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  font-weight: 300;
+}
+
+.small-caps {
+  font-variant: small-caps;
+  letter-spacing: 0.08em;
+  font-weight: 500;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+}
+
+.label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--navy-40);
+}
+
+.label-gold {
+  color: var(--gold-dark);
+}
+
+.section-number {
+  font-family: 'Playfair Display', serif;
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--gold);
+  display: block;
+  margin-bottom: 0.5rem;
+  letter-spacing: 0.06em;
+}
+
+/* ================================================================
+   LAYOUT
+   ================================================================ */
+.container {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 0 3rem;
+}
+
+.container-narrow {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 0 3rem;
+}
+
+section {
+  padding: 5rem 0;
+}
+
+/* Two-column magazine grid */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3.5rem;
+}
+
+.three-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 2.5rem;
+}
+
+/* ================================================================
+   HAIRLINE RULES & DIVIDERS
+   ================================================================ */
+.rule {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: 3.5rem 0;
+}
+
+.rule-gold {
+  border-top: 1px solid var(--gold);
+  opacity: 0.5;
+}
+
+.rule-thick {
+  border-top: 2px solid var(--navy);
+}
+
+.section-divider {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  margin: 5rem 0 3rem;
+}
+
+.section-divider::before,
+.section-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--rule-dark);
+}
+
+.section-divider span {
+  font-family: 'Playfair Display', serif;
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+  color: var(--gold);
+  white-space: nowrap;
+}
+
+/* ================================================================
+   COVER / HERO
+   ================================================================ */
+.cover {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background: var(--navy);
+  color: white;
+  position: relative;
+  overflow: hidden;
+  padding: 4rem 0;
+}
+
+.cover::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background:
+    radial-gradient(ellipse 80% 60% at 70% 40%, rgba(37, 99, 235, 0.12) 0%, transparent 70%),
+    radial-gradient(ellipse 50% 50% at 20% 80%, rgba(201, 168, 76, 0.08) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+/* Geometric grid pattern */
+.cover::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+  background-size: 80px 80px;
+  pointer-events: none;
+}
+
+.cover-content {
+  position: relative;
+  z-index: 1;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 0 3rem;
+}
+
+.cover-topline {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  margin-bottom: 4rem;
+}
+
+.cover-topline .logo-text {
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 700;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: rgba(255,255,255,0.6);
+}
+
+.cover-topline .divider {
+  width: 40px;
+  height: 1px;
+  background: var(--gold);
+}
+
+.cover-topline .doc-type {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--gold);
+  font-weight: 500;
+}
+
+.cover h1 {
+  color: white;
+  font-size: 4.5rem;
+  line-height: 1.05;
+  max-width: 800px;
+  margin-bottom: 2rem;
+  font-weight: 700;
+}
+
+.cover h1 em {
+  font-style: italic;
+  color: var(--gold-light);
+}
+
+.cover-subtitle {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: rgba(255,255,255,0.7);
+  max-width: 600px;
+  line-height: 1.45;
+  margin-bottom: 4rem;
+  font-style: italic;
+}
+
+.cover-meta {
+  display: flex;
+  gap: 4rem;
+  border-top: 1px solid rgba(255,255,255,0.12);
+  padding-top: 2rem;
+}
+
+.cover-meta-item .label {
+  color: rgba(255,255,255,0.35);
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.cover-meta-item .value {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.95rem;
+  color: rgba(255,255,255,0.8);
+  font-weight: 400;
+}
+
+/* ================================================================
+   EXECUTIVE SUMMARY BAR
+   ================================================================ */
+.exec-bar {
+  background: var(--navy);
+  color: white;
+  padding: 4rem 0;
+  border-bottom: 3px solid var(--gold);
+}
+
+.exec-bar h2 {
+  color: white;
+  font-size: 1.1rem;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin-bottom: 2rem;
+  opacity: 0.5;
+}
+
+.exec-bar .lead {
+  color: rgba(255,255,255,0.85);
+  font-size: 1.35rem;
+  line-height: 1.6;
+  max-width: 900px;
+  font-weight: 300;
+}
+
+.exec-bar .lead strong {
+  color: var(--gold-light);
+  font-weight: 500;
+}
+
+/* ================================================================
+   PULL QUOTES
+   ================================================================ */
+.pull-quote {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.65rem;
+  font-style: italic;
+  line-height: 1.4;
+  color: var(--navy);
+  border-left: 3px solid var(--gold);
+  padding: 1rem 0 1rem 2rem;
+  margin: 2.5rem 0;
+  position: relative;
+}
+
+.pull-quote-break {
+  font-family: 'Playfair Display', serif;
+  font-size: 2rem;
+  font-style: italic;
+  line-height: 1.35;
+  color: var(--navy);
+  text-align: center;
+  padding: 3rem 4rem;
+  margin: 4rem -2rem;
+  position: relative;
+}
+
+.pull-quote-break::before,
+.pull-quote-break::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60px;
+  height: 1px;
+  background: var(--gold);
+}
+
+.pull-quote-break::before { top: 0; }
+.pull-quote-break::after { bottom: 0; }
+
+/* ================================================================
+   KEY STAT BOXES
+   ================================================================ */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  margin: 3rem 0;
+  border-top: 2px solid var(--navy);
+  border-bottom: 1px solid var(--rule);
+}
+
+.stat-box {
+  padding: 2rem 1.5rem;
+  border-right: 1px solid var(--rule);
+}
+
+.stat-box:last-child {
+  border-right: none;
+}
+
+.stat-box .stat-value {
+  font-family: 'Playfair Display', serif;
+  font-size: 2.8rem;
+  font-weight: 700;
+  color: var(--navy);
+  line-height: 1;
+  margin-bottom: 0.5rem;
+}
+
+.stat-box .stat-value .stat-unit {
+  font-size: 1.4rem;
+  font-weight: 400;
+  color: var(--navy-40);
+}
+
+.stat-box .stat-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-light);
+  font-weight: 500;
+}
+
+/* ================================================================
+   CARDS
+   ================================================================ */
+.card {
+  background: white;
+  border: 1px solid var(--rule);
+  padding: 2.5rem;
+  position: relative;
+}
+
+.card-navy {
+  background: var(--navy);
+  color: white;
+  border: none;
+}
+
+.card-navy h3,
+.card-navy h4 {
+  color: white;
+}
+
+.card-navy p {
+  color: rgba(255,255,255,0.75);
+}
+
+.card-accent {
+  border-top: 3px solid var(--gold);
+}
+
+.card-blue {
+  border-top: 3px solid var(--blue);
+}
+
+.card .card-number {
+  font-family: 'Playfair Display', serif;
+  font-size: 3rem;
+  font-weight: 700;
+  color: var(--paper-dark);
+  position: absolute;
+  top: 1.5rem;
+  right: 1.5rem;
+  line-height: 1;
+}
+
+.card-navy .card-number {
+  color: rgba(255,255,255,0.08);
+}
+
+/* ================================================================
+   TABLES
+   ================================================================ */
+.table-wrap {
+  margin: 2rem 0;
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+thead th {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+  color: var(--navy-40);
+  text-align: left;
+  padding: 1rem 1.25rem;
+  border-bottom: 2px solid var(--navy);
+  white-space: nowrap;
+}
+
+tbody td {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:hover {
+  background: rgba(37, 99, 235, 0.03);
+}
+
+.table-highlight td {
+  background: rgba(201, 168, 76, 0.06);
+  font-weight: 500;
+}
+
+/* ================================================================
+   CODE BLOCKS
+   ================================================================ */
+.code-block {
+  background: var(--navy);
+  color: #e2e8f0;
+  padding: 2rem 2.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  overflow-x: auto;
+  margin: 2rem 0;
+  position: relative;
+  border-left: 3px solid var(--blue);
+}
+
+.code-block .code-lang {
+  position: absolute;
+  top: 0.75rem;
+  right: 1rem;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--navy-40);
+  font-weight: 600;
+}
+
+.code-block .kw { color: #7dd3fc; }
+.code-block .fn { color: #a78bfa; }
+.code-block .str { color: #86efac; }
+.code-block .cm { color: #64748b; }
+.code-block .num { color: #fbbf24; }
+
+code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.88em;
+  background: rgba(10, 22, 40, 0.06);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  color: var(--navy-80);
+}
+
+/* ================================================================
+   ARCHITECTURE DIAGRAM
+   ================================================================ */
+.arch-diagram {
+  margin: 3rem 0;
+  padding: 3rem;
+  background: white;
+  border: 1px solid var(--rule);
+  position: relative;
+}
+
+.arch-layer {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 2rem;
+  padding: 1.5rem 0;
+  border-bottom: 1px solid var(--rule);
+  align-items: start;
+}
+
+.arch-layer:last-child {
+  border-bottom: none;
+}
+
+.arch-layer-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--navy-40);
+  font-weight: 600;
+  padding-top: 0.5rem;
+}
+
+.arch-layer-content {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.arch-block {
+  padding: 0.6rem 1.2rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  border: 1px solid var(--rule-dark);
+  background: var(--off-white);
+  color: var(--navy);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.arch-block-primary {
+  background: var(--navy);
+  color: white;
+  border-color: var(--navy);
+}
+
+.arch-block-accent {
+  background: var(--blue);
+  color: white;
+  border-color: var(--blue);
+}
+
+.arch-block-gold {
+  border-color: var(--gold);
+  background: rgba(201, 168, 76, 0.08);
+}
+
+/* ================================================================
+   FLOW DIAGRAM
+   ================================================================ */
+.flow {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin: 3rem 0;
+  overflow-x: auto;
+}
+
+.flow-step {
+  flex: 1;
+  min-width: 180px;
+  padding: 2rem 1.5rem;
+  background: white;
+  border: 1px solid var(--rule);
+  border-right: none;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.flow-step:last-child {
+  border-right: 1px solid var(--rule);
+}
+
+.flow-step::after {
+  content: '';
+  position: absolute;
+  right: -12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  border-top: 10px solid transparent;
+  border-bottom: 10px solid transparent;
+  border-left: 12px solid var(--rule);
+  z-index: 1;
+}
+
+.flow-step:last-child::after {
+  display: none;
+}
+
+.flow-step-num {
+  font-family: 'Playfair Display', serif;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--paper-dark);
+  margin-bottom: 0.75rem;
+  line-height: 1;
+}
+
+.flow-step h4 {
+  font-size: 0.95rem;
+  margin-bottom: 0.5rem;
+}
+
+.flow-step p {
+  font-size: 0.85rem;
+  color: var(--text-light);
+  margin-bottom: 0;
+  flex: 1;
+}
+
+/* ================================================================
+   COMPARISON CHART (CSS BAR CHART)
+   ================================================================ */
+.bar-chart {
+  margin: 2rem 0;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 60px;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.bar-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--navy);
+}
+
+.bar-track {
+  height: 28px;
+  background: var(--paper);
+  position: relative;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  transition: width 0.6s ease;
+}
+
+.bar-fill-navy { background: var(--navy); }
+.bar-fill-blue { background: var(--blue); }
+.bar-fill-gold { background: var(--gold); }
+
+.bar-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-light);
+  text-align: right;
+}
+
+/* ================================================================
+   SIDEBAR / MARGINAL NOTE
+   ================================================================ */
+.with-sidebar {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 4rem;
+  align-items: start;
+}
+
+.sidebar-note {
+  background: rgba(201, 168, 76, 0.06);
+  border-left: 2px solid var(--gold);
+  padding: 1.5rem;
+  font-size: 0.88rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin-top: 0.5rem;
+}
+
+.sidebar-note .label {
+  margin-bottom: 0.75rem;
+}
+
+/* ================================================================
+   FOOTNOTES & REFERENCES
+   ================================================================ */
+.footnote {
+  font-size: 0.82rem;
+  color: var(--text-light);
+  line-height: 1.6;
+  padding-left: 1.5rem;
+  position: relative;
+  margin-bottom: 0.75rem;
+}
+
+.footnote::before {
+  content: attr(data-num);
+  font-family: 'Playfair Display', serif;
+  font-size: 0.7rem;
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--gold);
+  font-weight: 600;
+}
+
+sup.fn-ref {
+  font-family: 'Playfair Display', serif;
+  font-size: 0.7em;
+  color: var(--gold);
+  font-weight: 600;
+  cursor: default;
+}
+
+/* ================================================================
+   FULL-WIDTH BREAK SECTION
+   ================================================================ */
+.break-section {
+  background: var(--navy);
+  color: white;
+  padding: 5rem 0;
+  margin: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.break-section::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background:
+    radial-gradient(ellipse 60% 50% at 80% 50%, rgba(37, 99, 235, 0.1) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.break-section h2 {
+  color: white;
+  position: relative;
+  z-index: 1;
+}
+
+.break-section p {
+  color: rgba(255,255,255,0.7);
+  position: relative;
+  z-index: 1;
+}
+
+.break-section .gold {
+  color: var(--gold-light);
+}
+
+/* ================================================================
+   ICON MARKERS
+   ================================================================ */
+.marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--navy);
+  color: white;
+  font-family: 'Playfair Display', serif;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.marker-gold {
+  background: var(--gold);
+  color: var(--navy);
+}
+
+.marker-blue {
+  background: var(--blue);
+}
+
+/* ================================================================
+   POLICY TAG
+   ================================================================ */
+.tag {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  padding: 0.25rem 0.65rem;
+  border: 1px solid var(--rule-dark);
+  color: var(--navy-60);
+  letter-spacing: 0.02em;
+  margin-right: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+
+.tag-gold {
+  border-color: var(--gold);
+  color: var(--gold-dark);
+  background: rgba(201, 168, 76, 0.06);
+}
+
+.tag-blue {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: rgba(37, 99, 235, 0.04);
+}
+
+/* ================================================================
+   CALLOUT BOX
+   ================================================================ */
+.callout {
+  background: white;
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--gold);
+  padding: 2rem 2.5rem;
+  margin: 2.5rem 0;
+}
+
+.callout h4 {
+  color: var(--gold-dark);
+  margin-bottom: 0.5rem;
+  font-size: 0.95rem;
+}
+
+.callout p {
+  margin-bottom: 0;
+  font-size: 0.92rem;
+  color: var(--text-secondary);
+}
+
+/* ================================================================
+   TABLE OF CONTENTS
+   ================================================================ */
+.toc {
+  padding: 4rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.toc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+}
+
+.toc-item {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 1rem;
+  padding: 1rem 1.5rem 1rem 0;
+  border-bottom: 1px solid var(--rule);
+  text-decoration: none;
+  color: var(--text);
+  transition: background 0.2s;
+  align-items: baseline;
+}
+
+.toc-item:hover {
+  background: rgba(37, 99, 235, 0.03);
+}
+
+.toc-num {
+  font-family: 'Playfair Display', serif;
+  font-size: 0.85rem;
+  color: var(--gold);
+  font-weight: 500;
+}
+
+.toc-title {
+  font-family: 'Playfair Display', serif;
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: var(--navy);
+}
+
+/* ================================================================
+   FORMULA / MATH
+   ================================================================ */
+.formula {
+  font-family: 'Playfair Display', serif;
+  font-style: italic;
+  font-size: 1.15rem;
+  text-align: center;
+  padding: 2rem;
+  margin: 2rem 0;
+  background: white;
+  border: 1px solid var(--rule);
+  color: var(--navy);
+  letter-spacing: 0.02em;
+}
+
+.formula .var {
+  color: var(--blue);
+}
+
+/* ================================================================
+   COLOPHON / FOOTER
+   ================================================================ */
+.colophon {
+  background: var(--navy);
+  color: rgba(255,255,255,0.5);
+  padding: 4rem 0;
+  font-size: 0.82rem;
+  line-height: 1.7;
+}
+
+.colophon .label {
+  color: rgba(255,255,255,0.25);
+}
+
+.colophon a {
+  color: var(--gold-light);
+  text-decoration: none;
+}
+
+/* ================================================================
+   RESPONSIVE
+   ================================================================ */
+@media (max-width: 900px) {
+  html { font-size: 15px; }
+  .container, .container-narrow { padding: 0 1.5rem; }
+  .cover h1 { font-size: 2.8rem; }
+  .two-col, .three-col { grid-template-columns: 1fr; }
+  .stat-row { grid-template-columns: 1fr 1fr; }
+  .with-sidebar { grid-template-columns: 1fr; }
+  .flow { flex-direction: column; }
+  .flow-step::after { display: none; }
+  .toc-grid { grid-template-columns: 1fr; }
+  .cover-meta { flex-direction: column; gap: 1.5rem; }
+  .arch-layer { grid-template-columns: 1fr; gap: 0.75rem; }
+}
+
+@media print {
+  @page {
+    size: letter;
+    margin: 0;
+  }
+
+  html { font-size: 15px; }
+
+  body::before { display: none; }
+
+  /* Cover: full first page */
+  .cover {
+    min-height: 100vh;
+    page-break-after: always;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Force background colors in print */
+  .exec-bar, .break-section, .card-navy, .code-block, .colophon,
+  .cover, .arch-block-primary, .arch-block-accent, .marker, .marker-gold, .marker-blue,
+  .bar-fill-navy, .bar-fill-blue, .bar-fill-gold, .bar-track, .tag-gold, .tag-blue,
+  .sidebar-note, .callout, .card, .arch-diagram, .formula, .card-accent, .card-blue {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Backgrounds on sections with bg color */
+  section[style*="background"], div[style*="background"] {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  [style*="background"] {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Keep grids intact */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2.5rem;
+  }
+
+  .three-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 2rem;
+  }
+
+  .with-sidebar {
+    display: grid;
+    grid-template-columns: 1fr 260px;
+    gap: 3rem;
+  }
+
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .toc-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .cover-meta {
+    display: flex;
+    flex-direction: row;
+    gap: 4rem;
+  }
+
+  .flow {
+    display: flex;
+    flex-direction: row;
+  }
+
+  .flow-step::after {
+    display: block;
+  }
+
+  .arch-layer {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+  }
+
+  /* Page breaks */
+  .exec-bar { page-break-after: always; }
+  .toc { page-break-after: always; }
+  .break-section { page-break-before: always; }
+  section { page-break-before: auto; }
+
+  /* Avoid breaking inside key elements */
+  .card, .code-block, .table-wrap, .arch-diagram, .flow,
+  .pull-quote, .pull-quote-break, .callout, .formula,
+  .stat-row, .sidebar-note {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  h2, h3, h4 {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  /* Containers get padding instead of page margin */
+  .container { padding: 0 2.5rem; }
+  .container-narrow { padding: 0 2.5rem; }
+  .cover-content { padding: 0 2.5rem; }
+
+  /* Code blocks */
+  .code-block {
+    border: 1px solid #334155;
+    font-size: 0.75rem;
+  }
+
+  /* Hide grain texture */
+  body::before, body::after { display: none; }
+
+  /* Cover grid patterns */
+  .cover::after { opacity: 0.02; }
+}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     COVER
+     ============================================================ -->
+<header class="cover">
+  <div class="cover-content">
+    <div class="cover-topline">
+      <span class="logo-text">StateSet</span>
+      <span class="divider"></span>
+      <span class="doc-type">Technical Whitepaper &middot; 2026</span>
+    </div>
+
+    <h1>Cryptographic<br>Compliance for<br><em>Commerce</em></h1>
+
+    <p class="cover-subtitle">
+      A production-grade STARK system for proving regulatory compliance
+      without revealing transaction amounts
+    </p>
+
+    <div class="cover-meta">
+      <div class="cover-meta-item">
+        <span class="label">Version</span>
+        <span class="value">0.2.1</span>
+      </div>
+      <div class="cover-meta-item">
+        <span class="label">Classification</span>
+        <span class="value">Public</span>
+      </div>
+      <div class="cover-meta-item">
+        <span class="label">Protocol</span>
+        <span class="value">VES-STARK</span>
+      </div>
+      <div class="cover-meta-item">
+        <span class="label">Published</span>
+        <span class="value">March 2026</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ============================================================
+     EXECUTIVE SUMMARY
+     ============================================================ -->
+<div class="exec-bar">
+  <div class="container">
+    <h2>Executive Summary</h2>
+    <p class="lead">
+      StateSet STARK is a <strong>transparent, post-quantum secure</strong> zero-knowledge proof system
+      that enables commerce platforms to demonstrate regulatory compliance&mdash;anti-money laundering thresholds,
+      order caps, delegated authorization limits&mdash;without ever exposing the underlying transaction amounts.
+      Built on the <strong>Winterfell STARK framework</strong> with the Goldilocks prime field and Rescue-Prime hashing,
+      the system produces verifiable proofs in under two seconds and verifies them in under 200 milliseconds,
+      with no trusted setup required.
+    </p>
+  </div>
+</div>
+
+<!-- ============================================================
+     TABLE OF CONTENTS
+     ============================================================ -->
+<div class="toc">
+  <div class="container">
+    <div class="label" style="margin-bottom: 2rem;">Contents</div>
+    <div class="toc-grid">
+      <a class="toc-item" href="#problem">
+        <span class="toc-num">I</span>
+        <span class="toc-title">The Compliance Paradox</span>
+      </a>
+      <a class="toc-item" href="#approach">
+        <span class="toc-num">II</span>
+        <span class="toc-title">A Zero-Knowledge Approach</span>
+      </a>
+      <a class="toc-item" href="#architecture">
+        <span class="toc-num">III</span>
+        <span class="toc-title">System Architecture</span>
+      </a>
+      <a class="toc-item" href="#cryptography">
+        <span class="toc-num">IV</span>
+        <span class="toc-title">Cryptographic Foundations</span>
+      </a>
+      <a class="toc-item" href="#policies">
+        <span class="toc-num">V</span>
+        <span class="toc-title">Multi-Policy Framework</span>
+      </a>
+      <a class="toc-item" href="#batch">
+        <span class="toc-num">VI</span>
+        <span class="toc-title">Batch State Transitions</span>
+      </a>
+      <a class="toc-item" href="#integration">
+        <span class="toc-num">VII</span>
+        <span class="toc-title">Integration &amp; Developer Experience</span>
+      </a>
+      <a class="toc-item" href="#security">
+        <span class="toc-num">VIII</span>
+        <span class="toc-title">Security Model &amp; Threat Analysis</span>
+      </a>
+      <a class="toc-item" href="#performance">
+        <span class="toc-num">IX</span>
+        <span class="toc-title">Performance Profile</span>
+      </a>
+      <a class="toc-item" href="#conclusion">
+        <span class="toc-num">X</span>
+        <span class="toc-title">Conclusion &amp; Roadmap</span>
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     SECTION I : THE PROBLEM
+     ============================================================ -->
+<section id="problem">
+  <div class="container">
+    <div class="with-sidebar">
+      <div>
+        <span class="section-number">Section I</span>
+        <h2>The Compliance Paradox</h2>
+
+        <p class="lead">
+          Every compliance check in digital commerce faces the same contradiction:
+          regulators need proof that a transaction satisfies their rules, but merchants
+          and consumers need those transaction amounts to remain private.
+        </p>
+
+        <p>
+          Anti-money laundering regulations require platforms to verify that individual transactions
+          fall below reporting thresholds. Order management systems must enforce caps set by
+          merchants and payment processors. Delegated commerce agents must prove they operate
+          within authorized limits. In every case, the verifier needs a guarantee about the
+          <em>relationship</em> between a value and a constraint&mdash;not the value itself.
+        </p>
+
+        <p>
+          Today, this is solved by disclosure. Transaction amounts flow in plaintext to compliance
+          engines, payment processors, audit logs, and third-party services. Each disclosure point
+          creates a new attack surface, a new liability under GDPR and CCPA, and a new vector for
+          competitive intelligence leakage. The industry accepts this because, until now, there
+          was no practical alternative.
+        </p>
+
+        <div class="pull-quote">
+          The question is not whether an amount satisfies a threshold. The question is whether
+          you can prove it does&mdash;without revealing the amount at all.
+        </div>
+
+        <p>
+          StateSet STARK provides the alternative: a cryptographic proof system purpose-built for
+          commerce compliance. A prover generates a mathematical certificate&mdash;a STARK
+          proof&mdash;that a private amount satisfies a policy constraint. The proof can be verified
+          by anyone, in milliseconds, without learning anything about the amount beyond the fact
+          that it complies. No trusted third parties. No key ceremonies. No quantum vulnerabilities.
+        </p>
+      </div>
+
+      <div>
+        <div class="sidebar-note">
+          <div class="label label-gold">The Scale of Exposure</div>
+          <p>
+            A single mid-market e-commerce platform processes millions of transactions per month,
+            each requiring compliance verification. Every plaintext amount that passes through
+            a compliance pipeline is a data point that must be secured, retained per regulation,
+            and disclosed in the event of a breach. Zero-knowledge proofs eliminate this exposure
+            at the protocol level.
+          </p>
+        </div>
+
+        <div class="sidebar-note" style="margin-top: 2rem;">
+          <div class="label label-gold">Regulatory Landscape</div>
+          <p>
+            The EU&rsquo;s 6AMLD, the US Bank Secrecy Act, and PSD2 all require compliance
+            verification for transaction amounts. Privacy regulations (GDPR Art. 25, CCPA)
+            simultaneously require data minimization. ZK proofs satisfy both requirements
+            simultaneously.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="rule" style="max-width: 1100px; margin: 0 auto;">
+
+<!-- ============================================================
+     SECTION II : THE APPROACH
+     ============================================================ -->
+<section id="approach">
+  <div class="container">
+    <span class="section-number">Section II</span>
+    <h2>A Zero-Knowledge Approach</h2>
+
+    <div class="two-col" style="margin-top: 2rem;">
+      <div>
+        <p class="lead">
+          STARKs&mdash;Scalable Transparent Arguments of Knowledge&mdash;provide the strongest
+          foundation for commerce compliance verification: no trusted setup, post-quantum security,
+          and transparent verification that anyone can audit.
+        </p>
+
+        <p>
+          Unlike SNARKs, which require a one-time trusted setup ceremony that, if compromised,
+          undermines all subsequent proofs, STARKs derive their security entirely from collision-resistant
+          hash functions and the algebraic structure of finite fields. There is no trapdoor, no toxic waste,
+          no master key that could be stolen or subpoenaed.
+        </p>
+
+        <p>
+          This transparency is not merely a theoretical advantage. In a compliance context, the
+          absence of trusted setup means that no party&mdash;not the prover, not the platform, not
+          a government agency&mdash;possesses a secret that could be used to forge compliant-looking
+          proofs for non-compliant transactions. The integrity of the system rests on public mathematics,
+          not on the operational security of a key ceremony.
+        </p>
+      </div>
+
+      <div>
+        <h3>Why STARKs for Commerce</h3>
+
+        <div style="margin-bottom: 1.5rem;">
+          <div class="marker">T</div>
+          <h4>Transparency</h4>
+          <p style="font-size: 0.92rem;">
+            No trusted setup eliminates the single point of failure that compliance auditors
+            rightly distrust. Verification logic is publicly inspectable.
+          </p>
+        </div>
+
+        <div style="margin-bottom: 1.5rem;">
+          <div class="marker">Q</div>
+          <h4>Post-Quantum Security</h4>
+          <p style="font-size: 0.92rem;">
+            STARK security relies on hash functions, not elliptic curve discrete logarithms.
+            Compliance records that must remain valid for decades are protected against quantum
+            advances.
+          </p>
+        </div>
+
+        <div style="margin-bottom: 1.5rem;">
+          <div class="marker">S</div>
+          <h4>Scalable Verification</h4>
+          <p style="font-size: 0.92rem;">
+            Verification cost grows logarithmically with computation size, making batch
+            proofs over hundreds of transactions economically viable.
+          </p>
+        </div>
+
+        <div>
+          <div class="marker">A</div>
+          <h4>Algebraic Soundness</h4>
+          <p style="font-size: 0.92rem;">
+            The constraint system is formally auditable. Each constraint maps directly to a
+            compliance requirement, enabling mathematical verification of the proof system itself.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="formula">
+      <span class="var">&exist;</span> amount &isin; [0, 2<sup>64</sup>) &nbsp;:&nbsp;
+      amount &lt; threshold &nbsp;&and;&nbsp;
+      <span class="var">C</span> = Rescue(amount) &nbsp;&and;&nbsp;
+      <span class="var">P</span> binds public inputs
+    </div>
+    <p style="text-align: center; font-size: 0.82rem; color: var(--text-light); margin-top: -0.5rem;">
+      The core proof statement: existence of a compliant amount, cryptographically committed and policy-bound.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================
+     KEY STATS
+     ============================================================ -->
+<div style="padding: 0; background: var(--off-white);">
+  <div class="container">
+    <div class="stat-row">
+      <div class="stat-box">
+        <div class="stat-value">&lt;2<span class="stat-unit">s</span></div>
+        <div class="stat-label">Proof Generation</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">&lt;200<span class="stat-unit">ms</span></div>
+        <div class="stat-label">Verification Time</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">~150<span class="stat-unit">KB</span></div>
+        <div class="stat-label">Proof Size</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">128<span class="stat-unit">+</span></div>
+        <div class="stat-label">Batch Capacity</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     SECTION III : ARCHITECTURE
+     ============================================================ -->
+<section id="architecture">
+  <div class="container">
+    <span class="section-number">Section III</span>
+    <h2>System Architecture</h2>
+
+    <p class="lead">
+      The VES-STARK system is organized as a modular Rust workspace of nine crates,
+      each with a clearly defined responsibility. This separation enables independent
+      compilation, testing, and deployment of each layer.
+    </p>
+
+    <div class="arch-diagram">
+      <div class="label" style="margin-bottom: 1.5rem;">System Layer Diagram</div>
+
+      <div class="arch-layer">
+        <div class="arch-layer-label">Client Layer</div>
+        <div class="arch-layer-content">
+          <div class="arch-block arch-block-accent">Node.js (NAPI)</div>
+          <div class="arch-block arch-block-accent">Python (PyO3)</div>
+          <div class="arch-block arch-block-accent">HTTP Client</div>
+          <div class="arch-block arch-block-accent">CLI Tool</div>
+        </div>
+      </div>
+
+      <div class="arch-layer">
+        <div class="arch-layer-label">Proof Engine</div>
+        <div class="arch-layer-content">
+          <div class="arch-block arch-block-primary">Compliance Prover</div>
+          <div class="arch-block arch-block-primary">Compliance Verifier</div>
+          <div class="arch-block arch-block-primary">Batch Prover</div>
+          <div class="arch-block arch-block-primary">Batch Verifier</div>
+        </div>
+      </div>
+
+      <div class="arch-layer">
+        <div class="arch-layer-label">Constraint System</div>
+        <div class="arch-layer-content">
+          <div class="arch-block arch-block-gold">AIR Definition</div>
+          <div class="arch-block arch-block-gold">Range Check Gadgets</div>
+          <div class="arch-block arch-block-gold">Rescue-Prime Hash</div>
+          <div class="arch-block arch-block-gold">Policy Constraints</div>
+        </div>
+      </div>
+
+      <div class="arch-layer">
+        <div class="arch-layer-label">Primitives</div>
+        <div class="arch-layer-content">
+          <div class="arch-block">Goldilocks Field</div>
+          <div class="arch-block">Rescue-Prime (7r)</div>
+          <div class="arch-block">Merkle Trees</div>
+          <div class="arch-block">Winterfell v0.10</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="two-col" style="margin-top: 3rem;">
+      <div>
+        <h3>Crate Topology</h3>
+        <p>
+          The workspace root contains nine crates organized by function. <code>ves-stark-primitives</code>
+          provides the field arithmetic, Rescue hash implementation, and canonical data structures
+          that every other crate depends on. The <code>air</code> crate defines the Algebraic
+          Intermediate Representation&mdash;the constraint system that encodes compliance logic
+          as polynomial equations over the Goldilocks field.
+        </p>
+        <p>
+          The <code>prover</code> and <code>verifier</code> crates handle single-event compliance
+          proofs. The <code>batch</code> crate extends this to multi-event state transitions with
+          Merkle accumulation. The client-facing crates&mdash;<code>client</code>, <code>cli</code>,
+          <code>nodejs</code>, and <code>python</code>&mdash;provide integration surfaces for
+          different deployment contexts.
+        </p>
+      </div>
+
+      <div>
+        <h3>Design Principles</h3>
+        <p>
+          <strong>Minimal surface area.</strong> Each crate exports only what downstream consumers
+          need. The constraint system is never exposed to client code; only proof bytes and
+          verification results cross the API boundary.
+        </p>
+        <p>
+          <strong>Zero-copy verification.</strong> The verifier operates on serialized proof bytes
+          without requiring the prover&rsquo;s state, witness, or trace data. This enables
+          verification in constrained environments&mdash;edge nodes, smart contracts, or
+          browser-based validators.
+        </p>
+        <p>
+          <strong>Deterministic canonicalization.</strong> Public inputs are serialized using
+          RFC 8785 JSON Canonicalization Scheme, ensuring that prover and verifier always agree
+          on the exact bytes being proven, regardless of JSON library or platform.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     BREAK: PULL QUOTE
+     ============================================================ -->
+<div class="break-section">
+  <div class="container-narrow" style="text-align: center;">
+    <p class="pull-quote-break" style="color: white;">
+      The proof does not reveal the amount. It does not reveal the distance from the threshold.
+      It reveals <span class="gold">one bit of information</span>: the transaction complies.
+    </p>
+  </div>
+</div>
+
+<!-- ============================================================
+     SECTION IV : CRYPTOGRAPHY
+     ============================================================ -->
+<section id="cryptography">
+  <div class="container">
+    <span class="section-number">Section IV</span>
+    <h2>Cryptographic Foundations</h2>
+
+    <div class="two-col" style="margin-top: 2rem;">
+      <div>
+        <h3>The Goldilocks Field</h3>
+        <p>
+          All arithmetic in VES-STARK operates over the Goldilocks prime field with modulus
+          <em>p</em>&nbsp;=&nbsp;2<sup>64</sup>&nbsp;&minus;&nbsp;2<sup>32</sup>&nbsp;+&nbsp;1.
+          This &ldquo;just right&rdquo; prime provides native 64-bit arithmetic on modern CPUs
+          while supporting the large multiplicative subgroups required for efficient FFT-based
+          polynomial operations.
+        </p>
+        <p>
+          Field elements fit in a single machine register, eliminating the multi-precision
+          arithmetic overhead that plagues pairing-based systems like BLS12-381. Modular
+          reduction uses only shifts and additions&mdash;no division. The result is proof
+          generation that runs at near-native speed without specialized hardware.
+        </p>
+
+        <h3 style="margin-top: 2rem;">Rescue-Prime Hash</h3>
+        <p>
+          Witness commitments use the Rescue-Prime hash function, a STARK-friendly algebraic
+          hash designed for efficient in-circuit evaluation. Unlike SHA-256 or Blake3, whose
+          bitwise operations are expensive to express as field constraints, Rescue-Prime uses
+          a power-map S-box (x<sup>7</sup>) that maps directly to low-degree polynomial
+          constraints.
+        </p>
+        <p>
+          The implementation uses 7 rounds with a 12-element state (8-element rate, 4-element
+          capacity) in sponge mode. This produces a 4-element commitment (256 bits of security
+          in the Goldilocks field) from the 8-limb decomposition of a 64-bit witness amount.
+        </p>
+      </div>
+
+      <div>
+        <div class="card card-accent">
+          <div class="label label-gold" style="margin-bottom: 1.5rem;">Field Parameters</div>
+          <table>
+            <tbody>
+              <tr>
+                <td style="font-weight: 500; width: 45%;">Prime modulus</td>
+                <td><code>2<sup>64</sup> &minus; 2<sup>32</sup> + 1</code></td>
+              </tr>
+              <tr>
+                <td style="font-weight: 500;">Decimal value</td>
+                <td><code style="font-size: 0.78em;">18446744069414584321</code></td>
+              </tr>
+              <tr>
+                <td style="font-weight: 500;">Word size</td>
+                <td>64 bits (native)</td>
+              </tr>
+              <tr>
+                <td style="font-weight: 500;">Largest 2-adic subgroup</td>
+                <td>2<sup>32</sup></td>
+              </tr>
+              <tr>
+                <td style="font-weight: 500;">Generator</td>
+                <td>7</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card" style="margin-top: 1.5rem;">
+          <div class="label" style="margin-bottom: 1.5rem;">Rescue-Prime Configuration</div>
+          <table>
+            <tbody>
+              <tr>
+                <td style="font-weight: 500; width: 45%;">Rounds</td>
+                <td>7 half-rounds</td>
+              </tr>
+              <tr>
+                <td style="font-weight: 500;">State width</td>
+                <td>12 field elements</td>
+              </tr>
+              <tr>
+                <td style="font-weight: 500;">Rate / Capacity</td>
+                <td>8 / 4 elements</td>
+              </tr>
+              <tr>
+                <td style="font-weight: 500;">S-box</td>
+                <td>x<sup>7</sup> (forward), x<sup>7</sup> (backward)</td>
+              </tr>
+              <tr>
+                <td style="font-weight: 500;">Commitment output</td>
+                <td>4 field elements</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-divider">
+      <span>Constraint System</span>
+    </div>
+
+    <div class="with-sidebar">
+      <div>
+        <h3>Algebraic Intermediate Representation</h3>
+        <p>
+          The AIR encodes the compliance proof as a system of polynomial constraints over an
+          execution trace. Each row of the trace represents a step of the computation; each
+          column holds a register value. Transition constraints enforce that successive rows
+          follow the correct computation, while boundary constraints pin specific values at
+          known positions.
+        </p>
+        <p>
+          The per-event AIR uses <strong>96 trace columns</strong> across a minimum of
+          <strong>128 rows</strong> (power-of-two). The trace encodes the witness amount
+          decomposition, threshold limbs, subtraction carry chain, binary bit decomposition
+          for range checking, Rescue-Prime state evolution, and public input binding values.
+        </p>
+        <p>
+          The constraint system comprises <strong>157 transition constraints</strong> and
+          <strong>80 boundary assertions</strong>. The maximum constraint degree is 10,
+          arising from the Rescue x<sup>7</sup> S-box multiplied by a row selector. This
+          degree determines the minimum LDE blowup factor of 16&times;, balancing proof
+          size against soundness.
+        </p>
+      </div>
+
+      <div>
+        <div class="sidebar-note">
+          <div class="label label-gold">Constraint Degree Groups</div>
+          <p style="margin-top: 0.75rem;">
+            <strong>Degree 2:</strong> Structural constraints&mdash;binary checks, round counters, flag selectors.
+          </p>
+          <p>
+            <strong>Degree 3&ndash;4:</strong> Input/output binding&mdash;connecting witness limbs to hash inputs and public input fields.
+          </p>
+          <p>
+            <strong>Degree 10:</strong> Rescue half-round transitions&mdash;the x<sup>7</sup> S-box under a periodic row selector.
+          </p>
+          <p style="margin-bottom: 0; margin-top: 1rem; font-style: italic; font-size: 0.82rem;">
+            Degree declarations use Winterfell&rsquo;s <code>TransitionConstraintDegree</code> API
+            with periodic column cycle annotations for accurate quotient computation.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SECTION V : POLICIES
+     ============================================================ -->
+<section id="policies" style="background: var(--paper); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);">
+  <div class="container">
+    <span class="section-number">Section V</span>
+    <h2>Multi-Policy Framework</h2>
+
+    <p class="lead" style="max-width: 700px;">
+      The system supports three distinct compliance policy types, each encoding a different
+      regulatory or business constraint as an algebraic inequality within the same AIR framework.
+    </p>
+
+    <div class="three-col" style="margin-top: 3rem;">
+      <div class="card card-blue">
+        <div class="card-number">01</div>
+        <div class="tag tag-blue" style="margin-bottom: 1.25rem;">aml.threshold</div>
+        <h3>AML Threshold</h3>
+        <p>
+          Proves that a transaction amount falls strictly below a regulatory reporting threshold.
+          The constraint enforces <code>amount&nbsp;&lt;&nbsp;threshold</code> via limb-wise
+          subtraction with borrow propagation.
+        </p>
+        <p style="font-size: 0.88rem; color: var(--text-light);">
+          Applicable to: CTR reporting limits, cross-border transaction caps, suspicious
+          activity thresholds.
+        </p>
+      </div>
+
+      <div class="card card-blue">
+        <div class="card-number">02</div>
+        <div class="tag tag-blue" style="margin-bottom: 1.25rem;">order_total.cap</div>
+        <h3>Order Cap</h3>
+        <p>
+          Proves that an order total does not exceed a merchant- or platform-defined maximum.
+          The constraint enforces <code>amount&nbsp;&le;&nbsp;cap</code>, differing from AML
+          in its inclusive upper bound.
+        </p>
+        <p style="font-size: 0.88rem; color: var(--text-light);">
+          Applicable to: Merchant order limits, payment processor caps, marketplace spending controls.
+        </p>
+      </div>
+
+      <div class="card card-blue">
+        <div class="card-number">03</div>
+        <div class="tag tag-blue" style="margin-bottom: 1.25rem;">agent.authorization.v1</div>
+        <h3>Agent Authorization</h3>
+        <p>
+          Proves that a delegated commerce agent&rsquo;s transaction does not exceed its authorization
+          limit, with an additional binding to an intent hash. Enforces
+          <code>amount&nbsp;&le;&nbsp;maxTotal</code> with intent commitment.
+        </p>
+        <p style="font-size: 0.88rem; color: var(--text-light);">
+          Applicable to: AI shopping agents, procurement automation, delegated purchasing authority.
+        </p>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top: 3rem;">
+      <h4>Policy Hash Binding</h4>
+      <p>
+        Each proof cryptographically binds to its policy via a deterministic hash of the policy
+        identifier and parameters. The verifier independently recomputes this hash from the
+        declared policy and rejects any proof where the binding does not match. This prevents
+        policy substitution attacks&mdash;a proof generated against a $10,000 AML threshold
+        cannot be replayed against a $1,000 threshold.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SECTION VI : BATCH
+     ============================================================ -->
+<section id="batch">
+  <div class="container">
+    <span class="section-number">Section VI</span>
+    <h2>Batch State Transitions</h2>
+
+    <div class="two-col">
+      <div>
+        <p class="lead">
+          While per-event proofs demonstrate individual compliance, production systems
+          process transactions in batches. The batch proving system aggregates up to 128
+          events into a single STARK proof with Merkle-based state accumulation.
+        </p>
+
+        <p>
+          Each batch proof attests to the following properties simultaneously:
+        </p>
+
+        <ul style="margin: 1.5rem 0; padding-left: 1.5rem; line-height: 2;">
+          <li><strong>Per-event compliance:</strong> Every event in the batch satisfies the shared policy constraint</li>
+          <li><strong>Sequence continuity:</strong> Events appear in the declared order</li>
+          <li><strong>State accumulation:</strong> A Merkle tree over per-event commitment hashes produces the declared state root</li>
+          <li><strong>Transition integrity:</strong> The previous state root and new state root form a valid state transition</li>
+        </ul>
+
+        <p>
+          Merkle tree construction uses in-circuit Rescue-Prime hashing. Each leaf is the
+          canonical hash of an event&rsquo;s public inputs. Internal nodes combine child hashes
+          through the Rescue sponge. The root is boundary-asserted as a public output, enabling
+          on-chain anchoring with a single 4-element state commitment.
+        </p>
+      </div>
+
+      <div>
+        <div class="card card-navy">
+          <div class="label" style="color: rgba(255,255,255,0.35); margin-bottom: 1.5rem;">Batch AIR Dimensions</div>
+          <table>
+            <tbody>
+              <tr>
+                <td style="color: rgba(255,255,255,0.5); width: 55%;">Transition constraints</td>
+                <td style="color: white; font-weight: 500;">636</td>
+              </tr>
+              <tr>
+                <td style="color: rgba(255,255,255,0.5);">Boundary assertions</td>
+                <td style="color: white; font-weight: 500;">145</td>
+              </tr>
+              <tr>
+                <td style="color: rgba(255,255,255,0.5);">Rows per Merkle node</td>
+                <td style="color: white; font-weight: 500;">15</td>
+              </tr>
+              <tr>
+                <td style="color: rgba(255,255,255,0.5);">Max events per batch</td>
+                <td style="color: white; font-weight: 500;">128</td>
+              </tr>
+              <tr>
+                <td style="color: rgba(255,255,255,0.5);">Finalize rows</td>
+                <td style="color: white; font-weight: 500;">15</td>
+              </tr>
+              <tr>
+                <td style="color: rgba(255,255,255,0.5);">Max constraint degree</td>
+                <td style="color: white; font-weight: 500;">10</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout" style="margin-top: 1.5rem;">
+          <h4>On-Chain Efficiency</h4>
+          <p>
+            A batch proof covering 128 events produces the same ~150 KB proof as a single-event
+            proof. For a blockchain sequencer, this represents a 128&times; reduction in per-event
+            proof storage and verification cost. The state root transition
+            (prev_root&nbsp;&rarr;&nbsp;new_root) is the only value that needs to be anchored on-chain.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Batch Flow -->
+    <h3 style="margin-top: 3.5rem; margin-bottom: 0.5rem;">End-to-End Batch Flow</h3>
+    <hr class="rule-thick" style="margin: 0 0 0 0; max-width: 200px;">
+
+    <div class="flow" style="margin-top: 2rem;">
+      <div class="flow-step">
+        <div class="flow-step-num">01</div>
+        <h4>Accumulate</h4>
+        <p>Events arrive from the sequencer. Each event carries its canonical public inputs, encrypted payload hashes, and policy identifier.</p>
+      </div>
+      <div class="flow-step">
+        <div class="flow-step-num">02</div>
+        <h4>Witness</h4>
+        <p>The batch witness builder combines private amounts with public inputs, constructing the execution trace and Merkle tree in memory.</p>
+      </div>
+      <div class="flow-step">
+        <div class="flow-step-num">03</div>
+        <h4>Prove</h4>
+        <p>The batch prover generates a single STARK proof over all events. In-circuit Rescue computes Merkle nodes; compliance constraints verify each event.</p>
+      </div>
+      <div class="flow-step">
+        <div class="flow-step-num">04</div>
+        <h4>Verify</h4>
+        <p>The batch verifier checks the proof, confirms the state root transition, and returns a composite result covering all events in the batch.</p>
+      </div>
+      <div class="flow-step">
+        <div class="flow-step-num">05</div>
+        <h4>Anchor</h4>
+        <p>The new state root is anchored to the blockchain or sequencer registry, providing an immutable commitment to the batch&rsquo;s compliance status.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SECTION VII : INTEGRATION
+     ============================================================ -->
+<section id="integration" style="background: var(--paper); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);">
+  <div class="container">
+    <span class="section-number">Section VII</span>
+    <h2>Integration &amp; Developer Experience</h2>
+
+    <p class="lead" style="max-width: 700px; margin-bottom: 3rem;">
+      The system provides native bindings for the three most common integration contexts in
+      commerce infrastructure: server-side JavaScript, Python data pipelines, and systems-level Rust.
+    </p>
+
+    <div class="two-col">
+      <div>
+        <h3>Node.js</h3>
+        <p style="font-size: 0.92rem; margin-bottom: 1rem;">
+          Native NAPI bindings compiled for Linux (x64, ARM64), macOS, and Windows. Proof bytes
+          are exposed as <code>Buffer</code> objects; witness commitments as hex strings for
+          JSON-safe transport. BigInt support for amounts and thresholds.
+        </p>
+        <div class="code-block">
+          <span class="code-lang">JavaScript</span>
+<span class="kw">const</span> { prove, verify } = <span class="fn">require</span>(<span class="str">'@stateset/ves-stark'</span>);
+
+<span class="kw">const</span> proof = <span class="fn">prove</span>(
+  <span class="num">5000n</span>,           <span class="cm">// private amount</span>
+  publicInputs,      <span class="cm">// canonical public inputs</span>
+  <span class="str">'aml.threshold'</span>,  <span class="cm">// policy</span>
+  <span class="num">10000n</span>           <span class="cm">// threshold</span>
+);
+
+<span class="kw">const</span> result = <span class="fn">verify</span>(
+  proof.proofBytes,
+  publicInputs,
+  proof.witnessCommitmentHex
+);
+<span class="cm">// { valid: true, verificationTimeMs: 142 }</span>
+        </div>
+      </div>
+
+      <div>
+        <h3>Python</h3>
+        <p style="font-size: 0.92rem; margin-bottom: 1rem;">
+          PyO3/Maturin bindings for Python &ge; 3.8. Designed for integration with compliance
+          analytics pipelines, audit tooling, and data science workflows.
+        </p>
+        <div class="code-block">
+          <span class="code-lang">Python</span>
+<span class="kw">import</span> ves_stark
+
+policy = ves_stark.<span class="fn">Policy.aml_threshold</span>(<span class="num">10000</span>)
+
+proof = ves_stark.<span class="fn">prove</span>(
+    <span class="num">5000</span>,            <span class="cm"># private amount</span>
+    public_inputs,   <span class="cm"># canonical inputs</span>
+    policy
+)
+
+result = ves_stark.<span class="fn">verify</span>(
+    proof.proof_bytes,
+    public_inputs,
+    proof.witness_commitment
+)
+<span class="cm"># result.valid == True</span>
+<span class="cm"># result.verification_time_ms ~ 150</span>
+        </div>
+      </div>
+    </div>
+
+    <hr class="rule">
+
+    <div class="two-col">
+      <div>
+        <h3>CLI Tool</h3>
+        <p style="font-size: 0.92rem; margin-bottom: 1rem;">
+          A standalone binary for scripting, CI/CD integration, and operational tooling.
+          Supports proof generation, verification, batch operations, and test data generation.
+        </p>
+        <div class="code-block">
+          <span class="code-lang">Shell</span>
+<span class="cm"># Generate a compliance proof</span>
+$ ves-stark prove \
+    --amount <span class="num">5000</span> \
+    --limit <span class="num">10000</span> \
+    --policy aml.threshold \
+    --inputs public_inputs.json \
+    --output proof.b64
+
+<span class="cm"># Verify</span>
+$ ves-stark verify \
+    --proof proof.b64 \
+    --inputs public_inputs.json
+<span class="str">Proof valid.</span> Verified in <span class="num">147</span>ms.
+        </div>
+      </div>
+
+      <div>
+        <h3>Sequencer Client</h3>
+        <p style="font-size: 0.92rem; margin-bottom: 1rem;">
+          The Rust HTTP client integrates directly with the StateSet sequencer and Set Chain
+          for production proof submission and state anchoring.
+        </p>
+        <div class="code-block">
+          <span class="code-lang">Rust</span>
+<span class="kw">let</span> client = <span class="fn">SequencerClient::try_new</span>(
+    <span class="str">"https://seq.stateset.io"</span>,
+    api_key
+)?;
+
+<span class="cm">// Fetch & validate public inputs</span>
+<span class="kw">let</span> inputs = client
+    .<span class="fn">get_public_inputs_validated</span>(
+        event_id, <span class="str">"aml.threshold"</span>, <span class="num">10000</span>
+    ).<span class="kw">await</span>?;
+
+<span class="cm">// Submit proof to registry</span>
+client.<span class="fn">submit_proof</span>(submission).<span class="kw">await</span>?;
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SECTION VIII : SECURITY
+     ============================================================ -->
+<section id="security">
+  <div class="container">
+    <span class="section-number">Section VIII</span>
+    <h2>Security Model &amp; Threat Analysis</h2>
+
+    <div class="with-sidebar">
+      <div>
+        <p class="lead">
+          The security of VES-STARK rests on three pillars: the algebraic soundness of the
+          constraint system, the collision resistance of Rescue-Prime, and the cryptographic
+          guarantees of the FRI-based STARK protocol.
+        </p>
+
+        <h3 style="margin-top: 2rem;">Soundness Properties</h3>
+        <p>
+          <strong>Witness binding.</strong> The Rescue output row is boundary-asserted to match
+          the public witness commitment. Forging a compliant-looking proof for a non-compliant
+          amount requires finding a second preimage of Rescue-Prime&mdash;a problem believed to
+          be computationally infeasible.
+        </p>
+        <p>
+          <strong>Range validity.</strong> Binary bit columns satisfy the constraint
+          b&nbsp;&times;&nbsp;(1&nbsp;&minus;&nbsp;b)&nbsp;=&nbsp;0 at every row. Any non-binary
+          value would violate this degree-2 constraint, causing proof generation to fail or
+          the proof to be rejected by the verifier.
+        </p>
+        <p>
+          <strong>Inequality integrity.</strong> The subtraction gadget computes
+          limit&nbsp;&minus;&nbsp;amount using 2-limb arithmetic with carry propagation.
+          The final borrow bit is boundary-asserted to be zero, enforcing that no underflow
+          occurred&mdash;i.e., the amount does not exceed the limit.
+        </p>
+        <p>
+          <strong>Public input binding.</strong> Canonical public inputs are hashed by the verifier
+          and boundary-asserted into the trace at row 0. Any attempt to alter the public inputs
+          after proof generation will cause verification to fail.
+        </p>
+      </div>
+
+      <div>
+        <div class="sidebar-note">
+          <div class="label label-gold">Security Assumption</div>
+          <p>
+            VES-STARK security is conditional on the collision resistance of Rescue-Prime and
+            the soundness of the FRI protocol. No formal security proof has been published;
+            the security estimate is internal. External review of constraint degree analysis,
+            Rescue parameters, and FRI folding security is recommended before deployment in
+            high-assurance contexts.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 3rem; margin-bottom: 1.5rem;">Threat Surface &amp; Mitigations</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Attack Vector</th>
+            <th>Description</th>
+            <th>Mitigation</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="font-weight: 500;">Bit manipulation</td>
+            <td>Injecting non-binary values into range-check columns</td>
+            <td>Binary constraint: b(1&minus;b)&nbsp;=&nbsp;0 at every row</td>
+          </tr>
+          <tr>
+            <td style="font-weight: 500;">Subtraction forgery</td>
+            <td>Manipulating the carry chain to fake compliance</td>
+            <td>Limb-wise equations with final borrow&nbsp;=&nbsp;0 boundary assertion</td>
+          </tr>
+          <tr>
+            <td style="font-weight: 500;">Commitment forgery</td>
+            <td>Committing to a different amount than proven</td>
+            <td>Rescue output boundary assertion against public commitment</td>
+          </tr>
+          <tr>
+            <td style="font-weight: 500;">Policy substitution</td>
+            <td>Replaying a proof against a different policy</td>
+            <td>Verifier recomputes policy hash; AIR binds policy limit</td>
+          </tr>
+          <tr>
+            <td style="font-weight: 500;">Public input tampering</td>
+            <td>Altering event metadata after proof generation</td>
+            <td>Row-0 boundary assertions on canonical hash</td>
+          </tr>
+          <tr>
+            <td style="font-weight: 500;">Proof inflation</td>
+            <td>Submitting oversized proofs to exhaust verifier resources</td>
+            <td>Proof size limit: 10 MB maximum</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section-divider">
+      <span>Proof Options &amp; Security Levels</span>
+    </div>
+
+    <div class="three-col">
+      <div class="card">
+        <div class="label" style="margin-bottom: 1rem;">Default Profile</div>
+        <h3 style="margin-bottom: 1.5rem;">Standard</h3>
+        <table>
+          <tbody>
+            <tr><td>FRI queries</td><td style="font-weight: 500;">28</td></tr>
+            <tr><td>Blowup factor</td><td style="font-weight: 500;">16&times;</td></tr>
+            <tr><td>Grinding factor</td><td style="font-weight: 500;">16</td></tr>
+            <tr><td>Field extension</td><td style="font-weight: 500;">None</td></tr>
+            <tr><td>Est. security</td><td style="font-weight: 500;">~100-bit</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card card-accent">
+        <div class="label label-gold" style="margin-bottom: 1rem;">Recommended</div>
+        <h3 style="margin-bottom: 1.5rem;">Secure</h3>
+        <table>
+          <tbody>
+            <tr><td>FRI queries</td><td style="font-weight: 500;">40</td></tr>
+            <tr><td>Blowup factor</td><td style="font-weight: 500;">16&times;</td></tr>
+            <tr><td>Grinding factor</td><td style="font-weight: 500;">20</td></tr>
+            <tr><td>Field extension</td><td style="font-weight: 500;">Quadratic</td></tr>
+            <tr><td>Est. security</td><td style="font-weight: 500;">~128-bit</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="label" style="margin-bottom: 1rem;">Development Only</div>
+        <h3 style="margin-bottom: 1.5rem;">Fast</h3>
+        <table>
+          <tbody>
+            <tr><td>FRI queries</td><td style="font-weight: 500;">20</td></tr>
+            <tr><td>Blowup factor</td><td style="font-weight: 500;">16&times;</td></tr>
+            <tr><td>Grinding factor</td><td style="font-weight: 500;">8</td></tr>
+            <tr><td>Field extension</td><td style="font-weight: 500;">None</td></tr>
+            <tr><td>Est. security</td><td style="font-weight: 500;">~80-bit</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SECTION IX : PERFORMANCE
+     ============================================================ -->
+<section id="performance" style="background: var(--paper); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);">
+  <div class="container">
+    <span class="section-number">Section IX</span>
+    <h2>Performance Profile</h2>
+
+    <p class="lead" style="max-width: 700px;">
+      Benchmarked on modern x86-64 hardware with release-optimized builds. Performance
+      reflects the standard proof profile with 28 FRI queries and 16&times; blowup.
+    </p>
+
+    <div class="stat-row" style="margin-top: 3rem;">
+      <div class="stat-box">
+        <div class="stat-value">500<span class="stat-unit">&ndash;2000ms</span></div>
+        <div class="stat-label">Proof Generation</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">50<span class="stat-unit">&ndash;200ms</span></div>
+        <div class="stat-label">Verification</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">100<span class="stat-unit">&ndash;200KB</span></div>
+        <div class="stat-label">Proof Size</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">&lt;1<span class="stat-unit">ms</span></div>
+        <div class="stat-label">Commitment Hash</div>
+      </div>
+    </div>
+
+    <div class="two-col" style="margin-top: 3rem;">
+      <div>
+        <h3>Proof Size Breakdown</h3>
+        <div class="bar-chart">
+          <div class="bar-row">
+            <div class="bar-label">Query responses</div>
+            <div class="bar-track"><div class="bar-fill bar-fill-navy" style="width: 67%;"></div></div>
+            <div class="bar-value">~100 KB</div>
+          </div>
+          <div class="bar-row">
+            <div class="bar-label">Trace commits</div>
+            <div class="bar-track"><div class="bar-fill bar-fill-blue" style="width: 27%;"></div></div>
+            <div class="bar-value">~40 KB</div>
+          </div>
+          <div class="bar-row">
+            <div class="bar-label">FRI polynomials</div>
+            <div class="bar-track"><div class="bar-fill bar-fill-gold" style="width: 7%;"></div></div>
+            <div class="bar-value">~10 KB</div>
+          </div>
+        </div>
+
+        <p style="font-size: 0.88rem; color: var(--text-light); margin-top: 1rem;">
+          Proof size scales logarithmically with trace length and linearly with FRI query count.
+          Higher security profiles increase the query count, proportionally increasing proof size.
+        </p>
+      </div>
+
+      <div>
+        <h3>Comparison: STARKs vs. Alternatives</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>System</th>
+                <th>Proof Size</th>
+                <th>Verify</th>
+                <th>Setup</th>
+                <th>PQ</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="table-highlight">
+                <td><strong>VES-STARK</strong></td>
+                <td>~150 KB</td>
+                <td>&lt;200ms</td>
+                <td>None</td>
+                <td>Yes</td>
+              </tr>
+              <tr>
+                <td>Groth16</td>
+                <td>~0.2 KB</td>
+                <td>&lt;10ms</td>
+                <td>Trusted</td>
+                <td>No</td>
+              </tr>
+              <tr>
+                <td>Plonk</td>
+                <td>~0.5 KB</td>
+                <td>&lt;20ms</td>
+                <td>Universal</td>
+                <td>No</td>
+              </tr>
+              <tr>
+                <td>Bulletproofs</td>
+                <td>~0.7 KB</td>
+                <td>~500ms</td>
+                <td>None</td>
+                <td>No</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="font-size: 0.82rem; color: var(--text-light); margin-top: 0.75rem;">
+          STARKs trade larger proof size for transparency, post-quantum security, and no trusted
+          setup. For compliance applications where trust assumptions matter more than byte count,
+          this is the correct trade-off.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SECTION X : CONCLUSION
+     ============================================================ -->
+<div class="break-section" id="conclusion">
+  <div class="container">
+    <span class="section-number" style="color: var(--gold);">Section X</span>
+    <h2 style="font-size: 2.6rem; margin-bottom: 2rem;">Conclusion</h2>
+
+    <div style="max-width: 720px;">
+      <p style="font-size: 1.15rem; color: rgba(255,255,255,0.85); line-height: 1.65; margin-bottom: 1.5rem;">
+        Commerce compliance has operated on the assumption that verification requires disclosure.
+        StateSet STARK eliminates that assumption entirely.
+      </p>
+
+      <p style="color: rgba(255,255,255,0.65);">
+        By encoding compliance logic as algebraic constraints over the Goldilocks field and proving
+        satisfaction through transparent STARK proofs, the system enables a new category of
+        privacy-preserving commerce infrastructure. Transaction amounts remain encrypted end-to-end.
+        Compliance is verified cryptographically. No trusted third party holds a master key. No
+        quantum computer threatens the validity of historical proofs.
+      </p>
+
+      <p style="color: rgba(255,255,255,0.65);">
+        The multi-policy framework supports the three most common compliance patterns in
+        digital commerce today&mdash;AML thresholds, order caps, and delegated agent
+        authorization&mdash;with a clean extension path for new policy types. Batch proving
+        reduces per-event overhead by two orders of magnitude for high-throughput systems.
+        Native bindings for JavaScript, Python, and Rust meet development teams in their
+        existing toolchains.
+      </p>
+
+      <p style="color: rgba(255,255,255,0.65);">
+        The system is production-hardened: API keys are zeroized from memory, proof sizes are
+        bounded, public inputs are canonicalized, and the threat model is explicitly documented.
+        What remains is the work of integration&mdash;connecting the proof pipeline to sequencers,
+        blockchain anchoring layers, and the commerce platforms that will benefit from provable
+        compliance without data exposure.
+      </p>
+
+      <p style="color: var(--gold-light); font-family: 'Playfair Display', serif; font-style: italic; font-size: 1.2rem; margin-top: 2.5rem; margin-bottom: 0;">
+        The future of compliance is not more disclosure. It is better mathematics.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     TECHNICAL APPENDIX
+     ============================================================ -->
+<section style="padding: 4rem 0;">
+  <div class="container">
+    <div class="label" style="margin-bottom: 2rem;">Technical Appendix</div>
+
+    <div class="two-col">
+      <div>
+        <h3>Constraint Summary</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th>Constraints</th>
+                <th>Max Degree</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Binary bit checks</td>
+                <td>64</td>
+                <td>2</td>
+              </tr>
+              <tr>
+                <td>Limb recomposition</td>
+                <td>8</td>
+                <td>2</td>
+              </tr>
+              <tr>
+                <td>Subtraction gadget</td>
+                <td>4</td>
+                <td>2</td>
+              </tr>
+              <tr>
+                <td>Rescue half-rounds</td>
+                <td>48</td>
+                <td>10</td>
+              </tr>
+              <tr>
+                <td>Hash I/O binding</td>
+                <td>12</td>
+                <td>3&ndash;4</td>
+              </tr>
+              <tr>
+                <td>Public input binding</td>
+                <td>8</td>
+                <td>2</td>
+              </tr>
+              <tr>
+                <td>Structural selectors</td>
+                <td>13</td>
+                <td>2</td>
+              </tr>
+              <tr style="font-weight: 600; border-top: 2px solid var(--navy);">
+                <td>Total</td>
+                <td>157</td>
+                <td>10</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <h3>Trace Layout (Per-Event AIR)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Columns</th>
+                <th>Purpose</th>
+                <th>Width</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>0&ndash;7</td>
+                <td>Amount limbs (u8)</td>
+                <td>8</td>
+              </tr>
+              <tr>
+                <td>8&ndash;15</td>
+                <td>Threshold limbs (u8)</td>
+                <td>8</td>
+              </tr>
+              <tr>
+                <td>16&ndash;23</td>
+                <td>Difference limbs</td>
+                <td>8</td>
+              </tr>
+              <tr>
+                <td>24&ndash;25</td>
+                <td>Borrow bits</td>
+                <td>2</td>
+              </tr>
+              <tr>
+                <td>26&ndash;57</td>
+                <td>Amount bit decomposition</td>
+                <td>32</td>
+              </tr>
+              <tr>
+                <td>58&ndash;89</td>
+                <td>Threshold bit decomposition</td>
+                <td>32</td>
+              </tr>
+              <tr>
+                <td>90&ndash;101</td>
+                <td>Rescue-Prime state</td>
+                <td>12</td>
+              </tr>
+              <tr>
+                <td>102&ndash;109</td>
+                <td>Public input binding</td>
+                <td>8</td>
+              </tr>
+              <tr style="font-weight: 600; border-top: 2px solid var(--navy);">
+                <td colspan="2">Total trace width</td>
+                <td>96*</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="font-size: 0.78rem; color: var(--text-light); margin-top: 0.5rem;">
+          *Column indices are illustrative. Actual layout may vary with implementation version.
+        </p>
+      </div>
+    </div>
+
+    <hr class="rule">
+
+    <div class="two-col">
+      <div>
+        <h3>Glossary</h3>
+        <div style="font-size: 0.9rem; line-height: 1.8;">
+          <p><strong>AIR</strong> &mdash; Algebraic Intermediate Representation. The constraint system that encodes computation as polynomial equations.</p>
+          <p><strong>FRI</strong> &mdash; Fast Reed-Solomon Interactive Oracle Proof. The core STARK sub-protocol for proximity testing.</p>
+          <p><strong>Goldilocks</strong> &mdash; The 64-bit prime field with p&nbsp;=&nbsp;2<sup>64</sup>&nbsp;&minus;&nbsp;2<sup>32</sup>&nbsp;+&nbsp;1.</p>
+          <p><strong>LDE</strong> &mdash; Low-Degree Extension. Evaluating trace polynomials over a domain larger than the trace length.</p>
+          <p><strong>Rescue-Prime</strong> &mdash; An arithmetization-friendly hash function optimized for STARK constraint systems.</p>
+          <p><strong>Witness</strong> &mdash; The private input (transaction amount) known only to the prover.</p>
+        </div>
+      </div>
+
+      <div>
+        <h3>References</h3>
+        <div style="font-size: 0.88rem;">
+          <div class="footnote" data-num="1">
+            Ben-Sasson, E., et al. &ldquo;Scalable, transparent, and post-quantum secure computational integrity.&rdquo; IACR ePrint, 2018.
+          </div>
+          <div class="footnote" data-num="2">
+            Aly, A., et al. &ldquo;Design of Symmetric-Key Primitives for Advanced Cryptographic Protocols.&rdquo; IACR ToSC, 2020.
+          </div>
+          <div class="footnote" data-num="3">
+            Winterfell STARK library, v0.10. github.com/facebook/winterfell.
+          </div>
+          <div class="footnote" data-num="4">
+            RFC 8785: JSON Canonicalization Scheme (JCS). IETF, 2020.
+          </div>
+          <div class="footnote" data-num="5">
+            Goldilocks field: Plonky2 Technical Reference. Polygon Zero, 2022.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     COLOPHON
+     ============================================================ -->
+<footer class="colophon">
+  <div class="container">
+    <div class="two-col">
+      <div>
+        <div class="label" style="margin-bottom: 1rem;">About StateSet</div>
+        <p>
+          StateSet builds cryptographic infrastructure for commerce. The VES-STARK protocol
+          is the foundation of StateSet&rsquo;s privacy-preserving compliance layer, enabling
+          verifiable commerce without data exposure.
+        </p>
+      </div>
+      <div>
+        <div class="label" style="margin-bottom: 1rem;">Document Information</div>
+        <p>
+          Version 0.2.1 &middot; March 2026<br>
+          Classification: Public<br>
+          Protocol: VES-STARK<br>
+          Framework: Winterfell v0.10
+        </p>
+      </div>
+    </div>
+    <hr style="border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 2rem 0;">
+    <p style="font-size: 0.75rem; color: rgba(255,255,255,0.3);">
+      &copy; 2026 StateSet Inc. This document is provided for informational purposes.
+      Cryptographic security estimates are internal and should be independently verified
+      before deployment in production systems.
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

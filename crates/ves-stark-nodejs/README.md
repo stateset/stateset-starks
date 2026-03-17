@@ -58,7 +58,11 @@ console.log(`Witness commitment (hex): ${proof.witnessCommitmentHex}`);
 ### Verify a Proof
 
 ```javascript
-const { verifyHex } = require('@stateset/ves-stark');
+const {
+  createPayloadAmountBinding,
+  verifyHex,
+  verifyWithAmountBinding,
+} = require('@stateset/ves-stark');
 
 const publicInputsBound = {
   ...publicInputs,
@@ -80,6 +84,13 @@ if (result.valid) {
 `verify()` and `verifyHex()` now bind the supplied witness commitment into the public inputs before
 verification, so local verification is witness-bound by default.
 
+For payload-to-amount binding, derive a canonical binding artifact and verify against it directly:
+
+```javascript
+const amountBinding = createPayloadAmountBinding(publicInputs, 5000n);
+const boundResult = verifyWithAmountBinding(proof.proofBytes, publicInputs, amountBinding);
+```
+
 ### Agent Authorization Policy
 
 ```javascript
@@ -98,7 +109,8 @@ const proof = prove(12500n, agentPublicInputs, 'agent.authorization.v1', 20000n)
 ```
 
 If you also have the canonical authorization receipt, use `verifyAgentAuthorizationHex(...)` to
-verify the receipt binding in addition to the policy proof.
+derive the payload amount binding from the receipt and verify the stronger receipt-bound
+statement.
 
 ## API Reference
 
@@ -151,12 +163,23 @@ Verify a STARK compliance proof using the witness commitment hex string.
 
 ### `verifyAgentAuthorization(proofBytes, publicInputs, witnessCommitment, receipt)`
 
-Verify an `agent.authorization.v1` proof against a canonical authorization receipt.
+Verify an `agent.authorization.v1` proof against a canonical authorization receipt, deriving the
+payload amount binding from `receipt.amount`.
 
 ### `verifyAgentAuthorizationHex(proofBytes, publicInputs, witnessCommitmentHex, receipt)`
 
 Verify an `agent.authorization.v1` proof against a canonical authorization receipt using the hex
-commitment form.
+commitment form, deriving the payload amount binding from `receipt.amount`.
+
+### `verifyWithAmountBinding(proofBytes, publicInputs, amountBinding)`
+
+Verify a proof against a canonical payload-derived amount binding.
+
+### `verifyAgentAuthorizationWithAmountBinding(proofBytes, publicInputs, amountBinding, receipt)`
+
+Verify an `agent.authorization.v1` proof against both a payload-derived amount binding and a
+canonical authorization receipt. This is equivalent to the receipt-based helpers when the binding
+matches `receipt.amount`, but keeps the artifact explicit.
 
 ### `computePolicyHash(policyId, policyParams)`
 
@@ -195,6 +218,11 @@ Create policy parameters for the delegated agent authorization policy.
 - `intentHash` (string): 64-character commerce intent hash
 
 **Returns:** `{ maxTotal: bigint, intentHash: string }`
+
+### `createPayloadAmountBinding(publicInputs, amount)`
+
+Create a canonical payload amount binding artifact for the supplied public inputs and extracted
+amount.
 
 ## Policy Types
 

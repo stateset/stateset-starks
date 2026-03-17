@@ -46,6 +46,13 @@
 //! # Feature Flags
 //!
 //! - `batch` - Enable integration with ves-stark-batch for batch proof submissions
+//!
+//! # Canonical Bundles
+//!
+//! The client exposes canonical transport artifacts for local verification and submission flows:
+//! - `ComplianceProofBundle` for payload amount-bound proofs across any policy
+//! - `AgentAuthorizationProofBundle` for delegated-commerce proofs bound to both the payload
+//!   amount artifact and the authorization receipt
 
 mod client;
 mod error;

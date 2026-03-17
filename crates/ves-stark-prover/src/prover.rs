@@ -161,6 +161,7 @@ impl ComplianceProver {
                 self.policy.policy_id()
             )));
         }
+        witness.validate(&self.policy)?;
 
         // Compute witness commitment using Rescue hash
         // This binds the private amount to the proof
@@ -181,20 +182,14 @@ impl ComplianceProver {
             witness_commitment[3].as_int(),
         ];
 
-        // Optional hardening: if the canonical public inputs include a witness commitment, enforce that
-        // it matches the witness amount we are proving about.
-        if let Some(expected) = witness
-            .public_inputs
-            .witness_commitment_u64()
-            .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?
-        {
-            if expected != commitment_u64 {
-                return Err(ProverError::InvalidPublicInputs(
-                    "witnessCommitment in public inputs does not match commitment derived from the witness amount"
-                        .to_string(),
-                ));
-            }
-        }
+        debug_assert_eq!(
+            witness
+                .public_inputs
+                .witness_commitment_u64()
+                .ok()
+                .flatten(),
+            Some(commitment_u64)
+        );
 
         // Build execution trace with unified policy
         let trace = TraceBuilder::new(witness.clone(), self.policy.clone()).build()?;
@@ -365,6 +360,7 @@ mod tests {
             policy_hash: policy_hash.to_hex(),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         };
         // Force a mismatch: this commitment does not correspond to the amount below.
         inputs.witness_commitment = Some(witness_commitment_u64_to_hex(&[0u64; 4]));

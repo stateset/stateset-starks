@@ -1219,6 +1219,7 @@ mod tests {
             policy_hash: hash.to_hex(),
             witness_commitment: Some(witness_commitment_u64_to_hex(&commitment_u64)),
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         }
     }
 

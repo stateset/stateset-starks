@@ -11,11 +11,12 @@ use uuid::Uuid;
 use ves_stark_air::Policy as RustPolicy;
 use ves_stark_primitives::{
     CommerceAuthorizationReceipt, CompliancePublicInputs as RustCompliancePublicInputs,
-    PolicyParams,
+    PayloadAmountBinding, PolicyParams,
 };
 use ves_stark_prover::{ComplianceProver, ComplianceWitness};
 use ves_stark_verifier::{
-    verify_agent_authorization_proof_auto_bound, verify_compliance_proof_auto_bound, VerifierError,
+    verify_agent_authorization_proof_auto_with_amount_binding, verify_compliance_proof_auto_bound,
+    verify_compliance_proof_auto_with_amount_binding, VerifierError,
 };
 
 /// Policy type for compliance proofs
@@ -137,6 +138,9 @@ pub struct CompliancePublicInputs {
     /// Optional authorization receipt hash (hex64, lowercase) committed into canonical public inputs.
     #[pyo3(get, set)]
     pub authorization_receipt_hash: Option<String>,
+    /// Optional payload amount binding hash (hex64, lowercase) committed into canonical public inputs.
+    #[pyo3(get, set)]
+    pub amount_binding_hash: Option<String>,
 }
 
 #[pymethods]
@@ -157,9 +161,10 @@ impl CompliancePublicInputs {
     ///     policy_hash: Policy hash (hex64, lowercase)
     ///     witness_commitment: Optional witness commitment (hex64, lowercase)
     ///     authorization_receipt_hash: Optional authorization receipt hash (hex64, lowercase)
+    ///     amount_binding_hash: Optional payload amount binding hash (hex64, lowercase)
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (event_id, tenant_id, store_id, sequence_number, payload_kind, payload_plain_hash, payload_cipher_hash, event_signing_hash, policy_id, policy_params, policy_hash, witness_commitment=None, authorization_receipt_hash=None))]
+    #[pyo3(signature = (event_id, tenant_id, store_id, sequence_number, payload_kind, payload_plain_hash, payload_cipher_hash, event_signing_hash, policy_id, policy_params, policy_hash, witness_commitment=None, authorization_receipt_hash=None, amount_binding_hash=None))]
     pub fn new(
         event_id: String,
         tenant_id: String,
@@ -174,6 +179,7 @@ impl CompliancePublicInputs {
         policy_hash: String,
         witness_commitment: Option<String>,
         authorization_receipt_hash: Option<String>,
+        amount_binding_hash: Option<String>,
     ) -> PyResult<Self> {
         // Convert PyDict to JSON string
         let policy_params_json = Python::with_gil(|py| {
@@ -196,6 +202,7 @@ impl CompliancePublicInputs {
             policy_hash,
             witness_commitment,
             authorization_receipt_hash,
+            amount_binding_hash,
         })
     }
 
@@ -273,6 +280,7 @@ impl CompliancePublicInputs {
             policy_hash: self.policy_hash.clone(),
             witness_commitment: self.witness_commitment.clone(),
             authorization_receipt_hash: self.authorization_receipt_hash.clone(),
+            amount_binding_hash: self.amount_binding_hash.clone(),
         })
     }
 }
@@ -295,6 +303,18 @@ fn receipt_from_py_dict(value: &Bound<'_, PyDict>) -> PyResult<CommerceAuthoriza
     })?;
     serde_json::from_str(&receipt_json)
         .map_err(|e| PyValueError::new_err(format!("Invalid authorization receipt dict: {}", e)))
+}
+
+fn payload_amount_binding_from_py_dict(
+    value: &Bound<'_, PyDict>,
+) -> PyResult<PayloadAmountBinding> {
+    let binding_json = Python::with_gil(|py| {
+        let json = py.import("json")?;
+        let dumps = json.getattr("dumps")?;
+        dumps.call1((value,))?.extract::<String>()
+    })?;
+    serde_json::from_str(&binding_json)
+        .map_err(|e| PyValueError::new_err(format!("Invalid payload amount binding dict: {}", e)))
 }
 
 /// Result of proof generation
@@ -407,7 +427,8 @@ pub fn prove(
     let rust_inputs = public_inputs.to_rust()?;
 
     // Create witness
-    let witness = ComplianceWitness::new(amount, rust_inputs);
+    let witness = ComplianceWitness::try_new(amount, rust_inputs)
+        .map_err(|e| PyValueError::new_err(format!("Invalid witness/public inputs: {}", e)))?;
 
     // Create prover and generate proof
     let prover = ComplianceProver::with_policy(policy.inner.clone());
@@ -480,6 +501,31 @@ pub fn verify(
     }
 }
 
+/// Verify a STARK compliance proof against a canonical payload amount binding.
+#[pyfunction]
+pub fn verify_with_amount_binding(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    amount_binding: &Bound<'_, PyDict>,
+) -> PyResult<VerificationResult> {
+    let rust_inputs = public_inputs.to_rust()?;
+    let binding = payload_amount_binding_from_py_dict(amount_binding)?;
+
+    let result =
+        verify_compliance_proof_auto_with_amount_binding(proof_bytes, &rust_inputs, &binding);
+
+    match result {
+        Ok(verification) => Ok(VerificationResult {
+            valid: verification.valid,
+            verification_time_ms: verification.verification_time_ms,
+            error: verification.error,
+            policy_id: verification.policy_id,
+            policy_limit: verification.policy_limit,
+        }),
+        Err(e) => Err(verifier_error_to_py(e)),
+    }
+}
+
 /// Verify an `agent.authorization.v1` proof against a canonical authorization receipt.
 #[pyfunction]
 pub fn verify_agent_authorization(
@@ -502,8 +548,48 @@ pub fn verify_agent_authorization(
     ];
     let rust_inputs = bind_public_inputs_to_commitment(public_inputs, &commitment)?;
     let receipt = receipt_from_py_dict(receipt)?;
+    let binding = rust_inputs
+        .payload_amount_binding(receipt.amount)
+        .map_err(|e| verifier_error_to_py(VerifierError::PublicInputMismatch(format!("{e}"))))?;
 
-    let result = verify_agent_authorization_proof_auto_bound(proof_bytes, &rust_inputs, &receipt);
+    let result = verify_agent_authorization_proof_auto_with_amount_binding(
+        proof_bytes,
+        &rust_inputs,
+        &binding,
+        &receipt,
+    );
+
+    match result {
+        Ok(verification) => Ok(VerificationResult {
+            valid: verification.valid,
+            verification_time_ms: verification.verification_time_ms,
+            error: verification.error,
+            policy_id: verification.policy_id,
+            policy_limit: verification.policy_limit,
+        }),
+        Err(e) => Err(verifier_error_to_py(e)),
+    }
+}
+
+/// Verify an `agent.authorization.v1` proof against both a canonical payload amount binding and a
+/// canonical authorization receipt.
+#[pyfunction]
+pub fn verify_agent_authorization_with_amount_binding(
+    proof_bytes: &[u8],
+    public_inputs: &CompliancePublicInputs,
+    amount_binding: &Bound<'_, PyDict>,
+    receipt: &Bound<'_, PyDict>,
+) -> PyResult<VerificationResult> {
+    let rust_inputs = public_inputs.to_rust()?;
+    let binding = payload_amount_binding_from_py_dict(amount_binding)?;
+    let receipt = receipt_from_py_dict(receipt)?;
+
+    let result = verify_agent_authorization_proof_auto_with_amount_binding(
+        proof_bytes,
+        &rust_inputs,
+        &binding,
+        &receipt,
+    );
 
     match result {
         Ok(verification) => Ok(VerificationResult {
@@ -549,6 +635,27 @@ pub fn compute_policy_hash(policy_id: &str, policy_params: &Bound<'_, PyDict>) -
     Ok(hash.to_hex())
 }
 
+/// Create a canonical payload amount binding for the supplied public inputs and extracted amount.
+#[pyfunction]
+pub fn create_payload_amount_binding(
+    py: Python<'_>,
+    public_inputs: &CompliancePublicInputs,
+    amount: u64,
+) -> PyResult<PyObject> {
+    let rust_inputs = public_inputs.to_rust()?;
+
+    let binding = rust_inputs.payload_amount_binding(amount).map_err(|e| {
+        PyValueError::new_err(format!("Invalid payload amount binding inputs: {}", e))
+    })?;
+
+    let binding_json = serde_json::to_string(&binding).map_err(|e| {
+        PyRuntimeError::new_err(format!("Failed to serialize payload amount binding: {}", e))
+    })?;
+    let json = py.import("json")?;
+    let loads = json.getattr("loads")?;
+    Ok(loads.call1((binding_json,))?.into())
+}
+
 /// VES STARK Python module
 ///
 /// This module provides Python bindings for the VES STARK proof system,
@@ -568,7 +675,13 @@ fn ves_stark(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<VerificationResult>()?;
     m.add_function(wrap_pyfunction!(prove, m)?)?;
     m.add_function(wrap_pyfunction!(verify, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_with_amount_binding, m)?)?;
     m.add_function(wrap_pyfunction!(verify_agent_authorization, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        verify_agent_authorization_with_amount_binding,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(compute_policy_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(create_payload_amount_binding, m)?)?;
     Ok(())
 }

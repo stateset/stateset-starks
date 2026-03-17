@@ -194,6 +194,18 @@ pub enum PublicInputsError {
     LengthMismatch { expected: usize, actual: usize },
 }
 
+/// Errors that can occur when constructing the compliance AIR.
+#[derive(Debug, Error)]
+pub enum ComplianceAirError {
+    /// Trace too short to bind the Rescue output row.
+    #[error("trace length {actual} too short; must be > {min_required}")]
+    TraceTooShort { actual: usize, min_required: usize },
+
+    /// Public input element length mismatch.
+    #[error("public input element length mismatch: expected {expected}, got {actual}")]
+    PublicInputLengthMismatch { expected: usize, actual: usize },
+}
+
 impl PublicInputs {
     /// Create new public inputs (without witness commitment).
     pub fn new(policy_limit: u64, elements: Vec<Felt>) -> Result<Self, PublicInputsError> {
@@ -281,35 +293,24 @@ impl ComplianceAir {
         Self::new(trace_info, pub_inputs.clone(), options)
     }
 
-    /// Get the policy threshold
-    pub fn policy_limit(&self) -> u64 {
-        self.policy_limit
-    }
-}
-
-impl Air for ComplianceAir {
-    type BaseField = Felt;
-    type PublicInputs = PublicInputs;
-    type GkrProof = ();
-    type GkrVerifier = ();
-
-    fn new(trace_info: TraceInfo, pub_inputs: Self::PublicInputs, options: ProofOptions) -> Self {
-        // We assert against the Rescue output row, so the trace must be long enough.
-        assert!(
-            trace_info.length() > RESCUE_OUTPUT_ROW,
-            "trace length {} too short; must be > {}",
-            trace_info.length(),
-            RESCUE_OUTPUT_ROW
-        );
-        // Never allow constructing an AIR instance with missing public inputs. If this invariant is
-        // violated, `get_assertions()` could silently bind fewer public inputs in release builds.
-        assert_eq!(
-            pub_inputs.elements.len(),
-            cols::PUBLIC_INPUTS_LEN,
-            "public input element length mismatch: expected {}, got {}",
-            cols::PUBLIC_INPUTS_LEN,
-            pub_inputs.elements.len()
-        );
+    /// Create a new compliance AIR without panicking on malformed inputs.
+    pub fn try_new(
+        trace_info: TraceInfo,
+        pub_inputs: PublicInputs,
+        options: ProofOptions,
+    ) -> Result<Self, ComplianceAirError> {
+        if trace_info.length() <= RESCUE_OUTPUT_ROW {
+            return Err(ComplianceAirError::TraceTooShort {
+                actual: trace_info.length(),
+                min_required: RESCUE_OUTPUT_ROW + 1,
+            });
+        }
+        if pub_inputs.elements.len() != cols::PUBLIC_INPUTS_LEN {
+            return Err(ComplianceAirError::PublicInputLengthMismatch {
+                expected: cols::PUBLIC_INPUTS_LEN,
+                actual: pub_inputs.elements.len(),
+            });
+        }
 
         // Build transition constraint degrees
         let mut degrees = Vec::with_capacity(NUM_CONSTRAINTS);
@@ -364,12 +365,28 @@ impl Air for ComplianceAir {
         // Number of boundary assertions: 80 (see get_assertions)
         let context = AirContext::new(trace_info, degrees, 80, options);
 
-        Self {
+        Ok(Self {
             context,
             policy_limit: pub_inputs.policy_limit,
             witness_commitment: pub_inputs.witness_commitment,
-            public_inputs: pub_inputs.elements.clone(),
-        }
+            public_inputs: pub_inputs.elements,
+        })
+    }
+
+    /// Get the policy threshold
+    pub fn policy_limit(&self) -> u64 {
+        self.policy_limit
+    }
+}
+
+impl Air for ComplianceAir {
+    type BaseField = Felt;
+    type PublicInputs = PublicInputs;
+    type GkrProof = ();
+    type GkrVerifier = ();
+
+    fn new(trace_info: TraceInfo, pub_inputs: Self::PublicInputs, options: ProofOptions) -> Self {
+        Self::try_new(trace_info, pub_inputs, options).expect("invalid compliance AIR inputs")
     }
 
     fn context(&self) -> &AirContext<Self::BaseField> {
@@ -768,6 +785,7 @@ mod tests {
             policy_hash: "0".repeat(64),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         }
     }
 
@@ -854,6 +872,47 @@ mod tests {
         assert!(matches!(
             result,
             Err(PublicInputsError::LengthMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn test_compliance_air_try_new_rejects_short_trace() {
+        let trace_info = TraceInfo::new(TRACE_WIDTH, RESCUE_OUTPUT_ROW + 1);
+        let pub_inputs =
+            PublicInputs::try_new(10000, vec![felt_from_u64(1); cols::PUBLIC_INPUTS_LEN]).unwrap();
+
+        let result = ComplianceAir::try_new(
+            trace_info,
+            pub_inputs,
+            crate::options::ProofOptions::default()
+                .try_to_winterfell()
+                .unwrap(),
+        );
+        assert!(matches!(
+            result,
+            Err(ComplianceAirError::TraceTooShort { .. })
+        ));
+    }
+
+    #[test]
+    fn test_compliance_air_try_new_rejects_invalid_public_input_length() {
+        let trace_info = TraceInfo::new(TRACE_WIDTH, MIN_TRACE_LENGTH);
+        let pub_inputs = PublicInputs {
+            policy_limit: 10000,
+            elements: vec![felt_from_u64(1); cols::PUBLIC_INPUTS_LEN - 1],
+            witness_commitment: [FELT_ZERO; 4],
+        };
+
+        let result = ComplianceAir::try_new(
+            trace_info,
+            pub_inputs,
+            crate::options::ProofOptions::default()
+                .try_to_winterfell()
+                .unwrap(),
+        );
+        assert!(matches!(
+            result,
+            Err(ComplianceAirError::PublicInputLengthMismatch { .. })
         ));
     }
 }

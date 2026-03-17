@@ -74,6 +74,7 @@ fn create_public_inputs(
         policy_hash: hash.to_hex(),
         witness_commitment: Some(witness_commitment_u64_to_hex(&commitment_u64)),
         authorization_receipt_hash: None,
+        amount_binding_hash: None,
     }
 }
 
@@ -190,13 +191,17 @@ fn test_batch_event_witness_amount_limbs() {
 #[test]
 fn test_batch_event_witness_compliance_felt() {
     let threshold = 10000u64;
-    let public_inputs = create_public_inputs(threshold, 5000, 0, Uuid::new_v4(), Uuid::new_v4());
+    let tenant_id = Uuid::new_v4();
+    let store_id = Uuid::new_v4();
+    let public_inputs = create_public_inputs(threshold, 5000, 0, tenant_id, store_id);
 
     let compliant_witness =
         BatchEventWitness::new(0, 5000, public_inputs.clone(), threshold).unwrap();
     assert_eq!(compliant_witness.compliance_felt().as_int(), 1);
 
-    let non_compliant_witness = BatchEventWitness::new(0, 15000, public_inputs, threshold).unwrap();
+    let non_compliant_inputs = create_public_inputs(threshold, 15000, 0, tenant_id, store_id);
+    let non_compliant_witness =
+        BatchEventWitness::new(0, 15000, non_compliant_inputs, threshold).unwrap();
     assert_eq!(non_compliant_witness.compliance_felt().as_int(), 0);
 }
 
@@ -344,7 +349,7 @@ fn test_batch_witness_builder_with_prev_state_root() {
 }
 
 #[test]
-fn test_batch_witness_builder_rejects_missing_witness_commitment() {
+fn test_batch_witness_builder_auto_binds_missing_witness_commitment() {
     let threshold = 10000u64;
     let batch_id = Uuid::new_v4();
     let tenant_id = Uuid::new_v4();
@@ -363,7 +368,13 @@ fn test_batch_witness_builder_rejects_missing_witness_commitment() {
         .unwrap()
         .build();
 
-    assert!(result.is_err());
+    assert!(result.is_ok());
+    let witness = result.unwrap();
+    assert!(witness.events[0].public_inputs.witness_commitment.is_some());
+    assert!(witness.events[0]
+        .public_inputs
+        .amount_binding_hash
+        .is_some());
 }
 
 #[test]
@@ -382,9 +393,7 @@ fn test_batch_witness_builder_rejects_invalid_witness_commitment() {
         .metadata(metadata)
         .policy_hash(policy_hash)
         .policy_limit(threshold)
-        .add_event(5000, public_inputs)
-        .unwrap()
-        .build();
+        .add_event(5000, public_inputs);
 
     assert!(result.is_err());
 }

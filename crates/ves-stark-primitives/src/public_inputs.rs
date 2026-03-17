@@ -6,12 +6,17 @@
 use crate::commerce_intent::CommerceAuthorizationReceipt;
 use crate::field::{felt_from_u64, Felt, FeltArray8};
 use crate::hash::{hash_to_felts, u64_to_felt_pair, Hash256};
+use crate::rescue::rescue_hash;
+use crate::FELT_ZERO;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
 /// Domain separator for policy hash computation
 pub const DOMAIN_POLICY_HASH: &[u8] = b"STATESET_VES_COMPLIANCE_POLICY_HASH_V1";
+/// Domain separator for payload amount-binding hashes.
+pub const DOMAIN_PAYLOAD_AMOUNT_BINDING_HASH: &[u8] =
+    b"STATESET_VES_PAYLOAD_AMOUNT_BINDING_HASH_V1";
 
 /// Errors that can occur when handling public inputs
 #[derive(Debug, Error)]
@@ -34,6 +39,9 @@ pub enum PublicInputsError {
     /// Authorization receipt binding failed
     #[error("Invalid authorization receipt binding: {0}")]
     AuthorizationReceiptBinding(String),
+    /// Payload amount binding failed
+    #[error("Invalid payload amount binding: {0}")]
+    AmountBinding(String),
     /// Witness commitment binding failed
     #[error("Invalid witness commitment binding: {0}")]
     WitnessCommitmentBinding(String),
@@ -100,6 +108,162 @@ impl PolicyParams {
     }
 }
 
+/// Canonical payload-derived amount binding.
+///
+/// This artifact is intended to be derived by the surrounding sequencer or parser layer after it
+/// has extracted an amount from the canonical event payload referenced by the public inputs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PayloadAmountBinding {
+    /// UUID of the event being proven.
+    pub event_id: Uuid,
+    /// Tenant ID.
+    pub tenant_id: Uuid,
+    /// Store ID.
+    pub store_id: Uuid,
+    /// Sequence number of the event.
+    pub sequence_number: u64,
+    /// Payload kind (event type discriminator).
+    pub payload_kind: u32,
+    /// SHA-256 hash of plaintext payload (hex64, lowercase).
+    pub payload_plain_hash: String,
+    /// SHA-256 hash of ciphertext payload (hex64, lowercase).
+    pub payload_cipher_hash: String,
+    /// Event signing hash (hex64, lowercase).
+    pub event_signing_hash: String,
+    /// Amount extracted from the payload by the surrounding protocol.
+    pub amount: u64,
+    /// Domain-separated canonical hash of the binding payload.
+    pub binding_hash: String,
+}
+
+impl PayloadAmountBinding {
+    /// Construct a canonical binding from event public inputs and a private amount.
+    pub fn from_public_inputs(
+        inputs: &CompliancePublicInputs,
+        amount: u64,
+    ) -> Result<Self, PublicInputsError> {
+        let mut binding = Self {
+            event_id: inputs.event_id,
+            tenant_id: inputs.tenant_id,
+            store_id: inputs.store_id,
+            sequence_number: inputs.sequence_number,
+            payload_kind: inputs.payload_kind,
+            payload_plain_hash: inputs.payload_plain_hash.clone(),
+            payload_cipher_hash: inputs.payload_cipher_hash.clone(),
+            event_signing_hash: inputs.event_signing_hash.clone(),
+            amount,
+            binding_hash: String::new(),
+        };
+        binding.binding_hash = binding.compute_hash_hex()?;
+        Ok(binding)
+    }
+
+    fn normalized_payload_value(&self) -> Result<serde_json::Value, PublicInputsError> {
+        Ok(serde_json::json!({
+            "amount": self.amount,
+            "eventId": self.event_id,
+            "eventSigningHash": normalize_hex_input(
+                "eventSigningHash",
+                &self.event_signing_hash,
+                64,
+            )?,
+            "payloadCipherHash": normalize_hex_input(
+                "payloadCipherHash",
+                &self.payload_cipher_hash,
+                64,
+            )?,
+            "payloadKind": self.payload_kind,
+            "payloadPlainHash": normalize_hex_input(
+                "payloadPlainHash",
+                &self.payload_plain_hash,
+                64,
+            )?,
+            "sequenceNumber": self.sequence_number,
+            "storeId": self.store_id,
+            "tenantId": self.tenant_id,
+        }))
+    }
+
+    /// Return a normalized form suitable for stable transport and equality checks.
+    pub fn normalized(&self) -> Result<Self, PublicInputsError> {
+        Ok(Self {
+            event_id: self.event_id,
+            tenant_id: self.tenant_id,
+            store_id: self.store_id,
+            sequence_number: self.sequence_number,
+            payload_kind: self.payload_kind,
+            payload_plain_hash: normalize_hex_input(
+                "payloadPlainHash",
+                &self.payload_plain_hash,
+                64,
+            )?,
+            payload_cipher_hash: normalize_hex_input(
+                "payloadCipherHash",
+                &self.payload_cipher_hash,
+                64,
+            )?,
+            event_signing_hash: normalize_hex_input(
+                "eventSigningHash",
+                &self.event_signing_hash,
+                64,
+            )?,
+            amount: self.amount,
+            binding_hash: normalize_hex_input("bindingHash", &self.binding_hash, 64)?,
+        })
+    }
+
+    /// Canonical JSON representation of the binding payload used for hashing.
+    pub fn canonical_json(&self) -> Result<String, PublicInputsError> {
+        canonical_json(&self.normalized_payload_value()?)
+    }
+
+    /// Recompute the domain-separated binding hash.
+    pub fn compute_hash(&self) -> Result<Hash256, PublicInputsError> {
+        let canonical = self.canonical_json()?;
+        Ok(Hash256::sha256_with_domain(
+            DOMAIN_PAYLOAD_AMOUNT_BINDING_HASH,
+            canonical.as_bytes(),
+        ))
+    }
+
+    /// Recompute the domain-separated binding hash as lowercase hex.
+    pub fn compute_hash_hex(&self) -> Result<String, PublicInputsError> {
+        Ok(self.compute_hash()?.to_hex())
+    }
+
+    /// Validate that `binding_hash` matches the canonical payload.
+    pub fn validate_hash(&self) -> Result<bool, PublicInputsError> {
+        Ok(self.compute_hash_hex()? == normalize_hex_input("bindingHash", &self.binding_hash, 64)?)
+    }
+
+    /// Validate the binding payload and embedded hash.
+    pub fn validate(&self) -> Result<(), PublicInputsError> {
+        let normalized = self.normalized()?;
+        if !normalized.validate_hash()? {
+            return Err(PublicInputsError::AmountBinding(
+                "bindingHash does not match canonical payload amount binding".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Compute the Rescue witness commitment for the bound amount.
+    pub fn witness_commitment_u64(&self) -> [u64; 4] {
+        let mut amount_limbs = [FELT_ZERO; 8];
+        amount_limbs[0] = felt_from_u64(self.amount & 0xFFFF_FFFF);
+        amount_limbs[1] = felt_from_u64(self.amount >> 32);
+
+        let hash_output = rescue_hash(&amount_limbs);
+        [
+            hash_output[0].as_int(),
+            hash_output[1].as_int(),
+            hash_output[2].as_int(),
+            hash_output[3].as_int(),
+        ]
+    }
+}
+
 /// Canonical Public Inputs for VES Compliance Proofs
 ///
 /// This structure matches the sequencer's canonical public inputs format.
@@ -153,6 +317,13 @@ pub struct CompliancePublicInputs {
     /// receipt for `agent.authorization.v1` flows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authorization_receipt_hash: Option<String>,
+
+    /// Optional payload-derived amount binding hash (hex32, lowercase, no 0x).
+    ///
+    /// When present, canonical public-input hashes commit to a specific payload-to-amount
+    /// binding artifact derived by the surrounding protocol.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount_binding_hash: Option<String>,
 }
 
 impl CompliancePublicInputs {
@@ -287,6 +458,116 @@ impl CompliancePublicInputs {
         Ok(())
     }
 
+    /// Validate that this public-input object is consistent with a payload amount binding.
+    pub fn validate_payload_amount_binding(
+        &self,
+        binding: &PayloadAmountBinding,
+    ) -> Result<(), PublicInputsError> {
+        let normalized = binding.normalized()?;
+        normalized.validate()?;
+
+        validate_hex_string("payloadPlainHash", &self.payload_plain_hash, 64)?;
+        validate_hex_string("payloadCipherHash", &self.payload_cipher_hash, 64)?;
+        validate_hex_string("eventSigningHash", &self.event_signing_hash, 64)?;
+
+        if normalized.event_id != self.event_id {
+            return Err(PublicInputsError::AmountBinding(
+                "payload amount binding event_id does not match public inputs".to_string(),
+            ));
+        }
+        if normalized.tenant_id != self.tenant_id {
+            return Err(PublicInputsError::AmountBinding(
+                "payload amount binding tenant_id does not match public inputs".to_string(),
+            ));
+        }
+        if normalized.store_id != self.store_id {
+            return Err(PublicInputsError::AmountBinding(
+                "payload amount binding store_id does not match public inputs".to_string(),
+            ));
+        }
+        if normalized.sequence_number != self.sequence_number {
+            return Err(PublicInputsError::AmountBinding(
+                "payload amount binding sequence_number does not match public inputs".to_string(),
+            ));
+        }
+        if normalized.payload_kind != self.payload_kind {
+            return Err(PublicInputsError::AmountBinding(
+                "payload amount binding payload_kind does not match public inputs".to_string(),
+            ));
+        }
+        if normalized.payload_plain_hash != self.payload_plain_hash {
+            return Err(PublicInputsError::AmountBinding(
+                "payload amount binding payload_plain_hash does not match public inputs"
+                    .to_string(),
+            ));
+        }
+        if normalized.payload_cipher_hash != self.payload_cipher_hash {
+            return Err(PublicInputsError::AmountBinding(
+                "payload amount binding payload_cipher_hash does not match public inputs"
+                    .to_string(),
+            ));
+        }
+        if normalized.event_signing_hash != self.event_signing_hash {
+            return Err(PublicInputsError::AmountBinding(
+                "payload amount binding event_signing_hash does not match public inputs"
+                    .to_string(),
+            ));
+        }
+
+        if let Some(expected_commitment) = self.witness_commitment_u64()? {
+            let binding_commitment = normalized.witness_commitment_u64();
+            if expected_commitment != binding_commitment {
+                return Err(PublicInputsError::AmountBinding(
+                    "payload amount binding amount does not match witnessCommitment".to_string(),
+                ));
+            }
+        }
+        if let Some(expected_hash) = self.amount_binding_hash.as_deref() {
+            validate_hex_string("amountBindingHash", expected_hash, 64)?;
+            if expected_hash != normalized.binding_hash {
+                return Err(PublicInputsError::AmountBinding(
+                    "amountBindingHash does not match payload amount binding".to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Construct the canonical payload amount binding for these public inputs and a private amount.
+    pub fn payload_amount_binding(
+        &self,
+        amount: u64,
+    ) -> Result<PayloadAmountBinding, PublicInputsError> {
+        PayloadAmountBinding::from_public_inputs(self, amount)
+    }
+
+    /// Validate that this public-input object is consistent with both a payload amount binding
+    /// and an authorization receipt, and that the two artifacts agree on the witness commitment.
+    pub fn validate_payload_amount_binding_and_authorization_receipt(
+        &self,
+        binding: &PayloadAmountBinding,
+        receipt: &CommerceAuthorizationReceipt,
+    ) -> Result<(), PublicInputsError> {
+        let normalized_binding = binding.normalized()?;
+        let normalized_receipt = receipt
+            .normalized()
+            .map_err(|e| PublicInputsError::AuthorizationReceiptBinding(e.to_string()))?;
+
+        self.validate_payload_amount_binding(&normalized_binding)?;
+        self.validate_authorization_receipt(&normalized_receipt)?;
+
+        if normalized_binding.witness_commitment_u64()
+            != normalized_receipt.witness_commitment_u64()
+        {
+            return Err(PublicInputsError::WitnessCommitmentBinding(
+                "payload amount binding does not match authorization receipt amount".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Return a copy of these public inputs bound to a witness commitment.
     pub fn bind_witness_commitment(
         &self,
@@ -304,6 +585,64 @@ impl CompliancePublicInputs {
         let mut bound = self.clone();
         bound.witness_commitment = Some(witness_commitment_hex);
         Ok(bound)
+    }
+
+    /// Return a copy of these public inputs bound to a canonical payload amount binding.
+    pub fn bind_payload_amount_binding(
+        &self,
+        binding: &PayloadAmountBinding,
+    ) -> Result<Self, PublicInputsError> {
+        self.validate_payload_amount_binding(binding)?;
+
+        let normalized = binding.normalized()?;
+        let mut bound = self.clone();
+        bound.witness_commitment = Some(witness_commitment_u64_to_hex(
+            &normalized.witness_commitment_u64(),
+        ));
+        bound.amount_binding_hash = Some(normalized.binding_hash);
+        Ok(bound)
+    }
+
+    /// Return a copy of these public inputs canonically bound to a private amount.
+    pub fn bind_amount(&self, amount: u64) -> Result<Self, PublicInputsError> {
+        let binding = self.payload_amount_binding(amount)?;
+        self.bind_payload_amount_binding(&binding)
+    }
+
+    /// Return a copy of these public inputs bound to both a canonical payload amount binding and
+    /// a canonical authorization receipt.
+    pub fn bind_payload_amount_binding_and_authorization_receipt(
+        &self,
+        binding: &PayloadAmountBinding,
+        receipt: &CommerceAuthorizationReceipt,
+    ) -> Result<Self, PublicInputsError> {
+        self.validate_payload_amount_binding_and_authorization_receipt(binding, receipt)?;
+
+        let normalized_binding = binding.normalized()?;
+        let normalized_receipt = receipt
+            .normalized()
+            .map_err(|e| PublicInputsError::AuthorizationReceiptBinding(e.to_string()))?;
+
+        let mut bound = self.clone();
+        bound.witness_commitment = Some(witness_commitment_u64_to_hex(
+            &normalized_binding.witness_commitment_u64(),
+        ));
+        bound.amount_binding_hash = Some(normalized_binding.binding_hash);
+        bound.authorization_receipt_hash = Some(normalized_receipt.receipt_hash);
+        Ok(bound)
+    }
+
+    /// Return a copy of these public inputs bound to the canonical payload amount binding derived
+    /// from an authorization receipt and to the canonical authorization receipt hash.
+    pub fn bind_amount_and_authorization_receipt(
+        &self,
+        receipt: &CommerceAuthorizationReceipt,
+    ) -> Result<Self, PublicInputsError> {
+        let normalized_receipt = receipt
+            .normalized()
+            .map_err(|e| PublicInputsError::AuthorizationReceiptBinding(e.to_string()))?;
+        let binding = self.payload_amount_binding(normalized_receipt.amount)?;
+        self.bind_payload_amount_binding_and_authorization_receipt(&binding, &normalized_receipt)
     }
 
     /// Return a copy of these public inputs bound to a canonical authorization receipt.
@@ -365,6 +704,9 @@ impl CompliancePublicInputsFelts {
         }
         if let Some(receipt_hash) = inputs.authorization_receipt_hash.as_deref() {
             validate_hex_string("authorizationReceiptHash", receipt_hash, 64)?;
+        }
+        if let Some(amount_binding_hash) = inputs.amount_binding_hash.as_deref() {
+            validate_hex_string("amountBindingHash", amount_binding_hash, 64)?;
         }
 
         Ok(Self {
@@ -652,7 +994,28 @@ mod tests {
             policy_hash: policy_hash.to_hex(),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         }
+    }
+
+    fn sample_payload_amount_binding(
+        inputs: &CompliancePublicInputs,
+        amount: u64,
+    ) -> PayloadAmountBinding {
+        let mut binding = PayloadAmountBinding {
+            event_id: inputs.event_id,
+            tenant_id: inputs.tenant_id,
+            store_id: inputs.store_id,
+            sequence_number: inputs.sequence_number,
+            payload_kind: inputs.payload_kind,
+            payload_plain_hash: inputs.payload_plain_hash.clone(),
+            payload_cipher_hash: inputs.payload_cipher_hash.clone(),
+            event_signing_hash: inputs.event_signing_hash.clone(),
+            amount,
+            binding_hash: String::new(),
+        };
+        binding.binding_hash = binding.compute_hash_hex().unwrap();
+        binding
     }
 
     #[test]
@@ -729,6 +1092,7 @@ mod tests {
             policy_hash: "d".repeat(64),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         };
 
         let felts = inputs.to_field_elements().unwrap();
@@ -760,6 +1124,7 @@ mod tests {
             policy_hash: hash.to_hex(),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         };
 
         assert!(inputs.validate_policy_hash().unwrap());
@@ -781,6 +1146,7 @@ mod tests {
             policy_hash: "d".repeat(64),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         };
 
         let result = inputs.to_field_elements();
@@ -806,6 +1172,7 @@ mod tests {
                 .to_hex(),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         };
         let mut inputs_with_commitment = inputs_without_commitment.clone();
         inputs_with_commitment.witness_commitment = Some(witness_commitment);
@@ -839,6 +1206,7 @@ mod tests {
             policy_hash: "0".repeat(64),
             witness_commitment: Some(commitment_hex),
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         };
 
         let recovered = inputs.witness_commitment_u64().unwrap().unwrap();
@@ -861,6 +1229,7 @@ mod tests {
             policy_hash: "0".repeat(64),
             witness_commitment: Some("A".repeat(64)),
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         };
 
         let err = inputs.witness_commitment_u64().unwrap_err();
@@ -891,6 +1260,7 @@ mod tests {
                 .to_hex(),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         };
 
         let err = inputs.compute_bound_hash().unwrap_err();
@@ -918,6 +1288,7 @@ mod tests {
                 .to_hex(),
             witness_commitment: None,
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         };
 
         let bound = inputs.bind_witness_commitment(&[1, 2, 3, 4]).unwrap();
@@ -937,6 +1308,159 @@ mod tests {
             bound.compute_bound_hash().unwrap(),
             bound.compute_full_hash().unwrap()
         );
+    }
+
+    #[test]
+    fn test_payload_amount_binding_hash_roundtrip() {
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "1".repeat(64),
+            event_signing_hash: "2".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10_000),
+            policy_hash: compute_policy_hash("aml.threshold", &PolicyParams::threshold(10_000))
+                .unwrap()
+                .to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+            amount_binding_hash: None,
+        };
+        let binding = sample_payload_amount_binding(&inputs, 5_000);
+
+        assert!(binding.validate().is_ok());
+        assert_eq!(binding.compute_hash_hex().unwrap(), binding.binding_hash);
+    }
+
+    #[test]
+    fn test_payload_amount_binding_from_public_inputs_matches_method() {
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "1".repeat(64),
+            event_signing_hash: "2".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10_000),
+            policy_hash: compute_policy_hash("aml.threshold", &PolicyParams::threshold(10_000))
+                .unwrap()
+                .to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+            amount_binding_hash: None,
+        };
+
+        let binding = PayloadAmountBinding::from_public_inputs(&inputs, 5_000).unwrap();
+        assert!(binding.validate().is_ok());
+        assert_eq!(binding, inputs.payload_amount_binding(5_000).unwrap());
+    }
+
+    #[test]
+    fn test_bind_payload_amount_binding_sets_witness_commitment_and_hash() {
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "1".repeat(64),
+            event_signing_hash: "2".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10_000),
+            policy_hash: compute_policy_hash("aml.threshold", &PolicyParams::threshold(10_000))
+                .unwrap()
+                .to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+            amount_binding_hash: None,
+        };
+        let binding = sample_payload_amount_binding(&inputs, 5_000);
+
+        let bound = inputs.bind_payload_amount_binding(&binding).unwrap();
+
+        assert_eq!(
+            bound.witness_commitment,
+            Some(witness_commitment_u64_to_hex(
+                &binding.witness_commitment_u64()
+            ))
+        );
+        assert_eq!(
+            bound.amount_binding_hash,
+            Some(binding.binding_hash.clone())
+        );
+        assert_ne!(
+            inputs.compute_hash().unwrap(),
+            bound.compute_hash().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_bind_amount_sets_witness_commitment_and_hash() {
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "1".repeat(64),
+            event_signing_hash: "2".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10_000),
+            policy_hash: compute_policy_hash("aml.threshold", &PolicyParams::threshold(10_000))
+                .unwrap()
+                .to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+            amount_binding_hash: None,
+        };
+
+        let bound = inputs.bind_amount(5_000).unwrap();
+        let binding = inputs.payload_amount_binding(5_000).unwrap();
+        assert_eq!(
+            bound.witness_commitment,
+            Some(witness_commitment_u64_to_hex(
+                &binding.witness_commitment_u64()
+            ))
+        );
+        assert_eq!(bound.amount_binding_hash, Some(binding.binding_hash));
+    }
+
+    #[test]
+    fn test_validate_payload_amount_binding_rejects_hash_mismatch() {
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "1".repeat(64),
+            event_signing_hash: "2".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10_000),
+            policy_hash: compute_policy_hash("aml.threshold", &PolicyParams::threshold(10_000))
+                .unwrap()
+                .to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+            amount_binding_hash: None,
+        };
+        let mut binding = sample_payload_amount_binding(&inputs, 5_000);
+        binding.binding_hash = "f".repeat(64);
+
+        let err = inputs
+            .validate_payload_amount_binding(&binding)
+            .unwrap_err();
+        assert!(matches!(err, PublicInputsError::AmountBinding(_)));
     }
 
     #[test]
@@ -963,6 +1487,59 @@ mod tests {
     }
 
     #[test]
+    fn test_bind_payload_amount_binding_and_authorization_receipt_sets_all_hashes() {
+        let receipt = sample_authorization_receipt();
+        let inputs = sample_authorization_inputs(&receipt);
+        let binding = sample_payload_amount_binding(&inputs, receipt.amount);
+
+        let bound = inputs
+            .bind_payload_amount_binding_and_authorization_receipt(&binding, &receipt)
+            .unwrap();
+
+        assert_eq!(
+            bound.witness_commitment,
+            Some(witness_commitment_u64_to_hex(
+                &receipt.witness_commitment_u64()
+            ))
+        );
+        assert_eq!(
+            bound.amount_binding_hash,
+            Some(binding.binding_hash.clone())
+        );
+        assert_eq!(
+            bound.authorization_receipt_hash,
+            Some(receipt.receipt_hash.clone())
+        );
+        assert_ne!(
+            inputs.compute_hash().unwrap(),
+            bound.compute_hash().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_bind_amount_and_authorization_receipt_derives_payload_binding() {
+        let receipt = sample_authorization_receipt();
+        let inputs = sample_authorization_inputs(&receipt);
+        let binding = inputs.payload_amount_binding(receipt.amount).unwrap();
+
+        let bound = inputs
+            .bind_amount_and_authorization_receipt(&receipt)
+            .unwrap();
+
+        assert_eq!(
+            bound.witness_commitment,
+            Some(witness_commitment_u64_to_hex(
+                &receipt.witness_commitment_u64()
+            ))
+        );
+        assert_eq!(bound.amount_binding_hash, Some(binding.binding_hash));
+        assert_eq!(
+            bound.authorization_receipt_hash,
+            Some(receipt.receipt_hash.clone())
+        );
+    }
+
+    #[test]
     fn test_validate_authorization_receipt_rejects_context_mismatch() {
         let receipt = sample_authorization_receipt();
         let mut inputs = sample_authorization_inputs(&receipt);
@@ -985,6 +1562,21 @@ mod tests {
         assert!(matches!(
             err,
             PublicInputsError::AuthorizationReceiptBinding(_)
+        ));
+    }
+
+    #[test]
+    fn test_validate_payload_amount_binding_and_authorization_receipt_rejects_amount_mismatch() {
+        let receipt = sample_authorization_receipt();
+        let inputs = sample_authorization_inputs(&receipt);
+        let binding = sample_payload_amount_binding(&inputs, receipt.amount + 1);
+
+        let err = inputs
+            .validate_payload_amount_binding_and_authorization_receipt(&binding, &receipt)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PublicInputsError::WitnessCommitmentBinding(_)
         ));
     }
 }

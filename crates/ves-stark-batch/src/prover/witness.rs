@@ -40,6 +40,11 @@ impl BatchEventWitness {
         public_inputs: CompliancePublicInputs,
         threshold: u64,
     ) -> Result<Self, BatchError> {
+        let public_inputs = public_inputs.bind_amount(amount).map_err(|e| {
+            BatchError::InvalidWitness(format!(
+                "Event {event_index} failed to bind public inputs to private amount: {e}"
+            ))
+        })?;
         let policy =
             Policy::from_public_inputs(&public_inputs.policy_id, &public_inputs.policy_params)
                 .map_err(|e| {
@@ -310,9 +315,28 @@ impl BatchWitness {
                 )));
             }
 
-            // Witness-commitment binding.
-            let expected_commitment = event
-                .public_inputs
+            let expected_bound_inputs =
+                event.public_inputs.bind_amount(event.amount).map_err(|e| {
+                    BatchError::InvalidWitness(format!(
+                        "Event {} payload amount binding validation failed: {e}",
+                        event.event_index
+                    ))
+                })?;
+            if event.public_inputs.witness_commitment != expected_bound_inputs.witness_commitment {
+                return Err(BatchError::InvalidWitness(format!(
+                    "Event {} witness commitment is missing or does not match the private amount",
+                    event.event_index
+                )));
+            }
+            if event.public_inputs.amount_binding_hash != expected_bound_inputs.amount_binding_hash
+            {
+                return Err(BatchError::InvalidWitness(format!(
+                    "Event {} amount binding hash is missing or does not match the private amount",
+                    event.event_index
+                )));
+            }
+
+            let expected_commitment = expected_bound_inputs
                 .witness_commitment_u64()
                 .map_err(|e| {
                     BatchError::InvalidWitness(format!(
@@ -660,6 +684,7 @@ mod tests {
             policy_hash: hash.to_hex(),
             witness_commitment: Some(witness_commitment_u64_to_hex(&commitment)),
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         }
     }
 
@@ -961,11 +986,16 @@ mod tests {
 
         let bad_tenant_id = Uuid::new_v4();
         let bad_store_id = Uuid::new_v4();
-        let mut bad_inputs =
-            sample_public_inputs(threshold, amount, 0, bad_tenant_id, bad_store_id);
-        bad_inputs.witness_commitment = Some("0".repeat(64));
+        let mut bad_event = BatchEventWitness::new(
+            0,
+            amount,
+            sample_public_inputs(threshold, amount, 0, bad_tenant_id, bad_store_id),
+            threshold,
+        )
+        .unwrap();
+        bad_event.public_inputs.witness_commitment = Some("0".repeat(64));
         let bad_witness = BatchWitness::new(
-            vec![BatchEventWitness::new(0, amount, bad_inputs, threshold).unwrap()],
+            vec![bad_event],
             BatchMetadata::with_ids(Uuid::new_v4(), bad_tenant_id, bad_store_id, 0, 0),
             BatchStateRoot::genesis(),
             policy_hash,
@@ -985,11 +1015,47 @@ mod tests {
         let store_id = Uuid::new_v4();
         let metadata = BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
         let policy_hash = sample_policy_hash(threshold);
-        let mut inputs = sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id);
-        inputs.witness_commitment = None;
+        let mut event = BatchEventWitness::new(
+            0,
+            5_000,
+            sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id),
+            threshold,
+        )
+        .unwrap();
+        event.public_inputs.witness_commitment = None;
 
         let witness = BatchWitness::new(
-            vec![BatchEventWitness::new(0, 5_000, inputs, threshold).unwrap()],
+            vec![event],
+            metadata,
+            BatchStateRoot::genesis(),
+            policy_hash,
+            threshold,
+        );
+
+        assert!(matches!(
+            witness.validate(),
+            Err(BatchError::InvalidWitness(_))
+        ));
+    }
+
+    #[test]
+    fn test_batch_witness_missing_amount_binding_hash() {
+        let threshold = 10_000u64;
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata = BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
+        let policy_hash = sample_policy_hash(threshold);
+        let mut event = BatchEventWitness::new(
+            0,
+            5_000,
+            sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id),
+            threshold,
+        )
+        .unwrap();
+        event.public_inputs.amount_binding_hash = None;
+
+        let witness = BatchWitness::new(
+            vec![event],
             metadata,
             BatchStateRoot::genesis(),
             policy_hash,

@@ -439,6 +439,7 @@ mod tests {
                 commitment[3].as_int(),
             ])),
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         }
     }
 

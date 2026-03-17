@@ -91,6 +91,17 @@ if result:
 `ves_stark.verify(...)` now binds the supplied witness commitment into the public inputs before
 verification, so local verification is witness-bound by default.
 
+For payload-to-amount binding, derive a canonical binding artifact and verify against it directly:
+
+```python
+amount_binding = ves_stark.create_payload_amount_binding(public_inputs, 5000)
+bound_result = ves_stark.verify_with_amount_binding(
+    proof.proof_bytes,
+    public_inputs,
+    amount_binding,
+)
+```
+
 ## API Reference
 
 ### Classes
@@ -133,6 +144,7 @@ public_inputs = ves_stark.CompliancePublicInputs(
     policy_hash="...",        # 64-char lowercase hex
     witness_commitment=None,  # optional 64-char lowercase hex (witnessCommitment)
     authorization_receipt_hash=None,  # optional 64-char lowercase hex
+    amount_binding_hash=None,  # optional 64-char lowercase hex
 )
 
 # All fields are readable and writable
@@ -218,7 +230,23 @@ result = ves_stark.verify(
 
 #### `verify_agent_authorization(proof_bytes, public_inputs, witness_commitment, receipt)`
 
-Verify an `agent.authorization.v1` proof against a canonical authorization receipt.
+Verify an `agent.authorization.v1` proof against a canonical authorization receipt, deriving the
+payload amount binding from `receipt["amount"]`.
+
+#### `verify_with_amount_binding(proof_bytes, public_inputs, amount_binding)`
+
+Verify a proof against a canonical payload-derived amount binding.
+
+#### `verify_agent_authorization_with_amount_binding(proof_bytes, public_inputs, amount_binding, receipt)`
+
+Verify an `agent.authorization.v1` proof against both a payload-derived amount binding and a
+canonical authorization receipt. This is equivalent to `verify_agent_authorization(...)` when the
+binding matches `receipt["amount"]`, but keeps the artifact explicit.
+
+#### `create_payload_amount_binding(public_inputs, amount)`
+
+Create a canonical payload amount binding artifact for the supplied public inputs and extracted
+amount.
 
 #### `compute_policy_hash(policy_id, policy_params)`
 

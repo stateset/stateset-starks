@@ -7,10 +7,11 @@
 //! # Usage
 //!
 //! ```ignore
-//! use ves_stark_verifier::verify_compliance_proof_auto_bound_strict;
+//! use ves_stark_verifier::verify_compliance_proof_auto_with_amount_binding_strict;
 //!
-//! // Requires `public_inputs.witnessCommitment` to be present.
-//! let result = verify_compliance_proof_auto_bound_strict(&proof_bytes, &public_inputs)?;
+//! // Requires a canonical payload amount binding artifact for strict verification.
+//! let result =
+//!     verify_compliance_proof_auto_with_amount_binding_strict(&proof_bytes, &public_inputs, &binding)?;
 //! assert!(result.valid);
 //! ```
 
@@ -22,8 +23,20 @@ pub use verify::{
     verify_agent_authorization_proof, verify_agent_authorization_proof_auto,
     verify_agent_authorization_proof_auto_bound,
     verify_agent_authorization_proof_auto_bound_strict,
-    verify_agent_authorization_proof_auto_strict, verify_agent_authorization_proof_strict,
-    verify_compliance_proof, verify_compliance_proof_auto, verify_compliance_proof_auto_bound,
-    verify_compliance_proof_auto_bound_strict, verify_compliance_proof_auto_strict,
-    verify_compliance_proof_strict, ComplianceVerifier, VerificationResult,
+    verify_agent_authorization_proof_auto_bound_witness_strict,
+    verify_agent_authorization_proof_auto_strict,
+    verify_agent_authorization_proof_auto_with_amount_binding,
+    verify_agent_authorization_proof_auto_with_amount_binding_strict,
+    verify_agent_authorization_proof_auto_witness_strict, verify_agent_authorization_proof_strict,
+    verify_agent_authorization_proof_with_amount_binding,
+    verify_agent_authorization_proof_with_amount_binding_strict,
+    verify_agent_authorization_proof_witness_strict, verify_compliance_proof,
+    verify_compliance_proof_auto, verify_compliance_proof_auto_bound,
+    verify_compliance_proof_auto_bound_strict, verify_compliance_proof_auto_bound_witness_strict,
+    verify_compliance_proof_auto_strict, verify_compliance_proof_auto_with_amount_binding,
+    verify_compliance_proof_auto_with_amount_binding_strict,
+    verify_compliance_proof_auto_witness_strict, verify_compliance_proof_strict,
+    verify_compliance_proof_with_amount_binding,
+    verify_compliance_proof_with_amount_binding_strict, verify_compliance_proof_witness_strict,
+    ComplianceVerifier, VerificationResult,
 };

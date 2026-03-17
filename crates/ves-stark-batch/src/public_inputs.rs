@@ -536,6 +536,7 @@ mod tests {
                 .to_hex(),
             witness_commitment: Some(witness_commitment.clone()),
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         };
         let inputs1 = CompliancePublicInputs {
             event_id: Uuid::new_v4(),
@@ -551,6 +552,7 @@ mod tests {
             policy_hash: inputs0.policy_hash.clone(),
             witness_commitment: Some(witness_commitment),
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         };
 
         let gamma = Felt::new(crate::air::trace_layout::MERKLE_LINK_GAMMA);

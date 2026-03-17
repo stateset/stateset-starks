@@ -21,6 +21,7 @@ pub use hash::{felts_to_hash, hash_to_felts, Hash256};
 pub use public_inputs::{
     canonical_json, compute_bound_public_inputs_hash, compute_full_public_inputs_hash,
     compute_policy_hash, compute_public_inputs_hash, witness_commitment_hex_to_u64,
-    witness_commitment_u64_to_hex, CompliancePublicInputs, PolicyParams, PublicInputsError,
+    witness_commitment_u64_to_hex, CompliancePublicInputs, PayloadAmountBinding, PolicyParams,
+    PublicInputsError, DOMAIN_PAYLOAD_AMOUNT_BINDING_HASH,
 };
 pub use rescue::{rescue_hash, rescue_hash_pair, RescueState};

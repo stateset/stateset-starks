@@ -19,12 +19,18 @@ Optional hardening: the canonical public inputs may include `witnessCommitment` 
 hex-encoded). If present, verifiers should require it matches the proof's witness commitment to
 bind the proved witness to the canonical public inputs.
 
+Optional protocol-level hardening: the canonical public inputs may also include
+`amountBindingHash`, the hash of a canonical `PayloadAmountBinding` artifact derived from the event
+payload. When present, verifiers can require that artifact to match the payload hashes and witness
+commitment even though the AIR does not derive the amount itself.
+
 For `aml.threshold`, the verifier uses `L = threshold - 1` (and requires `threshold > 0`), so
 `amount <= L` is equivalent to `amount < threshold`.
 
 Non-statement: the AIR does **not** prove that `amount` is derived from or consistent with the
-payload hashes contained in `P`. That linkage must be enforced by the surrounding protocol/pipeline
-or by extending the AIR.
+payload hashes contained in `P`. This repository now supports a canonical protocol-level binding
+artifact for that purpose, but the binding still lives outside the AIR unless the proof statement
+is extended.
 
 ## Constraint System Overview
 
@@ -105,7 +111,8 @@ formal security proof.
 
 ## Known Limitations
 
-- Amount-to-payload binding is not enforced in the AIR today.
+- Amount-to-payload binding is not enforced in the AIR today, even though protocol-level binding
+  helpers are now available in this repository.
 - Public inputs are bound to the proof instance, but are not used in constraints to derive or
   constrain the private witness.
 - Batch proofs (`ves-stark-batch`) currently do not include a payload-to-amount linkage inside this

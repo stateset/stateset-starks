@@ -31,6 +31,8 @@ export interface JsCompliancePublicInputs {
   witnessCommitment?: string
   /** Optional authorization receipt hash (hex64, lowercase) committed into canonical public inputs. */
   authorizationReceiptHash?: string
+  /** Optional payload amount binding hash (hex64, lowercase) committed into canonical public inputs. */
+  amountBindingHash?: string
 }
 /** Result of proof generation */
 export interface JsComplianceProof {
@@ -94,10 +96,17 @@ export declare function verify(proofBytes: Buffer, publicInputs: JsCompliancePub
  * mismatches are reported as thrown errors rather than `valid = false`.
  */
 export declare function verifyHex(proofBytes: Buffer, publicInputs: JsCompliancePublicInputs, witnessCommitmentHex: string): JsVerificationResult
+/** Verify a STARK compliance proof against a canonical payload amount binding. */
+export declare function verifyWithAmountBinding(proofBytes: Buffer, publicInputs: JsCompliancePublicInputs, amountBinding: any): JsVerificationResult
 /** Verify an `agent.authorization.v1` proof against a canonical authorization receipt. */
 export declare function verifyAgentAuthorization(proofBytes: Buffer, publicInputs: JsCompliancePublicInputs, witnessCommitment: Array<string>, receipt: any): JsVerificationResult
 /** Verify an `agent.authorization.v1` proof using the witness commitment hex string. */
 export declare function verifyAgentAuthorizationHex(proofBytes: Buffer, publicInputs: JsCompliancePublicInputs, witnessCommitmentHex: string, receipt: any): JsVerificationResult
+/**
+ * Verify an `agent.authorization.v1` proof against both a canonical payload amount binding and a
+ * canonical authorization receipt.
+ */
+export declare function verifyAgentAuthorizationWithAmountBinding(proofBytes: Buffer, publicInputs: JsCompliancePublicInputs, amountBinding: any, receipt: any): JsVerificationResult
 /**
  * Compute the policy hash for given policy ID and parameters
  *
@@ -128,3 +137,5 @@ export declare function createOrderTotalCapParams(cap: bigint): any
  * @returns Policy parameters JSON object
  */
 export declare function createAgentAuthorizationParams(maxTotal: bigint, intentHash: string): any
+/** Create a canonical payload amount binding for the supplied public inputs and extracted amount. */
+export declare function createPayloadAmountBinding(publicInputs: JsCompliancePublicInputs, amount: bigint): any

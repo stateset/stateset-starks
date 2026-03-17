@@ -171,27 +171,7 @@ pub struct BatchVerifier {
 impl BatchVerifier {
     /// Create a new verifier with default options
     pub fn new() -> Self {
-        Self::try_new().unwrap_or_else(|_| Self {
-            acceptable_options: Self::fallback_options(),
-        })
-    }
-
-    fn fallback_options() -> AcceptableOptions {
-        AcceptableOptions::OptionSet(vec![
-            Self::to_winterfell_unchecked(&ProofOptions::default()),
-            Self::to_winterfell_unchecked(&ProofOptions::secure()),
-        ])
-    }
-
-    fn to_winterfell_unchecked(options: &ProofOptions) -> winter_air::ProofOptions {
-        winter_air::ProofOptions::new(
-            options.num_queries,
-            options.blowup_factor,
-            options.grinding_factor,
-            options.field_extension,
-            options.fri_folding_factor,
-            31,
-        )
+        Self::try_new().expect("built-in batch verifier proof options must remain valid")
     }
 
     /// Create a new verifier with default options without panicking.
@@ -383,6 +363,7 @@ mod tests {
                 commitment[3].as_int(),
             ])),
             authorization_receipt_hash: None,
+            amount_binding_hash: None,
         }
     }
 

@@ -19,18 +19,26 @@ Phase 1 implements per-event compliance proofs for:
 
 Note: The current AIR does **not** prove that the private `amount` equals a value decrypted or
 parsed from the payload hashes in the public inputs. It proves a relationship about a private
-`amount` witness (bound via a Rescue commitment) under the assumption that the surrounding VES
-pipeline derived that witness correctly.
+`amount` witness (bound via a Rescue commitment). This repository now also provides a canonical
+protocol-level `PayloadAmountBinding` artifact plus `amountBindingHash` support in public inputs so
+verifiers can require a payload-derived amount binding outside the AIR.
 
 In the `stateset-sequencer` integration, the sequencer does **not** include `witnessCommitment` in
 canonical public inputs (it can't derive it pre-proof). Instead, the prover submits
 `witnessCommitment` alongside the proof, and the sequencer stores it and uses it during
 verification to bind the proof to the witness.
 
-High-level local surfaces in this repository now default to witness-bound verification: the CLI,
-Node, and Python bindings bind `witnessCommitment` into the public-input object before
-verification, and local proof artifacts can compute a bound public-input hash that includes that
+High-level local surfaces in this repository now default to stronger local verification: the CLI,
+Node, and Python bindings can bind `witnessCommitment` and a canonical payload amount binding into
+the public-input object before verification, and local proof artifacts can compute a bound
+public-input hash that includes those local bindings. Receipt-aware helpers also derive the
+payload amount binding from canonical authorization receipts instead of stopping at witness-only
 binding.
+
+For transport, `ves-stark-client` now exposes:
+- `ComplianceProofBundle` for payload-bound proofs across any policy
+- `AgentAuthorizationProofBundle` for delegated-commerce proofs bound to both the
+  payload-derived amount artifact and the authorization receipt
 
 ## Architecture
 
@@ -74,6 +82,9 @@ use ves_stark_verifier::verify_compliance_proof_auto_bound_strict;
 let result = verify_compliance_proof_auto_bound_strict(&proof.proof_bytes, &public_inputs)?;
 assert!(result.valid);
 ```
+
+For protocol-level payload binding, derive a canonical `PayloadAmountBinding`, bind it into the
+public inputs, and verify against that bound object.
 
 ### Submit to Sequencer
 

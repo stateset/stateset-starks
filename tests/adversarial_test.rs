@@ -40,6 +40,7 @@ fn sample_aml_public_inputs(threshold: u64) -> CompliancePublicInputs {
         policy_hash: hash.to_hex(),
         witness_commitment: None,
         authorization_receipt_hash: None,
+        amount_binding_hash: None,
     }
 }
 
@@ -62,6 +63,7 @@ fn sample_cap_public_inputs(cap: u64) -> CompliancePublicInputs {
         policy_hash: hash.to_hex(),
         witness_commitment: None,
         authorization_receipt_hash: None,
+        amount_binding_hash: None,
     }
 }
 

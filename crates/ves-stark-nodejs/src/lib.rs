@@ -10,11 +10,12 @@ use uuid::Uuid;
 use ves_stark_air::Policy;
 use ves_stark_primitives::{
     witness_commitment_hex_to_u64, CommerceAuthorizationReceipt, CompliancePublicInputs,
-    PolicyParams,
+    PayloadAmountBinding, PolicyParams,
 };
 use ves_stark_prover::{ComplianceProver, ComplianceWitness};
 use ves_stark_verifier::{
-    verify_agent_authorization_proof_auto_bound, verify_compliance_proof_auto_bound, VerifierError,
+    verify_agent_authorization_proof_auto_with_amount_binding, verify_compliance_proof_auto_bound,
+    verify_compliance_proof_auto_with_amount_binding, VerifierError,
 };
 
 fn bigint_to_u64(value: &BigInt, field_name: &str) -> Result<u64> {
@@ -103,6 +104,15 @@ fn parse_authorization_receipt(receipt: serde_json::Value) -> Result<CommerceAut
     })
 }
 
+fn parse_payload_amount_binding(binding: serde_json::Value) -> Result<PayloadAmountBinding> {
+    serde_json::from_value(binding).map_err(|e| {
+        Error::new(
+            Status::InvalidArg,
+            format!("Invalid payload amount binding object: {}", e),
+        )
+    })
+}
+
 /// Public inputs for compliance proof generation/verification
 #[napi(object)]
 pub struct JsCompliancePublicInputs {
@@ -132,6 +142,8 @@ pub struct JsCompliancePublicInputs {
     pub witness_commitment: Option<String>,
     /// Optional authorization receipt hash (hex64, lowercase) committed into canonical public inputs.
     pub authorization_receipt_hash: Option<String>,
+    /// Optional payload amount binding hash (hex64, lowercase) committed into canonical public inputs.
+    pub amount_binding_hash: Option<String>,
 }
 
 /// Result of proof generation
@@ -189,6 +201,7 @@ fn convert_public_inputs(js: &JsCompliancePublicInputs) -> Result<CompliancePubl
         policy_hash: js.policy_hash.clone(),
         witness_commitment: js.witness_commitment.clone(),
         authorization_receipt_hash: js.authorization_receipt_hash.clone(),
+        amount_binding_hash: js.amount_binding_hash.clone(),
     })
 }
 
@@ -257,7 +270,12 @@ pub fn prove(
     }
 
     // Create witness
-    let witness = ComplianceWitness::new(amount, rust_inputs);
+    let witness = ComplianceWitness::try_new(amount, rust_inputs).map_err(|e| {
+        Error::new(
+            Status::InvalidArg,
+            format!("Invalid witness/public inputs: {}", e),
+        )
+    })?;
 
     // Create prover and generate proof
     let prover = ComplianceProver::with_policy(policy);
@@ -363,6 +381,31 @@ pub fn verify_hex(
     }
 }
 
+/// Verify a STARK compliance proof against a canonical payload amount binding.
+#[napi]
+pub fn verify_with_amount_binding(
+    proof_bytes: Buffer,
+    public_inputs: JsCompliancePublicInputs,
+    amount_binding: serde_json::Value,
+) -> Result<JsVerificationResult> {
+    let rust_inputs = convert_public_inputs(&public_inputs)?;
+    let binding = parse_payload_amount_binding(amount_binding)?;
+
+    let result =
+        verify_compliance_proof_auto_with_amount_binding(&proof_bytes, &rust_inputs, &binding);
+
+    match result {
+        Ok(verification) => Ok(JsVerificationResult {
+            valid: verification.valid,
+            verification_time_ms: verification.verification_time_ms as i64,
+            error: verification.error,
+            policy_id: verification.policy_id,
+            policy_limit: BigInt::from(verification.policy_limit),
+        }),
+        Err(e) => Err(verifier_error_to_napi(e)),
+    }
+}
+
 /// Verify an `agent.authorization.v1` proof against a canonical authorization receipt.
 #[napi]
 pub fn verify_agent_authorization(
@@ -375,8 +418,16 @@ pub fn verify_agent_authorization(
     let commitment = parse_witness_commitment(witness_commitment)?;
     let rust_inputs = bind_public_inputs_to_commitment(rust_inputs, &commitment)?;
     let receipt = parse_authorization_receipt(receipt)?;
+    let binding = rust_inputs
+        .payload_amount_binding(receipt.amount)
+        .map_err(|e| verifier_error_to_napi(VerifierError::PublicInputMismatch(format!("{e}"))))?;
 
-    let result = verify_agent_authorization_proof_auto_bound(&proof_bytes, &rust_inputs, &receipt);
+    let result = verify_agent_authorization_proof_auto_with_amount_binding(
+        &proof_bytes,
+        &rust_inputs,
+        &binding,
+        &receipt,
+    );
 
     match result {
         Ok(verification) => Ok(JsVerificationResult {
@@ -407,8 +458,48 @@ pub fn verify_agent_authorization_hex(
     })?;
     let rust_inputs = bind_public_inputs_to_commitment(rust_inputs, &commitment)?;
     let receipt = parse_authorization_receipt(receipt)?;
+    let binding = rust_inputs
+        .payload_amount_binding(receipt.amount)
+        .map_err(|e| verifier_error_to_napi(VerifierError::PublicInputMismatch(format!("{e}"))))?;
 
-    let result = verify_agent_authorization_proof_auto_bound(&proof_bytes, &rust_inputs, &receipt);
+    let result = verify_agent_authorization_proof_auto_with_amount_binding(
+        &proof_bytes,
+        &rust_inputs,
+        &binding,
+        &receipt,
+    );
+
+    match result {
+        Ok(verification) => Ok(JsVerificationResult {
+            valid: verification.valid,
+            verification_time_ms: verification.verification_time_ms as i64,
+            error: verification.error,
+            policy_id: verification.policy_id,
+            policy_limit: BigInt::from(verification.policy_limit),
+        }),
+        Err(e) => Err(verifier_error_to_napi(e)),
+    }
+}
+
+/// Verify an `agent.authorization.v1` proof against both a canonical payload amount binding and a
+/// canonical authorization receipt.
+#[napi]
+pub fn verify_agent_authorization_with_amount_binding(
+    proof_bytes: Buffer,
+    public_inputs: JsCompliancePublicInputs,
+    amount_binding: serde_json::Value,
+    receipt: serde_json::Value,
+) -> Result<JsVerificationResult> {
+    let rust_inputs = convert_public_inputs(&public_inputs)?;
+    let binding = parse_payload_amount_binding(amount_binding)?;
+    let receipt = parse_authorization_receipt(receipt)?;
+
+    let result = verify_agent_authorization_proof_auto_with_amount_binding(
+        &proof_bytes,
+        &rust_inputs,
+        &binding,
+        &receipt,
+    );
 
     match result {
         Ok(verification) => Ok(JsVerificationResult {
@@ -477,4 +568,28 @@ pub fn create_agent_authorization_params(
         )
     })?;
     Ok(params.to_json_value())
+}
+
+/// Create a canonical payload amount binding for the supplied public inputs and extracted amount.
+#[napi]
+pub fn create_payload_amount_binding(
+    public_inputs: JsCompliancePublicInputs,
+    amount: BigInt,
+) -> Result<serde_json::Value> {
+    let rust_inputs = convert_public_inputs(&public_inputs)?;
+    let amount = bigint_to_u64(&amount, "amount")?;
+
+    let binding = rust_inputs.payload_amount_binding(amount).map_err(|e| {
+        Error::new(
+            Status::InvalidArg,
+            format!("Invalid payload amount binding inputs: {}", e),
+        )
+    })?;
+
+    serde_json::to_value(&binding).map_err(|e| {
+        Error::new(
+            Status::GenericFailure,
+            format!("Failed to serialize payload amount binding: {}", e),
+        )
+    })
 }
