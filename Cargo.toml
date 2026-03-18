@@ -10,6 +10,7 @@ members = [
     "crates/ves-stark-cli",
     "crates/ves-stark-nodejs",
     "crates/ves-stark-python",
+    "crates/ves-stark-zig",
 ]
 
 [package]

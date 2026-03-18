@@ -35,3 +35,7 @@ build/
 
 # Coverage
 lcov.info
+
+# Zig build artifacts
+.zig-cache/
+zig-out/

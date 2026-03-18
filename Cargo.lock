@@ -2331,6 +2331,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ves-stark-zig"
+version = "0.2.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+ "ves-stark-air",
+ "ves-stark-batch",
+ "ves-stark-primitives",
+ "ves-stark-prover",
+ "ves-stark-verifier",
+]
+
+[[package]]
 name = "wait-timeout"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

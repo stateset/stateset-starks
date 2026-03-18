@@ -1,0 +1,12 @@
+.{
+    .name = .ves_stark_zig,
+    .version = "0.2.1",
+    .fingerprint = 0x43570c2e224fac65,
+    .minimum_zig_version = "0.14.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "zig/",
+        "include/",
+    },
+}
