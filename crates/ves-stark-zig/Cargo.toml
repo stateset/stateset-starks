@@ -17,11 +17,11 @@ batch = ["ves-stark-batch"]
 
 [dependencies]
 # Workspace crates
-ves-stark-primitives = { version = "0.2.2", path = "../ves-stark-primitives" }
-ves-stark-air = { version = "0.2.2", path = "../ves-stark-air" }
-ves-stark-prover = { version = "0.2.2", path = "../ves-stark-prover" }
-ves-stark-verifier = { version = "0.2.2", path = "../ves-stark-verifier" }
-ves-stark-batch = { version = "0.2.2", path = "../ves-stark-batch", optional = true }
+ves-stark-primitives = { version = "0.2.3", path = "../ves-stark-primitives" }
+ves-stark-air = { version = "0.2.3", path = "../ves-stark-air" }
+ves-stark-prover = { version = "0.2.3", path = "../ves-stark-prover" }
+ves-stark-verifier = { version = "0.2.3", path = "../ves-stark-verifier" }
+ves-stark-batch = { version = "0.2.3", path = "../ves-stark-batch", optional = true }
 
 # Serialization
 serde = { workspace = true }

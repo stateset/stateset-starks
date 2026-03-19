@@ -1,6 +1,6 @@
 {
   "name": "@stateset/ves-stark",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Node.js bindings for VES STARK proof system",
   "main": "index.js",
   "types": "index.d.ts",
