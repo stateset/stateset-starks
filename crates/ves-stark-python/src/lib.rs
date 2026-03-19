@@ -244,6 +244,7 @@ fn verifier_error_to_py(err: VerifierError) -> PyErr {
         | VerifierError::InvalidPolicyHash { .. }
         | VerifierError::PolicyMismatch { .. }
         | VerifierError::LimitMismatch { .. }
+        | VerifierError::PayloadAmountBindingRequired(_)
         | VerifierError::WitnessCommitmentMismatch
         | VerifierError::ProofTooLarge { .. }
         | VerifierError::UnsupportedProofVersion { .. } => PyValueError::new_err(message),

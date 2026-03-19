@@ -68,6 +68,7 @@ fn verifier_error_to_napi(err: VerifierError) -> Error {
         | VerifierError::InvalidPolicyHash { .. }
         | VerifierError::PolicyMismatch { .. }
         | VerifierError::LimitMismatch { .. }
+        | VerifierError::PayloadAmountBindingRequired(_)
         | VerifierError::WitnessCommitmentMismatch
         | VerifierError::ProofTooLarge { .. }
         | VerifierError::UnsupportedProofVersion { .. } => Status::InvalidArg,
