@@ -16,10 +16,10 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.24.1", features = ["extension-module"] }
 
 # Workspace crates
-ves-stark-primitives = { path = "../ves-stark-primitives" }
-ves-stark-air = { path = "../ves-stark-air" }
-ves-stark-prover = { path = "../ves-stark-prover" }
-ves-stark-verifier = { path = "../ves-stark-verifier" }
+ves-stark-primitives = { version = "0.2.2", path = "../ves-stark-primitives" }
+ves-stark-air = { version = "0.2.2", path = "../ves-stark-air" }
+ves-stark-prover = { version = "0.2.2", path = "../ves-stark-prover" }
+ves-stark-verifier = { version = "0.2.2", path = "../ves-stark-verifier" }
 
 # Serialization
 serde = { workspace = true }

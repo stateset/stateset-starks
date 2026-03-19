@@ -17,7 +17,7 @@ wasm-bindgen = "0.2.106"
 serde_json = { workspace = true }
 uuid = { workspace = true }
 
-ves-stark-air = { path = "../ves-stark-air" }
-ves-stark-primitives = { path = "../ves-stark-primitives" }
-ves-stark-prover = { path = "../ves-stark-prover" }
-ves-stark-verifier = { path = "../ves-stark-verifier" }
+ves-stark-air = { version = "0.2.2", path = "../ves-stark-air" }
+ves-stark-primitives = { version = "0.2.2", path = "../ves-stark-primitives" }
+ves-stark-prover = { version = "0.2.2", path = "../ves-stark-prover" }
+ves-stark-verifier = { version = "0.2.2", path = "../ves-stark-verifier" }
