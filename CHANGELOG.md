@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-03-19
+
+### Added
+- New `ves-stark-wasm` crate with browser/WebAssembly bindings for proof generation, verification, policy-hash helpers, and payload amount bindings.
+
+### Fixed
+- Client-side WASM proving and verification now work end-to-end on `wasm32-unknown-unknown` by using a wasm-safe wall-clock timer instead of `std::time::Instant`.
+- WASM panic output now reports the underlying Rust panic to the browser console, making runtime failures diagnosable instead of surfacing only as `RuntimeError: unreachable`.
+- Workspace `uuid` configuration now enables the `js` feature so wasm builds can use browser randomness correctly.
+
+### Changed
+- Workspace, npm, Python, and Rust crate release metadata are aligned on `0.2.2`.
+
 ## [0.2.1] - 2026-03-11
 
 ### Changed

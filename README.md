@@ -51,6 +51,7 @@ stateset-stark/
 │   ├── ves-stark-verifier/     # Proof verification
 │   ├── ves-stark-client/       # Sequencer/Set Chain client
 │   ├── ves-stark-cli/          # CLI utilities
+│   ├── ves-stark-wasm/         # Browser/WebAssembly bindings
 │   └── ves-stark-batch/        # Batch proofs for aggregate state transition integrity
 └── tests/                       # Integration tests
 ```
@@ -163,6 +164,12 @@ Requires Rust `1.90.0` (pinned in `rust-toolchain.toml`).
 
 ```bash
 cargo build --release
+```
+
+To build the browser bindings:
+
+```bash
+cargo build -p ves-stark-wasm --target wasm32-unknown-unknown --release
 ```
 
 ## Testing

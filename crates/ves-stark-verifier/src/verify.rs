@@ -4,7 +4,6 @@
 
 use crate::error::{validate_hex_string, VerifierError, MAX_PROOF_SIZE};
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 use ves_stark_air::compliance::{ComplianceAir, PublicInputs};
 use ves_stark_air::policy::Policy;
 use ves_stark_primitives::public_inputs::CompliancePublicInputs;
@@ -22,6 +21,32 @@ pub type RandCoin = DefaultRandomCoin<Hasher>;
 
 /// Type alias for vector commitment
 pub type VectorCommit = MerkleTree<Hasher>;
+
+#[cfg(not(target_arch = "wasm32"))]
+type Timer = std::time::Instant;
+
+#[cfg(target_arch = "wasm32")]
+type Timer = u64;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn start_timer() -> Timer {
+    std::time::Instant::now()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn start_timer() -> Timer {
+    js_sys::Date::now() as u64
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn elapsed_ms(start: Timer) -> u64 {
+    start.elapsed().as_millis() as u64
+}
+
+#[cfg(target_arch = "wasm32")]
+fn elapsed_ms(start: Timer) -> u64 {
+    (js_sys::Date::now() as u64).saturating_sub(start)
+}
 
 /// Result of proof verification
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,7 +104,7 @@ fn verify_compliance_proof_with_options(
     witness_commitment: &[u64; 4],
     acceptable_options: &AcceptableOptions,
 ) -> Result<VerificationResult, VerifierError> {
-    let start = Instant::now();
+    let start = start_timer();
 
     // Size check: reject oversized proofs before attempting deserialization
     if proof_bytes.len() > MAX_PROOF_SIZE {
@@ -193,19 +218,17 @@ fn verify_compliance_proof_with_options(
         acceptable_options,
     );
 
-    let verification_time = start.elapsed();
-
     match result {
         Ok(_) => Ok(VerificationResult {
             valid: true,
-            verification_time_ms: verification_time.as_millis() as u64,
+            verification_time_ms: elapsed_ms(start),
             error: None,
             policy_id: public_inputs.policy_id.clone(),
             policy_limit: policy.limit(),
         }),
         Err(e) => Ok(VerificationResult {
             valid: false,
-            verification_time_ms: verification_time.as_millis() as u64,
+            verification_time_ms: elapsed_ms(start),
             error: Some(format!("{:?}", e)),
             policy_id: public_inputs.policy_id.clone(),
             policy_limit: policy.limit(),

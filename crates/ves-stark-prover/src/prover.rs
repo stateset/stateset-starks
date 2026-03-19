@@ -26,7 +26,6 @@ use crate::policy::Policy;
 use crate::trace::TraceBuilder;
 use crate::witness::ComplianceWitness;
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 use ves_stark_air::compliance::{ComplianceAir, PublicInputs};
 use ves_stark_air::options::ProofOptions;
 use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
@@ -45,6 +44,32 @@ pub type RandCoin = DefaultRandomCoin<Hasher>;
 
 /// Type alias for vector commitment
 pub type VectorCommit = MerkleTree<Hasher>;
+
+#[cfg(not(target_arch = "wasm32"))]
+type Timer = std::time::Instant;
+
+#[cfg(target_arch = "wasm32")]
+type Timer = u64;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn start_timer() -> Timer {
+    std::time::Instant::now()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn start_timer() -> Timer {
+    js_sys::Date::now() as u64
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn elapsed_ms(start: Timer) -> u64 {
+    start.elapsed().as_millis() as u64
+}
+
+#[cfg(target_arch = "wasm32")]
+fn elapsed_ms(start: Timer) -> u64 {
+    (js_sys::Date::now() as u64).saturating_sub(start)
+}
 
 /// A generated compliance proof
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,7 +161,7 @@ impl ComplianceProver {
 
     /// Generate a proof for the given witness
     pub fn prove(&self, witness: &ComplianceWitness) -> Result<ComplianceProof, ProverError> {
-        let start = Instant::now();
+        let start = start_timer();
 
         // Validate witness against unified policy
         if !self.policy.validate_amount(witness.amount) {
@@ -225,13 +250,11 @@ impl ComplianceProver {
         let proof_bytes = proof.to_bytes();
         let proof_hash = ComplianceProof::compute_hash(&proof_bytes);
 
-        let proving_time = start.elapsed();
-
         Ok(ComplianceProof {
             proof_bytes: proof_bytes.clone(),
             proof_hash: proof_hash.to_hex(),
             metadata: ProofMetadata {
-                proving_time_ms: proving_time.as_millis() as u64,
+                proving_time_ms: elapsed_ms(start),
                 num_constraints: ves_stark_air::compliance::NUM_CONSTRAINTS,
                 trace_length,
                 proof_size: proof_bytes.len(),

@@ -8,6 +8,7 @@ members = [
     "crates/ves-stark-batch",
     "crates/ves-stark-client",
     "crates/ves-stark-cli",
+    "crates/ves-stark-wasm",
     "crates/ves-stark-nodejs",
     "crates/ves-stark-python",
     "crates/ves-stark-zig",
@@ -15,7 +16,7 @@ members = [
 
 [package]
 name = "ves-stark"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 rust-version = "1.90"
 publish = false
@@ -39,7 +40,7 @@ name = "stark_bench"
 harness = false
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 rust-version = "1.90"
 license = "MIT"
@@ -71,7 +72,7 @@ thiserror = "2"
 anyhow = "1"
 
 # Utilities
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "serde", "js"] }
 base64 = "0.22"
 rand = "0.8"
 rayon = "1.8"
