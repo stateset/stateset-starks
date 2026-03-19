@@ -90,12 +90,10 @@ unsafe fn cstr_to_str<'a>(ptr: *const c_char) -> Result<&'a str, i32> {
         set_last_error("null string pointer".into());
         return Err(VES_ERR_NULL_PTR);
     }
-    unsafe { CStr::from_ptr(ptr) }
-        .to_str()
-        .map_err(|e| {
-            set_last_error(format!("Invalid UTF-8 string: {}", e));
-            VES_ERR_INVALID_ARG
-        })
+    unsafe { CStr::from_ptr(ptr) }.to_str().map_err(|e| {
+        set_last_error(format!("Invalid UTF-8 string: {}", e));
+        VES_ERR_INVALID_ARG
+    })
 }
 
 fn parse_public_inputs_json(json: &str) -> Result<CompliancePublicInputs, i32> {
@@ -198,9 +196,7 @@ fn parse_public_inputs_json(json: &str) -> Result<CompliancePublicInputs, i32> {
 ///
 /// Returns NULL on error (check `ves_stark_last_error()`).
 #[no_mangle]
-pub unsafe extern "C" fn ves_public_inputs_from_json(
-    json: *const c_char,
-) -> *mut VesPublicInputs {
+pub unsafe extern "C" fn ves_public_inputs_from_json(json: *const c_char) -> *mut VesPublicInputs {
     let json_str = match unsafe { cstr_to_str(json) } {
         Ok(s) => s,
         Err(_) => return std::ptr::null_mut(),
@@ -283,14 +279,14 @@ pub unsafe extern "C" fn ves_prove(
         return VES_ERR_INVALID_ARG;
     }
 
-    let policy = match Policy::from_public_inputs(&rust_inputs.policy_id, &rust_inputs.policy_params)
-    {
-        Ok(p) => p,
-        Err(e) => {
-            set_last_error(format!("Invalid policy parameters: {}", e));
-            return VES_ERR_INVALID_ARG;
-        }
-    };
+    let policy =
+        match Policy::from_public_inputs(&rust_inputs.policy_id, &rust_inputs.policy_params) {
+            Ok(p) => p,
+            Err(e) => {
+                set_last_error(format!("Invalid policy parameters: {}", e));
+                return VES_ERR_INVALID_ARG;
+            }
+        };
 
     if policy.limit() != policy_limit {
         set_last_error(format!(
@@ -357,10 +353,7 @@ pub unsafe extern "C" fn ves_prove(
 
 /// Get proof bytes pointer and length.
 #[no_mangle]
-pub unsafe extern "C" fn ves_proof_bytes(
-    proof: *const VesProof,
-    out_len: *mut usize,
-) -> *const u8 {
+pub unsafe extern "C" fn ves_proof_bytes(proof: *const VesProof, out_len: *mut usize) -> *const u8 {
     if proof.is_null() {
         return std::ptr::null();
     }
@@ -416,9 +409,7 @@ pub unsafe extern "C" fn ves_proof_witness_commitment(
 
 /// Get witness commitment as hex string (64 chars).
 #[no_mangle]
-pub unsafe extern "C" fn ves_proof_witness_commitment_hex(
-    proof: *const VesProof,
-) -> *const c_char {
+pub unsafe extern "C" fn ves_proof_witness_commitment_hex(proof: *const VesProof) -> *const c_char {
     if proof.is_null() {
         return std::ptr::null();
     }
@@ -473,7 +464,11 @@ pub unsafe extern "C" fn ves_verify(
     witness_commitment: *const u64,
     out_result: *mut *mut VesVerificationResult,
 ) -> i32 {
-    if proof_bytes_ptr.is_null() || inputs.is_null() || witness_commitment.is_null() || out_result.is_null() {
+    if proof_bytes_ptr.is_null()
+        || inputs.is_null()
+        || witness_commitment.is_null()
+        || out_result.is_null()
+    {
         set_last_error("null pointer argument".into());
         return VES_ERR_NULL_PTR;
     }
@@ -598,7 +593,11 @@ pub unsafe extern "C" fn ves_verify_agent_authorization(
     receipt_json: *const c_char,
     out_result: *mut *mut VesVerificationResult,
 ) -> i32 {
-    if proof_bytes_ptr.is_null() || inputs.is_null() || witness_commitment.is_null() || out_result.is_null() {
+    if proof_bytes_ptr.is_null()
+        || inputs.is_null()
+        || witness_commitment.is_null()
+        || out_result.is_null()
+    {
         set_last_error("null pointer argument".into());
         return VES_ERR_NULL_PTR;
     }
@@ -1075,7 +1074,10 @@ mod batch_ffi {
             "aml.threshold" => BatchPolicyKind::AmlThreshold,
             "order_total.cap" => BatchPolicyKind::OrderTotalCap,
             _ => {
-                set_last_error(format!("Unsupported batch policy type: {}", policy_type_str));
+                set_last_error(format!(
+                    "Unsupported batch policy type: {}",
+                    policy_type_str
+                ));
                 return VES_ERR_INVALID_ARG;
             }
         };
@@ -1117,8 +1119,13 @@ mod batch_ffi {
         let tenant_id = entries[0].public_inputs.tenant_id;
         let store_id = entries[0].public_inputs.store_id;
         let num_events = entries.len();
-        let metadata =
-            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, (num_events - 1) as u64);
+        let metadata = BatchMetadata::with_ids(
+            Uuid::new_v4(),
+            tenant_id,
+            store_id,
+            0,
+            (num_events - 1) as u64,
+        );
 
         let mut builder = BatchWitnessBuilder::new()
             .metadata(metadata)
@@ -1218,37 +1225,49 @@ mod batch_ffi {
 
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_proof_hash(proof: *const VesBatchProof) -> *const c_char {
-        if proof.is_null() { return std::ptr::null(); }
+        if proof.is_null() {
+            return std::ptr::null();
+        }
         unsafe { &*proof }.proof_hash.as_ptr()
     }
 
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_proof_json(proof: *const VesBatchProof) -> *const c_char {
-        if proof.is_null() { return std::ptr::null(); }
+        if proof.is_null() {
+            return std::ptr::null();
+        }
         unsafe { &*proof }.serialized_json.as_ptr()
     }
 
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_proof_num_events(proof: *const VesBatchProof) -> usize {
-        if proof.is_null() { return 0; }
+        if proof.is_null() {
+            return 0;
+        }
         unsafe { &*proof }.num_events
     }
 
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_proof_all_compliant(proof: *const VesBatchProof) -> bool {
-        if proof.is_null() { return false; }
+        if proof.is_null() {
+            return false;
+        }
         unsafe { &*proof }.all_compliant
     }
 
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_proof_proving_time_ms(proof: *const VesBatchProof) -> u64 {
-        if proof.is_null() { return 0; }
+        if proof.is_null() {
+            return 0;
+        }
         unsafe { &*proof }.proving_time_ms
     }
 
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_proof_free(proof: *mut VesBatchProof) {
-        if !proof.is_null() { drop(unsafe { Box::from_raw(proof) }); }
+        if !proof.is_null() {
+            drop(unsafe { Box::from_raw(proof) });
+        }
     }
 
     /// Verify a batch proof from its serialized JSON.
@@ -1314,32 +1333,52 @@ mod batch_ffi {
     }
 
     #[no_mangle]
-    pub unsafe extern "C" fn ves_batch_verification_valid(result: *const VesBatchVerificationResult) -> bool {
-        if result.is_null() { return false; }
+    pub unsafe extern "C" fn ves_batch_verification_valid(
+        result: *const VesBatchVerificationResult,
+    ) -> bool {
+        if result.is_null() {
+            return false;
+        }
         unsafe { &*result }.valid
     }
 
     #[no_mangle]
-    pub unsafe extern "C" fn ves_batch_verification_time_ms(result: *const VesBatchVerificationResult) -> u64 {
-        if result.is_null() { return 0; }
+    pub unsafe extern "C" fn ves_batch_verification_time_ms(
+        result: *const VesBatchVerificationResult,
+    ) -> u64 {
+        if result.is_null() {
+            return 0;
+        }
         unsafe { &*result }.verification_time_ms
     }
 
     #[no_mangle]
-    pub unsafe extern "C" fn ves_batch_verification_num_events(result: *const VesBatchVerificationResult) -> usize {
-        if result.is_null() { return 0; }
+    pub unsafe extern "C" fn ves_batch_verification_num_events(
+        result: *const VesBatchVerificationResult,
+    ) -> usize {
+        if result.is_null() {
+            return 0;
+        }
         unsafe { &*result }.num_events
     }
 
     #[no_mangle]
-    pub unsafe extern "C" fn ves_batch_verification_all_compliant(result: *const VesBatchVerificationResult) -> bool {
-        if result.is_null() { return false; }
+    pub unsafe extern "C" fn ves_batch_verification_all_compliant(
+        result: *const VesBatchVerificationResult,
+    ) -> bool {
+        if result.is_null() {
+            return false;
+        }
         unsafe { &*result }.all_compliant
     }
 
     #[no_mangle]
-    pub unsafe extern "C" fn ves_batch_verification_result_free(result: *mut VesBatchVerificationResult) {
-        if !result.is_null() { drop(unsafe { Box::from_raw(result) }); }
+    pub unsafe extern "C" fn ves_batch_verification_result_free(
+        result: *mut VesBatchVerificationResult,
+    ) {
+        if !result.is_null() {
+            drop(unsafe { Box::from_raw(result) });
+        }
     }
 }
 
