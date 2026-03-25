@@ -16,7 +16,7 @@ members = [
 
 [package]
 name = "ves-stark"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 rust-version = "1.90"
 publish = false
@@ -40,7 +40,7 @@ name = "stark_bench"
 harness = false
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 rust-version = "1.90"
 license = "MIT"

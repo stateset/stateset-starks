@@ -675,19 +675,67 @@ fn pow7<E: FieldElement<BaseField = Felt>>(x: E) -> E {
     x6 * x
 }
 
-fn apply_mds<E: FieldElement<BaseField = Felt>>(
+/// Precomputed MDS matrix as Felt values (avoids u64→Felt conversion on hot path)
+static MDS_FELT: std::sync::LazyLock<[[Felt; RESCUE_STATE_WIDTH]; RESCUE_STATE_WIDTH]> =
+    std::sync::LazyLock::new(|| {
+        let mut m = [[FELT_ZERO; RESCUE_STATE_WIDTH]; RESCUE_STATE_WIDTH];
+        for (i, row) in MDS.iter().enumerate() {
+            for (j, &coeff) in row.iter().enumerate() {
+                m[i][j] = felt_from_u64(coeff);
+            }
+        }
+        m
+    });
+
+/// Precomputed MDS_INV matrix as Felt values
+static MDS_INV_FELT: std::sync::LazyLock<[[Felt; RESCUE_STATE_WIDTH]; RESCUE_STATE_WIDTH]> =
+    std::sync::LazyLock::new(|| {
+        let mut m = [[FELT_ZERO; RESCUE_STATE_WIDTH]; RESCUE_STATE_WIDTH];
+        for (i, row) in MDS_INV.iter().enumerate() {
+            for (j, &coeff) in row.iter().enumerate() {
+                m[i][j] = felt_from_u64(coeff);
+            }
+        }
+        m
+    });
+
+#[inline]
+fn apply_mds_felt<E: FieldElement<BaseField = Felt>>(
     state: &[E; RESCUE_STATE_WIDTH],
-    matrix: &[[u64; RESCUE_STATE_WIDTH]; RESCUE_STATE_WIDTH],
+    matrix: &[[Felt; RESCUE_STATE_WIDTH]; RESCUE_STATE_WIDTH],
 ) -> [E; RESCUE_STATE_WIDTH] {
     let mut result = [E::ZERO; RESCUE_STATE_WIDTH];
     for (i, row) in matrix.iter().enumerate() {
         let mut sum = E::ZERO;
-        for (&coeff, &s) in row.iter().zip(state.iter()) {
-            sum += E::from(felt_from_u64(coeff)) * s;
+        for (j, &s) in state.iter().enumerate() {
+            sum += E::from(row[j]) * s;
         }
         result[i] = sum;
     }
     result
+}
+
+fn apply_mds<E: FieldElement<BaseField = Felt>>(
+    state: &[E; RESCUE_STATE_WIDTH],
+    matrix: &[[u64; RESCUE_STATE_WIDTH]; RESCUE_STATE_WIDTH],
+) -> [E; RESCUE_STATE_WIDTH] {
+    // Use precomputed Felt matrices to avoid u64→Felt conversion per evaluation
+    if std::ptr::eq(matrix, &MDS) {
+        apply_mds_felt(state, &MDS_FELT)
+    } else if std::ptr::eq(matrix, &MDS_INV) {
+        apply_mds_felt(state, &MDS_INV_FELT)
+    } else {
+        // Fallback for unknown matrices
+        let mut result = [E::ZERO; RESCUE_STATE_WIDTH];
+        for (i, row) in matrix.iter().enumerate() {
+            let mut sum = E::ZERO;
+            for (&coeff, &s) in row.iter().zip(state.iter()) {
+                sum += E::from(felt_from_u64(coeff)) * s;
+            }
+            result[i] = sum;
+        }
+        result
+    }
 }
 
 /// Builder for creating ComplianceAir instances

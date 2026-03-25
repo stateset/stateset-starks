@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-ves-stark-primitives = { version = "0.3.1", path = "../ves-stark-primitives" }
+ves-stark-primitives = { version = "0.3.2", path = "../ves-stark-primitives" }
 winter-air = { workspace = true }
 winter-math = { workspace = true }
 winter-utils = { workspace = true }

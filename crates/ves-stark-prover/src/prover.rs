@@ -391,11 +391,12 @@ mod tests {
         let witness = ComplianceWitness::new(amount, inputs);
         let prover = ComplianceProver::with_policy(policy);
 
-        // Warm up
+        // Warm up (2 runs to stabilize)
+        let _ = prover.prove(&witness).expect("warmup prove failed");
         let _ = prover.prove(&witness).expect("warmup prove failed");
 
-        // Benchmark: 3 iterations of prove
-        let n = 3;
+        // Benchmark: 5 iterations for stable average
+        let n = 5;
         let start = std::time::Instant::now();
         let mut total_proof_bytes = 0usize;
         for _ in 0..n {
