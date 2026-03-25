@@ -44,7 +44,7 @@ pub const TRACE_WIDTH_LEGACY: usize = 40;
 /// Rescue permutation uses 15 rows (14 half-rounds + 1 output).
 /// 64 is the smallest power-of-2 that provides headroom for the
 /// comparison gadget and satisfies Winterfell's FRI requirements.
-pub const MIN_TRACE_LENGTH: usize = 64;
+pub const MIN_TRACE_LENGTH: usize = 16;
 
 /// Column indices for the trace
 pub mod cols {
@@ -397,11 +397,11 @@ mod tests {
 
     #[test]
     fn test_trace_info_power_of_two() {
-        let info = TraceInfo::new(50);
-        assert_eq!(info.length, MIN_TRACE_LENGTH); // 64 is the minimum
+        let info = TraceInfo::new(10);
+        assert_eq!(info.length, MIN_TRACE_LENGTH); // 16 is the minimum
 
-        let info = TraceInfo::new(100);
-        assert_eq!(info.length, 128); // rounds up to next power of 2
+        let info = TraceInfo::new(50);
+        assert_eq!(info.length, 64); // rounds up to next power of 2
     }
 
     #[test]
