@@ -1,5 +1,8 @@
 # ves-stark-wasm
 
+[![crates.io](https://img.shields.io/crates/v/ves-stark-wasm.svg)](https://crates.io/crates/ves-stark-wasm)
+[![license](https://img.shields.io/crates/l/ves-stark-wasm.svg)](../LICENSE)
+
 WebAssembly bindings for the VES STARK proof system. Generate and verify zero-knowledge compliance proofs directly in the browser.
 
 ## Build

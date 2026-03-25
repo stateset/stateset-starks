@@ -1,6 +1,16 @@
 # ves-stark-client
 
+[![crates.io](https://img.shields.io/crates/v/ves-stark-client.svg)](https://crates.io/crates/ves-stark-client)
+[![license](https://img.shields.io/crates/l/ves-stark-client.svg)](../LICENSE)
+
 HTTP client for submitting VES STARK proofs to the StateSet sequencer and anchoring batch proofs to the Set Chain L2.
+
+## Installation
+
+```toml
+[dependencies]
+ves-stark-client = "0.3"
+```
 
 ## Overview
 

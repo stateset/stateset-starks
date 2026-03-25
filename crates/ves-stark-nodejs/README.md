@@ -1,5 +1,7 @@
 # @stateset/ves-stark
 
+[![crates.io](https://img.shields.io/crates/v/ves-stark-nodejs.svg)](https://crates.io/crates/ves-stark-nodejs)
+
 Node.js bindings for the VES STARK proof system. Generate and verify zero-knowledge compliance proofs for VES events.
 
 ## Installation
@@ -260,12 +262,12 @@ npm run build
 npm run build:debug
 ```
 
-## Performance
+## Performance (v0.3.3)
 
-Typical performance on modern hardware:
-- Proof generation: 500-2000ms
-- Proof verification: 50-200ms
-- Proof size: ~100-200 KB
+Native Rust performance via N-API bindings:
+- Proof generation: ~17ms
+- Proof verification: <5ms
+- Proof size: ~42 KB
 
 ## License
 

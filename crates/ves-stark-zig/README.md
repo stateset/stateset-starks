@@ -1,5 +1,8 @@
 # ves-stark-zig
 
+[![crates.io](https://img.shields.io/crates/v/ves-stark-zig.svg)](https://crates.io/crates/ves-stark-zig)
+[![license](https://img.shields.io/crates/l/ves-stark-zig.svg)](../LICENSE)
+
 C FFI bindings for the VES STARK proof system, with an idiomatic Zig wrapper.
 
 ## Overview

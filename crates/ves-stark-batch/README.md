@@ -1,6 +1,16 @@
 # ves-stark-batch
 
+[![crates.io](https://img.shields.io/crates/v/ves-stark-batch.svg)](https://crates.io/crates/ves-stark-batch)
+[![license](https://img.shields.io/crates/l/ves-stark-batch.svg)](../LICENSE)
+
 Batch state transition proofs for VES compliance.
+
+## Installation
+
+```toml
+[dependencies]
+ves-stark-batch = "0.3"
+```
 
 ## Overview
 

@@ -1,11 +1,14 @@
 # ves-stark-cli
 
+[![crates.io](https://img.shields.io/crates/v/ves-stark-cli.svg)](https://crates.io/crates/ves-stark-cli)
+[![license](https://img.shields.io/crates/l/ves-stark-cli.svg)](../LICENSE)
+
 CLI tool for VES STARK proof generation and verification.
 
 ## Installation
 
 ```bash
-cargo install --path crates/ves-stark-cli
+cargo install ves-stark-cli
 ```
 
 Binary name: `ves-stark`
