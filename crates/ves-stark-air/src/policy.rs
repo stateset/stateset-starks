@@ -47,6 +47,8 @@ pub enum Policy {
     OrderTotalCap { cap: u64 },
     /// Agent authorization policy (amount <= max_total, bound to an intent hash)
     AgentAuthorization { max_total: u64, intent_hash: String },
+    /// Agent budget policy (cumulative_spend <= budget_limit)
+    AgentBudget { budget_limit: u64 },
 }
 
 impl Policy {
@@ -71,12 +73,21 @@ impl Policy {
         })
     }
 
+    /// Create an agent budget policy.
+    ///
+    /// The witness amount should be `prev_running_total + this_amount` (the new cumulative total).
+    /// The AIR proves `new_total <= budget_limit`.
+    pub fn agent_budget(budget_limit: u64) -> Self {
+        Policy::AgentBudget { budget_limit }
+    }
+
     /// Get the policy identifier
     pub fn policy_id(&self) -> &'static str {
         match self {
             Policy::AmlThreshold { .. } => policy_ids::AML_THRESHOLD,
             Policy::OrderTotalCap { .. } => policy_ids::ORDER_TOTAL_CAP,
             Policy::AgentAuthorization { .. } => policy_ids::AGENT_AUTHORIZATION_V1,
+            Policy::AgentBudget { .. } => policy_ids::AGENT_BUDGET_V1,
         }
     }
 
@@ -86,6 +97,7 @@ impl Policy {
             Policy::AmlThreshold { threshold } => *threshold,
             Policy::OrderTotalCap { cap } => *cap,
             Policy::AgentAuthorization { max_total, .. } => *max_total,
+            Policy::AgentBudget { budget_limit } => *budget_limit,
         }
     }
 
@@ -110,6 +122,7 @@ impl Policy {
             }
             Policy::OrderTotalCap { cap } => Ok(*cap),
             Policy::AgentAuthorization { max_total, .. } => Ok(*max_total),
+            Policy::AgentBudget { budget_limit } => Ok(*budget_limit),
         }
     }
 
@@ -119,6 +132,7 @@ impl Policy {
             Policy::AmlThreshold { .. } => ComparisonType::LessThan,
             Policy::OrderTotalCap { .. } => ComparisonType::LessThanOrEqual,
             Policy::AgentAuthorization { .. } => ComparisonType::LessThanOrEqual,
+            Policy::AgentBudget { .. } => ComparisonType::LessThanOrEqual,
         }
     }
 
@@ -128,6 +142,7 @@ impl Policy {
             Policy::AmlThreshold { threshold } => amount < *threshold,
             Policy::OrderTotalCap { cap } => amount <= *cap,
             Policy::AgentAuthorization { max_total, .. } => amount <= *max_total,
+            Policy::AgentBudget { budget_limit } => amount <= *budget_limit,
         }
     }
 
@@ -157,6 +172,12 @@ impl Policy {
                     .get_intent_hash()
                     .ok_or(PolicyError::MissingPolicyParam("intentHash"))?;
                 Policy::agent_authorization(max_total, intent_hash)
+            }
+            policy_ids::AGENT_BUDGET_V1 => {
+                let budget_limit = policy_params
+                    .get_budget_limit()
+                    .ok_or(PolicyError::MissingPolicyParam("budgetLimit"))?;
+                Ok(Policy::AgentBudget { budget_limit })
             }
             _ => Err(PolicyError::UnsupportedPolicyId(policy_id.to_string())),
         }
@@ -331,5 +352,31 @@ mod tests {
     #[test]
     fn test_agent_authorization_rejects_invalid_intent_hash() {
         assert!(Policy::agent_authorization(10_000, "xyz").is_err());
+    }
+
+    #[test]
+    fn test_agent_budget_policy() {
+        let policy = Policy::agent_budget(50000);
+
+        assert_eq!(policy.policy_id(), "agent.budget.v1");
+        assert_eq!(policy.limit(), 50000);
+        assert_eq!(policy.effective_limit().unwrap(), 50000);
+        assert_eq!(policy.comparison_type(), ComparisonType::LessThanOrEqual);
+        assert!(policy.intent_hash().is_none());
+
+        // Budget uses LTE: cumulative_spend <= budget_limit
+        assert!(policy.validate_amount(0));
+        assert!(policy.validate_amount(25000));
+        assert!(policy.validate_amount(50000)); // Equal is valid
+        assert!(!policy.validate_amount(50001));
+    }
+
+    #[test]
+    fn test_from_public_inputs_supports_agent_budget() {
+        let params = PolicyParams::budget(50_000);
+        let policy = Policy::from_public_inputs("agent.budget.v1", &params).unwrap();
+
+        assert_eq!(policy.limit(), 50_000);
+        assert_eq!(policy.policy_id(), "agent.budget.v1");
     }
 }

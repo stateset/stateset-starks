@@ -68,6 +68,11 @@ impl PolicyParams {
         Self(serde_json::json!({ "cap": value }))
     }
 
+    /// Create from a budget limit (for agent.budget.v1 policy)
+    pub fn budget(budget_limit: u64) -> Self {
+        Self(serde_json::json!({ "budgetLimit": budget_limit }))
+    }
+
     /// Create from agent authorization parameters.
     ///
     /// The `intent_hash` is normalized to lowercase hex without a `0x` prefix.
@@ -95,6 +100,11 @@ impl PolicyParams {
     /// Get the maximum authorized total if this is an agent.authorization.v1 policy.
     pub fn get_max_total(&self) -> Option<u64> {
         self.0.get("maxTotal")?.as_u64()
+    }
+
+    /// Get the budget limit if this is an agent.budget.v1 policy.
+    pub fn get_budget_limit(&self) -> Option<u64> {
+        self.0.get("budgetLimit")?.as_u64()
     }
 
     /// Get the delegated commerce intent hash if this is an agent.authorization.v1 policy.

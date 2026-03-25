@@ -31,6 +31,7 @@
 //! let proof = prover.prove(&witness)?;
 //! ```
 
+pub mod budget;
 pub mod error;
 pub mod policy;
 pub mod prover;
@@ -45,4 +46,5 @@ pub use serialization::{
     deserialize_proof_bytes, deserialize_proof_bytes_auto, serialize_proof,
     serialize_proof_with_policy, CompactProof, PolicyInfo, ProofFormat, ProofJson,
 };
+pub use budget::{build_budget_witness, budget_policy_params, BudgetWitnessError};
 pub use witness::ComplianceWitness;
