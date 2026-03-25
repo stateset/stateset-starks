@@ -41,9 +41,10 @@ pub const TRACE_WIDTH: usize = 248;
 pub const TRACE_WIDTH_LEGACY: usize = 40;
 
 /// Number of rows in the trace (power of 2)
-/// For Phase 1 compliance proofs, we use a small trace:
-/// - 128 rows for Rescue permutation + comparison logic
-pub const MIN_TRACE_LENGTH: usize = 128;
+/// Rescue permutation uses 15 rows (14 half-rounds + 1 output).
+/// 64 is the smallest power-of-2 that provides headroom for the
+/// comparison gadget and satisfies Winterfell's FRI requirements.
+pub const MIN_TRACE_LENGTH: usize = 64;
 
 /// Column indices for the trace
 pub mod cols {
@@ -396,11 +397,11 @@ mod tests {
 
     #[test]
     fn test_trace_info_power_of_two() {
-        let info = TraceInfo::new(100);
-        assert_eq!(info.length, MIN_TRACE_LENGTH); // 128 is the minimum
+        let info = TraceInfo::new(50);
+        assert_eq!(info.length, MIN_TRACE_LENGTH); // 64 is the minimum
 
-        let info = TraceInfo::new(200);
-        assert_eq!(info.length, 256);
+        let info = TraceInfo::new(100);
+        assert_eq!(info.length, 128); // rounds up to next power of 2
     }
 
     #[test]
