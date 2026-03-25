@@ -360,6 +360,56 @@ mod tests {
         assert_eq!(prover.threshold(), 10000);
     }
 
+    /// Benchmark test: proof generation cycle. Prints metrics for autoresearch eval.
+    #[test]
+    fn test_prove_benchmark() {
+        let threshold = 10000u64;
+        let amount = 5000u64;
+        let policy = Policy::aml_threshold(threshold);
+
+        let policy_id = "aml.threshold";
+        let params = PolicyParams::threshold(threshold);
+        let policy_hash = compute_policy_hash(policy_id, &params).unwrap();
+
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "a".repeat(64),
+            payload_cipher_hash: "b".repeat(64),
+            event_signing_hash: "c".repeat(64),
+            policy_id: policy_id.to_string(),
+            policy_params: params,
+            policy_hash: policy_hash.to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+            amount_binding_hash: None,
+        };
+
+        let witness = ComplianceWitness::new(amount, inputs);
+        let prover = ComplianceProver::with_policy(policy);
+
+        // Warm up
+        let _ = prover.prove(&witness).expect("warmup prove failed");
+
+        // Benchmark: 3 iterations of prove
+        let n = 3;
+        let start = std::time::Instant::now();
+        let mut total_proof_bytes = 0usize;
+        for _ in 0..n {
+            let proof = prover.prove(&witness).expect("prove failed");
+            total_proof_bytes += proof.proof_bytes.len();
+        }
+        let elapsed = start.elapsed();
+        let avg_ms = elapsed.as_millis() as f64 / n as f64;
+        let avg_proof_bytes = total_proof_bytes / n;
+
+        println!("bench_e2e_ms: {:.2}", avg_ms);
+        println!("bench_proof_bytes: {}", avg_proof_bytes);
+    }
+
     #[test]
     fn test_prover_rejects_public_inputs_witness_commitment_mismatch() {
         let threshold = 10000u64;
