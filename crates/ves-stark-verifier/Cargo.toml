@@ -7,8 +7,8 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-ves-stark-primitives = { version = "0.3.0", path = "../ves-stark-primitives" }
-ves-stark-air = { version = "0.3.0", path = "../ves-stark-air" }
+ves-stark-primitives = { version = "0.3.1", path = "../ves-stark-primitives" }
+ves-stark-air = { version = "0.3.1", path = "../ves-stark-air" }
 winter-verifier = { workspace = true }
 winter-air = { workspace = true }
 winter-math = { workspace = true }
@@ -20,7 +20,7 @@ uuid = { workspace = true }
 hex = { workspace = true }
 
 [dev-dependencies]
-ves-stark-prover = { version = "0.3.0", path = "../ves-stark-prover" }
+ves-stark-prover = { version = "0.3.1", path = "../ves-stark-prover" }
 rand = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

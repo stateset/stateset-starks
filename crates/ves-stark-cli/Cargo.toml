@@ -15,12 +15,12 @@ name = "ves-stark"
 path = "src/main.rs"
 
 [dependencies]
-ves-stark-primitives = { version = "0.3.0", path = "../ves-stark-primitives" }
-ves-stark-air = { version = "0.3.0", path = "../ves-stark-air" }
-ves-stark-prover = { version = "0.3.0", path = "../ves-stark-prover" }
-ves-stark-verifier = { version = "0.3.0", path = "../ves-stark-verifier" }
-ves-stark-batch = { version = "0.3.0", path = "../ves-stark-batch" }
-ves-stark-client = { version = "0.3.0", path = "../ves-stark-client" }
+ves-stark-primitives = { version = "0.3.1", path = "../ves-stark-primitives" }
+ves-stark-air = { version = "0.3.1", path = "../ves-stark-air" }
+ves-stark-prover = { version = "0.3.1", path = "../ves-stark-prover" }
+ves-stark-verifier = { version = "0.3.1", path = "../ves-stark-verifier" }
+ves-stark-batch = { version = "0.3.1", path = "../ves-stark-batch" }
+ves-stark-client = { version = "0.3.1", path = "../ves-stark-client" }
 clap = { version = "4", features = ["derive"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
