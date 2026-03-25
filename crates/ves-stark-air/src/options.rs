@@ -53,7 +53,7 @@ impl Default for ProofOptions {
             blowup_factor: 16,
             grinding_factor: 12,
             field_extension: FieldExtension::None,
-            fri_folding_factor: 8,
+            fri_folding_factor: 16,
         }
     }
 }
