@@ -8,10 +8,10 @@ license = "MIT"
 
 [dependencies]
 # Internal dependencies
-ves-stark-primitives = { version = "0.3.1", path = "../ves-stark-primitives" }
-ves-stark-air = { version = "0.3.1", path = "../ves-stark-air" }
-ves-stark-prover = { version = "0.3.1", path = "../ves-stark-prover" }
-ves-stark-verifier = { version = "0.3.1", path = "../ves-stark-verifier" }
+ves-stark-primitives = { version = "0.3.2", path = "../ves-stark-primitives" }
+ves-stark-air = { version = "0.3.2", path = "../ves-stark-air" }
+ves-stark-prover = { version = "0.3.2", path = "../ves-stark-prover" }
+ves-stark-verifier = { version = "0.3.2", path = "../ves-stark-verifier" }
 
 # Winterfell STARK
 winter-air = "0.10"
