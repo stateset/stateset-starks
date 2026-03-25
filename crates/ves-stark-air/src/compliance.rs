@@ -517,11 +517,9 @@ impl Air for ComplianceAir {
         // Amount recomposition (limb 0), gated by rescue_init
         let limb0 = current[cols::AMOUNT_START];
         let mut recomp0 = E::ZERO;
-        let two = E::from(felt_from_u64(2));
-        let mut power = E::ONE;
+        let powers = &*POWERS_OF_TWO;
         for i in 0..32 {
-            recomp0 += current[cols::AMOUNT_BITS_LIMB0_START + i] * power;
-            power *= two;
+            recomp0 += current[cols::AMOUNT_BITS_LIMB0_START + i] * E::from(powers[i]);
         }
         result[idx] = rescue_init * (limb0 - recomp0);
         idx += 1;
@@ -529,10 +527,8 @@ impl Air for ComplianceAir {
         // Amount recomposition (limb 1), gated by rescue_init
         let limb1 = current[cols::AMOUNT_START + 1];
         let mut recomp1 = E::ZERO;
-        let mut power = E::ONE;
         for i in 0..32 {
-            recomp1 += current[cols::AMOUNT_BITS_LIMB1_START + i] * power;
-            power *= two;
+            recomp1 += current[cols::AMOUNT_BITS_LIMB1_START + i] * E::from(powers[i]);
         }
         result[idx] = rescue_init * (limb1 - recomp1);
         idx += 1;
@@ -554,10 +550,8 @@ impl Air for ComplianceAir {
         // Diff recomposition (limb 0), gated by rescue_init
         let diff0 = current[cols::diff(0)];
         let mut diff_recomp0 = E::ZERO;
-        let mut power = E::ONE;
         for i in 0..32 {
-            diff_recomp0 += current[cols::DIFF_BITS_LIMB0_START + i] * power;
-            power *= two;
+            diff_recomp0 += current[cols::DIFF_BITS_LIMB0_START + i] * E::from(powers[i]);
         }
         result[idx] = rescue_init * (diff0 - diff_recomp0);
         idx += 1;
@@ -565,10 +559,8 @@ impl Air for ComplianceAir {
         // Diff recomposition (limb 1), gated by rescue_init
         let diff1 = current[cols::diff(1)];
         let mut diff_recomp1 = E::ZERO;
-        let mut power = E::ONE;
         for i in 0..32 {
-            diff_recomp1 += current[cols::DIFF_BITS_LIMB1_START + i] * power;
-            power *= two;
+            diff_recomp1 += current[cols::DIFF_BITS_LIMB1_START + i] * E::from(powers[i]);
         }
         result[idx] = rescue_init * (diff1 - diff_recomp1);
         idx += 1;
@@ -581,7 +573,7 @@ impl Air for ComplianceAir {
         }
 
         // Subtraction constraints for limbs 0-1, gated by rescue_init
-        let two_pow_32 = E::from(felt_from_u64(1u64 << 32));
+        let two_pow_32 = E::from(*TWO_POW_32_FELT);
         let threshold_low = current[cols::THRESHOLD_START];
         let threshold_high = current[cols::THRESHOLD_START + 1];
         let borrow0 = current[cols::borrow(0)];
@@ -674,6 +666,21 @@ fn pow7<E: FieldElement<BaseField = Felt>>(x: E) -> E {
     let x6 = x4 * x2;
     x6 * x
 }
+
+/// Precomputed powers of 2 as Felt values for bit recomposition (avoids repeated multiplication)
+static POWERS_OF_TWO: std::sync::LazyLock<[Felt; 32]> = std::sync::LazyLock::new(|| {
+    let mut powers = [FELT_ZERO; 32];
+    let mut p = 1u64;
+    for power in &mut powers {
+        *power = felt_from_u64(p);
+        p <<= 1;
+    }
+    powers
+});
+
+/// Precomputed 2^32 as Felt
+static TWO_POW_32_FELT: std::sync::LazyLock<Felt> =
+    std::sync::LazyLock::new(|| felt_from_u64(1u64 << 32));
 
 /// Precomputed MDS matrix as Felt values (avoids u64→Felt conversion on hot path)
 static MDS_FELT: std::sync::LazyLock<[[Felt; RESCUE_STATE_WIDTH]; RESCUE_STATE_WIDTH]> =

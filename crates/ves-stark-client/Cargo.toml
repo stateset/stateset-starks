@@ -12,11 +12,11 @@ batch = ["ves-stark-batch"]
 dev = []
 
 [dependencies]
-ves-stark-primitives = { version = "0.3.3", path = "../ves-stark-primitives" }
-ves-stark-prover = { version = "0.3.3", path = "../ves-stark-prover" }
-ves-stark-verifier = { version = "0.3.3", path = "../ves-stark-verifier" }
-ves-stark-air = { version = "0.3.3", path = "../ves-stark-air" }
-ves-stark-batch = { version = "0.3.3", path = "../ves-stark-batch", optional = true }
+ves-stark-primitives = { version = "0.3.4", path = "../ves-stark-primitives" }
+ves-stark-prover = { version = "0.3.4", path = "../ves-stark-prover" }
+ves-stark-verifier = { version = "0.3.4", path = "../ves-stark-verifier" }
+ves-stark-air = { version = "0.3.4", path = "../ves-stark-air" }
+ves-stark-batch = { version = "0.3.4", path = "../ves-stark-batch", optional = true }
 reqwest = { version = "0.12", features = ["json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -29,4 +29,4 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-ves-stark-batch = { version = "0.3.3", path = "../ves-stark-batch" }
+ves-stark-batch = { version = "0.3.4", path = "../ves-stark-batch" }
