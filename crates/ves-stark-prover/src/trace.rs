@@ -441,9 +441,9 @@ mod tests {
 
     #[test]
     fn test_trace_info() {
-        let info = TraceInfo::new(50);
+        let info = TraceInfo::new(10);
         assert_eq!(info.width, TRACE_WIDTH);
-        assert_eq!(info.length, MIN_TRACE_LENGTH); // Rounds up to 64
+        assert_eq!(info.length, MIN_TRACE_LENGTH); // Rounds up to 16
     }
 
     #[test]
