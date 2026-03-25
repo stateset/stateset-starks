@@ -150,7 +150,7 @@ impl ProofOptions {
             self.grinding_factor,
             self.field_extension,
             self.fri_folding_factor,
-            31, // FRI max remainder polynomial degree
+            15, // FRI max remainder polynomial degree (smaller = more FRI layers but smaller proof)
         ))
     }
 }
