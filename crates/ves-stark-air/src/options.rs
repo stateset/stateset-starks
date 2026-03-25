@@ -51,7 +51,7 @@ impl Default for ProofOptions {
         Self {
             num_queries: 20,
             blowup_factor: 16,
-            grinding_factor: 12,
+            grinding_factor: 10,
             field_extension: FieldExtension::None,
             fri_folding_factor: 16,
         }
