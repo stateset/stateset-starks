@@ -49,7 +49,7 @@ pub struct ProofOptions {
 impl Default for ProofOptions {
     fn default() -> Self {
         Self {
-            num_queries: 24,
+            num_queries: 20,
             blowup_factor: 16,
             grinding_factor: 12,
             field_extension: FieldExtension::None,
