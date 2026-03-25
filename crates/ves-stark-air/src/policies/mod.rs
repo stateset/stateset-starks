@@ -24,4 +24,6 @@ pub mod policy_ids {
     pub const ORDER_TOTAL_CAP: &str = "order_total.cap";
     /// Agent authorization policy: proves amount <= maxTotal and commits an intent hash
     pub const AGENT_AUTHORIZATION_V1: &str = "agent.authorization.v1";
+    /// Agent budget policy: proves cumulative_spend <= budgetLimit
+    pub const AGENT_BUDGET_V1: &str = "agent.budget.v1";
 }
