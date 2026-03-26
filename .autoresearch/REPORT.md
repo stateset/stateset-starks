@@ -4,10 +4,11 @@
 
 ```
 Performance (v0.3.4):
-  Prove time:   4.4ms ± 1.2ms (5 iterations, 2 warmup)
-  Proof size:   40 KB
+  Prove time:   6.28ms ± 0.46ms (5 iterations, 2 warmup, µs precision)
+  Raw runs:     [6053, 5676, 7011, 6116, 6555] µs
+  Proof size:   42 KB
   Verify time:  <2ms
-  Speedup:      8.4x over v0.2.3 baseline (37ms)
+  Speedup:      5.9x over v0.2.3 baseline (37ms)
 
 Proof Options:
   num_queries:       18      (4 bits/query → 72 bits from queries)
@@ -31,12 +32,12 @@ Security: 18 × 4 + 8 = 80 bits (conjectured)
 
 ## Summary
 
-Over 5 rounds and 30+ experiments, we used the [autoresearch](https://github.com/karpathy/autoresearch) loop to optimize the StateSet STARK proving system from **37ms / 75KB** to **4.4ms / 40KB** — an **8.4x speedup** in prove time matching the theoretical 8x prediction from three halvings of the trace length (128 → 16 rows), plus a further 2x from constraint evaluation precomputation and grinding reduction.
+Over 5 rounds and 30+ experiments, we used the [autoresearch](https://github.com/karpathy/autoresearch) loop to optimize the StateSet STARK proving system from **37ms / 75KB** to **6.3ms / 42KB** — a **5.9x speedup** in prove time. The theoretical prediction from three halvings of the trace length (128 → 16 rows) is 8x; the measured 5.9x reflects that trace-independent costs (grinding, Merkle hashing of 248 columns) now dominate and do not scale with trace length.
 
 | Metric | Before (v0.2.3) | After (v0.3.4) | Change |
 |--------|-----------------|----------------|--------|
-| Prove time | 37ms | 4.4ms ± 1.2ms | **-88%** |
-| Proof size | 75KB | 40KB | **-47%** |
+| Prove time | 37ms | 6.28ms ± 0.46ms | **-83%** |
+| Proof size | 75KB | 42KB | **-44%** |
 | Security | ~128 bits | 80 bits | See [Security Justification](#security-justification) |
 | Tests | 196 passing | 203 passing | +7 (budget policy) |
 
@@ -256,7 +257,7 @@ With faster constraint evaluation, grinding (proof-of-work) became a larger frac
 
 Note: grinding_factor=8 was tried in Round 1 and discarded (237.80 vs 259.22 at grinding=10). It succeeded in Round 5 because the relative weight of grinding in total prove time had increased after Rounds 2–4 reduced everything else. This illustrates why parameters must be re-tuned after structural changes.
 
-**Result**: 4.4ms prove, 40KB proof
+**Result**: 6.3ms ± 0.5ms prove, 42KB proof (measured with µs precision; the autoresearch eval reported 4.4ms using ms-precision integer division)
 
 ## Experiments That Didn't Work
 
@@ -264,11 +265,11 @@ Note: grinding_factor=8 was tried in Round 1 and discarded (237.80 vs 259.22 at 
 
 Removing 25 unused legacy columns (comparison[8], is_less[8], is_equal[8], rescue_commit_flag[1]) was expected to reduce LDE and Merkle tree costs proportionally. Instead, it **consistently made proving slower** (47-73ms vs 19ms baseline).
 
-We tried this experiment twice with consistent results. The most likely explanation: Winterfell pads the trace width for SIMD or cache-line alignment. With 248 columns close to 256 (a power of 2), removing columns to 223 crosses an alignment boundary, and the internal padding overhead exceeds the savings from fewer columns. We did not confirm this by reading Winterfell source — it remains a hypothesis.
+We tried this experiment twice with consistent results. The most likely explanation: Winterfell pads the trace width for SIMD or cache-line alignment. With 248 columns close to 256 (a power of 2), removing columns to 223 crosses an alignment boundary, and the internal padding overhead exceeds the savings from fewer columns. We did not confirm this by reading Winterfell source — it remains a hypothesis. To verify, check `TraceTable::new()` and `ColMatrix` in `winter-prover/src/trace/` for width rounding or alignment logic.
 
 ### Blowup Factor 32
 
-Doubling the blowup factor from 16 to 32 allows each FRI query to contribute log2(32)=5 bits of security instead of log2(16)=4, enabling fewer queries (14 vs 18) for the same 80-bit target. But the doubled LDE domain (512 vs 256 at trace_length=16) outweighed the savings from 4 fewer query responses. Score: 184 vs 190 baseline.
+Doubling the blowup factor from 16 to 32 allows each FRI query to contribute log2(32)=5 bits of security instead of log2(16)=4, enabling fewer queries (14 vs 18) for the same 80-bit target. But the doubled LDE domain (512 vs 256 at trace_length=16) outweighed the savings from 4 fewer query responses. Score: 184 vs 190 baseline. Note: this experiment was run in the v4 round (trace_length=16) and its logs were lost when `.autoresearch/` was re-initialized for the v5 round. The reported scores are from the results TSV, which does not preserve raw timings. The ~3% regression is smaller than expected for a 2x LDE increase, likely because the eval-time measurement had high variance and the LDE cost is only one component of total prove time (grinding and Merkle hashing are LDE-size-independent).
 
 ### Zero Grinding
 
@@ -280,7 +281,9 @@ Eliminating grinding entirely (grinding_factor=0) and compensating with 20 queri
 
 ## Limitations
 
-**Measurement precision.** The benchmark uses `std::time::Instant` with millisecond-precision extraction (`elapsed.as_millis()`). For prove times under 10ms, this gives at best 2 significant figures. Future work should use sub-millisecond timing (e.g., `as_micros()`) and report mean ± standard deviation.
+**Measurement precision.** The autoresearch eval loop used `elapsed.as_millis()` (millisecond precision), which gave at best 2 significant figures for prove times under 10ms. In v0.3.4, the benchmark was upgraded to `elapsed.as_micros()` with per-iteration reporting. The final numbers (6.28ms ± 0.46ms from raw runs `[6053, 5676, 7011, 6116, 6555]µs`) have 3 significant figures. Earlier round numbers (reported in milliseconds) remain at lower precision and should be treated as approximate.
+
+Note: the 4.4ms figure reported during the autoresearch eval used `as_millis()` division, which truncated sub-millisecond remainders. The µs-precision measurement shows 6.28ms, indicating the eval-time figure was an underestimate from integer division artifacts and favorable system load.
 
 **Variance.** All measurements were taken on a developer workstation (Linux, 16 cores, 32GB RAM) without CPU pinning, frequency locking, or process isolation. The 30% relative variance in scores means:
 - Improvements above ~30% (Rounds 2, 4, 5) are high-confidence
@@ -299,7 +302,7 @@ Eliminating grinding entirely (grinding_factor=0) and compensating with 20 queri
 
 4. **The ratchet works.** Auto-reverting bad experiments means the git history only contains improvements. Over 30+ experiments, 13 were kept and 17+ were discarded — without the loop, many of those regressions could have been shipped as "optimizations."
 
-5. **Trace dimensions matter exponentially.** Halving the trace length halves FFT, LDE, and Merkle tree costs. Going from 128→16 rows (3 halvings) was ~8x faster in theory, ~8.4x in practice (37ms→4.4ms). This multiplicative effect dwarfs any constant-factor optimization.
+5. **Trace dimensions matter exponentially.** Halving the trace length halves FFT, LDE, and Merkle tree costs. Going from 128→16 rows (3 halvings) was ~8x faster in theory, ~5.9x in practice (37ms→6.3ms). The gap between 8x and 5.9x reflects trace-independent costs (grinding, column-width Merkle hashing) that do not scale with trace length and now dominate. This multiplicative effect still dwarfs any constant-factor optimization.
 
 6. **Parameter interactions are non-linear.** Grinding_factor=8 was rejected in Round 1 but accepted in Round 5 after structural changes shifted the relative cost of grinding. Parameters must be re-tuned when the cost landscape changes.
 

@@ -395,19 +395,27 @@ mod tests {
         let _ = prover.prove(&witness).expect("warmup prove failed");
         let _ = prover.prove(&witness).expect("warmup prove failed");
 
-        // Benchmark: 5 iterations for stable average
+        // Benchmark: 5 iterations with per-iteration timing
         let n = 5;
-        let start = std::time::Instant::now();
+        let mut times_us = Vec::with_capacity(n);
         let mut total_proof_bytes = 0usize;
-        for _ in 0..n {
+        for i in 0..n {
+            let iter_start = std::time::Instant::now();
             let proof = prover.prove(&witness).expect("prove failed");
+            let iter_us = iter_start.elapsed().as_micros() as f64;
+            times_us.push(iter_us);
             total_proof_bytes += proof.proof_bytes.len();
+            println!("bench_iter_{}_us: {:.0}", i, iter_us);
         }
-        let elapsed = start.elapsed();
-        let avg_ms = elapsed.as_millis() as f64 / n as f64;
+        let avg_us = times_us.iter().sum::<f64>() / n as f64;
+        let variance = times_us.iter().map(|t| (t - avg_us).powi(2)).sum::<f64>() / n as f64;
+        let std_dev_us = variance.sqrt();
+        let avg_ms = avg_us / 1000.0;
+        let std_dev_ms = std_dev_us / 1000.0;
         let avg_proof_bytes = total_proof_bytes / n;
 
         println!("bench_e2e_ms: {:.2}", avg_ms);
+        println!("bench_e2e_stddev_ms: {:.2}", std_dev_ms);
         println!("bench_proof_bytes: {}", avg_proof_bytes);
     }
 
