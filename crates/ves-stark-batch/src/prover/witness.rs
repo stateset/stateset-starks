@@ -11,12 +11,15 @@ use ves_stark_primitives::rescue::rescue_hash;
 use ves_stark_primitives::{
     felt_from_u64, felts_to_hash, hash_to_felts, Felt, FELT_ONE, FELT_ZERO,
 };
+use zeroize::Zeroize;
 
 use crate::air::trace_layout::MAX_BATCH_SIZE;
 use crate::error::{BatchError, BatchResult};
 use crate::state::{BatchMetadata, BatchStateRoot, EventLeaf, EventMerkleTree};
 
-/// Witness for a single event within a batch
+/// Witness for a single event within a batch.
+///
+/// The private `amount` field is zeroized on drop.
 #[derive(Debug, Clone)]
 pub struct BatchEventWitness {
     /// Event index within the batch (0-indexed)
@@ -30,6 +33,12 @@ pub struct BatchEventWitness {
 
     /// Pre-computed compliance result
     pub is_compliant: bool,
+}
+
+impl Drop for BatchEventWitness {
+    fn drop(&mut self) {
+        self.amount.zeroize();
+    }
 }
 
 impl BatchEventWitness {

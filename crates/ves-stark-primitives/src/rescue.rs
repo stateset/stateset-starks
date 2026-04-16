@@ -1085,6 +1085,52 @@ mod tests {
             "Rescue constants hash mismatch"
         );
     }
+
+    /// Verify MDS × MDS_INV = Identity in the Goldilocks field.
+    ///
+    /// This catches copy-paste errors or incorrect inverse computation.
+    #[test]
+    fn test_mds_times_mds_inv_is_identity() {
+        for (i, mds_row) in MDS.iter().enumerate() {
+            for j in 0..STATE_WIDTH {
+                let acc = mds_row
+                    .iter()
+                    .zip(MDS_INV.iter())
+                    .fold(Felt::ZERO, |a, (&m, inv_row)| {
+                        a + Felt::new(m) * Felt::new(inv_row[j])
+                    });
+                let expected = if i == j { Felt::ONE } else { Felt::ZERO };
+                assert_eq!(
+                    acc, expected,
+                    "MDS × MDS_INV != I at ({i}, {j}): got {}, expected {}",
+                    acc.as_int(),
+                    expected.as_int()
+                );
+            }
+        }
+    }
+
+    /// Verify MDS_INV × MDS = Identity (check commutativity of inverse).
+    #[test]
+    fn test_mds_inv_times_mds_is_identity() {
+        for (i, inv_row) in MDS_INV.iter().enumerate() {
+            for j in 0..STATE_WIDTH {
+                let acc = inv_row
+                    .iter()
+                    .zip(MDS.iter())
+                    .fold(Felt::ZERO, |a, (&m, mds_row)| {
+                        a + Felt::new(m) * Felt::new(mds_row[j])
+                    });
+                let expected = if i == j { Felt::ONE } else { Felt::ZERO };
+                assert_eq!(
+                    acc, expected,
+                    "MDS_INV × MDS != I at ({i}, {j}): got {}, expected {}",
+                    acc.as_int(),
+                    expected.as_int()
+                );
+            }
+        }
+    }
 }
 
 // =============================================================================

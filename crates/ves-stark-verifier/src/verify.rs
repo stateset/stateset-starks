@@ -1552,6 +1552,48 @@ mod tests {
         assert!(display.contains("def456"));
     }
 
+    // =========================================================================
+    // Proof Size Limit Tests
+    // =========================================================================
+
+    #[test]
+    fn test_proof_at_max_size_is_not_rejected_for_size() {
+        let threshold = 10000u64;
+        let inputs = sample_inputs(threshold);
+        let policy = Policy::aml_threshold(threshold);
+        let witness_commitment = [0u64; 4];
+        let big_proof = vec![0xAB; MAX_PROOF_SIZE];
+
+        // Should fail with deserialization (invalid proof content), NOT ProofTooLarge
+        let result = verify_compliance_proof(&big_proof, &inputs, &policy, &witness_commitment);
+        assert!(
+            !matches!(result, Err(VerifierError::ProofTooLarge { .. })),
+            "proof at exactly MAX_PROOF_SIZE should not be rejected for size"
+        );
+    }
+
+    #[test]
+    fn test_proof_over_max_size_is_rejected() {
+        let threshold = 10000u64;
+        let inputs = sample_inputs(threshold);
+        let policy = Policy::aml_threshold(threshold);
+        let witness_commitment = [0u64; 4];
+        let oversized_proof = vec![0xAB; MAX_PROOF_SIZE + 1];
+
+        let result =
+            verify_compliance_proof(&oversized_proof, &inputs, &policy, &witness_commitment);
+        assert!(
+            matches!(
+                result,
+                Err(VerifierError::ProofTooLarge {
+                    size,
+                    max_size,
+                }) if size == MAX_PROOF_SIZE + 1 && max_size == MAX_PROOF_SIZE
+            ),
+            "proof 1 byte over MAX_PROOF_SIZE must be rejected: {result:?}"
+        );
+    }
+
     #[test]
     fn test_verifier_error_deserialization_display() {
         let err = VerifierError::DeserializationError("invalid format".to_string());

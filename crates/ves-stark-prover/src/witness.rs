@@ -9,8 +9,16 @@ use crate::policy::Policy;
 use ves_stark_air::range_check::validate_limbs;
 use ves_stark_primitives::public_inputs::CompliancePublicInputs;
 use ves_stark_primitives::{felt_from_u64, Felt, FELT_ZERO};
+use zeroize::Zeroize;
 
-/// Witness for compliance proofs
+/// Witness for compliance proofs.
+///
+/// The private `amount` field is zeroized on drop to limit the window during which
+/// secret data resides in memory. Note that the Winterfell prover internally copies
+/// witness values into the execution trace (`TraceTable`) during proof generation;
+/// those copies are freed but **not** zeroized when the prover finishes, as the
+/// trace is owned by the Winterfell runtime. A future Winterfell release or a custom
+/// allocator would be needed to close that gap entirely.
 #[derive(Debug, Clone)]
 pub struct ComplianceWitness {
     /// The actual amount (private witness data)
@@ -18,6 +26,12 @@ pub struct ComplianceWitness {
 
     /// Public inputs for the proof
     pub public_inputs: CompliancePublicInputs,
+}
+
+impl Drop for ComplianceWitness {
+    fn drop(&mut self) {
+        self.amount.zeroize();
+    }
 }
 
 impl ComplianceWitness {

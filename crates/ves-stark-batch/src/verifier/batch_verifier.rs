@@ -543,6 +543,65 @@ mod tests {
     }
 
     #[test]
+    fn test_verify_batch_proof_at_max_size_is_not_rejected_for_size() {
+        let public_inputs = BatchPublicInputs::new(
+            [felt_from_u64(1); 4],
+            [felt_from_u64(2); 4],
+            [felt_from_u64(3); 4],
+            [felt_from_u64(4); 4],
+            [felt_from_u64(5); 4],
+            0,
+            0,
+            123,
+            1,
+            true,
+            BatchPolicyKind::AmlThreshold,
+            10_000,
+            [felt_from_u64(9); 8],
+        );
+        let big_proof = vec![0xAB; MAX_BATCH_PROOF_SIZE];
+
+        // Should fail with deserialization, NOT ProofTooLarge
+        let result = verify_batch_proof(&big_proof, &public_inputs);
+        assert!(
+            !matches!(result, Err(BatchError::ProofTooLarge { .. })),
+            "proof at exactly MAX_BATCH_PROOF_SIZE should not be rejected for size"
+        );
+    }
+
+    #[test]
+    fn test_verify_batch_proof_over_max_size_is_rejected() {
+        let public_inputs = BatchPublicInputs::new(
+            [felt_from_u64(1); 4],
+            [felt_from_u64(2); 4],
+            [felt_from_u64(3); 4],
+            [felt_from_u64(4); 4],
+            [felt_from_u64(5); 4],
+            0,
+            0,
+            123,
+            1,
+            true,
+            BatchPolicyKind::AmlThreshold,
+            10_000,
+            [felt_from_u64(9); 8],
+        );
+        let oversized_proof = vec![0xAB; MAX_BATCH_PROOF_SIZE + 1];
+
+        let result = verify_batch_proof(&oversized_proof, &public_inputs);
+        assert!(
+            matches!(
+                result,
+                Err(BatchError::ProofTooLarge {
+                    size,
+                    max_size,
+                }) if size == MAX_BATCH_PROOF_SIZE + 1 && max_size == MAX_BATCH_PROOF_SIZE
+            ),
+            "proof 1 byte over MAX_BATCH_PROOF_SIZE must be rejected: {result:?}"
+        );
+    }
+
+    #[test]
     fn test_verify_batch_proof_rejects_oversized_batch_before_deserializing_proof() {
         let public_inputs = BatchPublicInputs::new(
             [felt_from_u64(1); 4],

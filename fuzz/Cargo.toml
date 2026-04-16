@@ -18,6 +18,7 @@ ves-stark-prover = { path = "../crates/ves-stark-prover" }
 ves-stark-verifier = { path = "../crates/ves-stark-verifier" }
 
 uuid = { version = "1", features = ["v4"] }
+serde_json = "1.0"
 
 # Prevent this from interfering with workspaces
 [workspace]

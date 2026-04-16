@@ -51,6 +51,9 @@ fuzz_target!(|input: PublicInputsData| {
         policy_id: policy_id.to_string(),
         policy_params: params,
         policy_hash: hash1.to_hex(),
+        witness_commitment: None,
+        authorization_receipt_hash: None,
+        amount_binding_hash: None,
     };
 
     // Validation should succeed for matching policy hash
@@ -71,7 +74,7 @@ fuzz_target!(|input: PublicInputsData| {
 
         if let Ok(recovered) = recovered {
             assert_eq!(recovered.sequence_number, input.sequence_number);
-            assert_eq!(recovered.payload_kind, input.payload_kind);
+            assert_eq!(recovered.payload_kind, input.payload_kind as u32);
             assert_eq!(recovered.policy_hash, public_inputs.policy_hash);
         }
     }
