@@ -340,7 +340,15 @@ pub fn verify_compliance_proof(
     )
 }
 
-/// Verify a compliance proof and return an error on invalid proofs.
+/// Strict-verification guard. **Always returns an error.**
+///
+/// This entry point intentionally refuses to verify because it is ambiguous about whether the
+/// caller has a payload-derived amount binding artifact. Callers must instead pick:
+///
+/// - [`verify_compliance_proof_with_amount_binding_strict`] — payload-complete verification, OR
+/// - [`verify_compliance_proof_witness_strict`] — explicit witness-only verification.
+///
+/// The guard exists so that strict callers cannot silently drop the payload binding check.
 pub fn verify_compliance_proof_strict(
     proof_bytes: &[u8],
     public_inputs: &CompliancePublicInputs,
@@ -386,7 +394,10 @@ pub fn verify_agent_authorization_proof(
     )
 }
 
-/// Verify an `agent.authorization.v1` proof and return an error on invalid proofs.
+/// Strict-verification guard. **Always returns an error.**
+///
+/// Callers must pick either [`verify_agent_authorization_proof_with_amount_binding_strict`]
+/// (payload-complete) or [`verify_agent_authorization_proof_witness_strict`] (witness-only).
 pub fn verify_agent_authorization_proof_strict(
     proof_bytes: &[u8],
     public_inputs: &CompliancePublicInputs,
@@ -524,8 +535,10 @@ pub fn verify_agent_authorization_proof_auto(
     )
 }
 
-/// Verify an `agent.authorization.v1` proof using policy parameters from the public inputs
-/// and return an error on invalid proofs.
+/// Strict-verification guard. **Always returns an error.**
+///
+/// Callers must pick either [`verify_agent_authorization_proof_auto_with_amount_binding_strict`]
+/// (payload-complete) or [`verify_agent_authorization_proof_auto_witness_strict`] (witness-only).
 pub fn verify_agent_authorization_proof_auto_strict(
     proof_bytes: &[u8],
     public_inputs: &CompliancePublicInputs,
@@ -551,8 +564,10 @@ pub fn verify_agent_authorization_proof_auto_witness_strict(
         .ensure_valid()
 }
 
-/// Verify a compliance proof using policy parameters from the public inputs and
-/// return an error on invalid proofs.
+/// Strict-verification guard. **Always returns an error.**
+///
+/// Callers must pick either [`verify_compliance_proof_auto_with_amount_binding_strict`]
+/// (payload-complete) or [`verify_compliance_proof_auto_witness_strict`] (witness-only).
 pub fn verify_compliance_proof_auto_strict(
     proof_bytes: &[u8],
     public_inputs: &CompliancePublicInputs,
@@ -648,8 +663,11 @@ pub fn verify_agent_authorization_proof_auto_bound(
     verify_agent_authorization_proof_auto(proof_bytes, public_inputs, &witness_commitment, receipt)
 }
 
-/// Verify an `agent.authorization.v1` proof using policy parameters and witness commitment
-/// from public inputs and return an error on invalid proofs.
+/// Strict-verification guard. **Always returns an error.**
+///
+/// Callers must pick either [`verify_agent_authorization_proof_auto_with_amount_binding_strict`]
+/// (payload-complete) or [`verify_agent_authorization_proof_auto_bound_witness_strict`]
+/// (witness-only).
 pub fn verify_agent_authorization_proof_auto_bound_strict(
     proof_bytes: &[u8],
     public_inputs: &CompliancePublicInputs,
@@ -672,8 +690,10 @@ pub fn verify_agent_authorization_proof_auto_bound_witness_strict(
     verify_agent_authorization_proof_auto_bound(proof_bytes, public_inputs, receipt)?.ensure_valid()
 }
 
-/// Verify a compliance proof using policy parameters and witness commitment from
-/// public inputs and return an error on invalid proofs.
+/// Strict-verification guard. **Always returns an error.**
+///
+/// Callers must pick either [`verify_compliance_proof_auto_with_amount_binding_strict`]
+/// (payload-complete) or [`verify_compliance_proof_auto_bound_witness_strict`] (witness-only).
 pub fn verify_compliance_proof_auto_bound_strict(
     proof_bytes: &[u8],
     public_inputs: &CompliancePublicInputs,

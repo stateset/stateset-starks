@@ -33,8 +33,10 @@ hex = "0.4"
 
 [dev-dependencies]
 criterion = "0.5"
+uuid = { version = "1.0", features = ["v4"] }
+winter-verifier = "0.10"
+ves-stark-air = { version = "0.3.4", path = "../ves-stark-air" }
 
-# Benchmark will be added after implementation is complete
-# [[bench]]
-# name = "batch_benchmark"
-# harness = false
+[[bench]]
+name = "batch_verify"
+harness = false

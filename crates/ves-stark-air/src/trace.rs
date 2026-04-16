@@ -35,6 +35,13 @@ use ves_stark_primitives::Felt;
 /// Note: Limbs 2-7 are boundary-asserted to zero (for u64 amounts), so no binary
 /// decomposition is needed. The value 0 is trivially a valid u32.
 /// Winterfell has a 255-column limit, so we stay within that bound.
+///
+/// **25 legacy columns** (COMPARISON 28-35, RESCUE_COMMIT_FLAG 104, IS_LESS 121-128, IS_EQUAL
+/// 129-136) are no longer read by transition constraints. Removing them causes a consistent
+/// 2.5-3.8× performance regression—likely because the resulting 223-column width crosses a
+/// SIMD/cache-line alignment boundary that Winterfell's LDE and Merkle commitment loops are
+/// sensitive to. The columns are retained as inert zero-filled padding until the root cause
+/// is profiled and resolved.
 pub const TRACE_WIDTH: usize = 248;
 
 /// Legacy trace width for backward compatibility

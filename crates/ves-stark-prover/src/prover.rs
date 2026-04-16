@@ -420,9 +420,8 @@ mod tests {
     }
 
     #[test]
-    fn test_prover_rejects_public_inputs_witness_commitment_mismatch() {
+    fn test_witness_construction_rejects_mismatched_commitment() {
         let threshold = 10000u64;
-        let policy = Policy::aml_threshold(threshold);
 
         let policy_id = "aml.threshold";
         let params = PolicyParams::threshold(threshold);
@@ -447,9 +446,9 @@ mod tests {
         // Force a mismatch: this commitment does not correspond to the amount below.
         inputs.witness_commitment = Some(witness_commitment_u64_to_hex(&[0u64; 4]));
 
-        let witness = ComplianceWitness::new(5000, inputs);
-        let prover = ComplianceProver::with_policy(policy);
-        let err = prover.prove(&witness).unwrap_err();
+        // The mismatched commitment must be rejected at witness construction time,
+        // before any prover code is reached.
+        let err = ComplianceWitness::try_new(5000, inputs).unwrap_err();
         assert!(matches!(err, ProverError::InvalidPublicInputs(_)));
     }
 }

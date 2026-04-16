@@ -932,7 +932,9 @@ mod tests {
 
     #[test]
     fn test_compliance_air_try_new_rejects_short_trace() {
-        let trace_info = TraceInfo::new(TRACE_WIDTH, RESCUE_OUTPUT_ROW + 1);
+        // Winterfell requires power-of-2 trace length >= 8. Pick the smallest valid
+        // length (8) that is still <= RESCUE_OUTPUT_ROW (14) so the AIR rejects it.
+        let trace_info = TraceInfo::new(TRACE_WIDTH, 8);
         let pub_inputs =
             PublicInputs::try_new(10000, vec![felt_from_u64(1); cols::PUBLIC_INPUTS_LEN]).unwrap();
 

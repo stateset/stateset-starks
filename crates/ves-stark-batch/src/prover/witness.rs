@@ -916,8 +916,11 @@ mod tests {
 
         let gamma = Felt::new(crate::air::trace_layout::MERKLE_LINK_GAMMA);
         let mut expected = [FELT_ZERO; 8];
-        for inputs in [&input0, &input1] {
-            let hash = hash_to_felts(&inputs.compute_bound_hash().unwrap());
+        // The builder rebinds each event's public inputs to the private amount before storing
+        // them. Reproduce that here so the expected hash matches the stored canonical form.
+        for (inputs, amount) in [(&input0, 5_000u64), (&input1, 7_500u64)] {
+            let bound = inputs.bind_amount(amount).unwrap();
+            let hash = hash_to_felts(&bound.compute_bound_hash().unwrap());
             for i in 0..8 {
                 expected[i] = expected[i] * gamma + hash[i];
             }

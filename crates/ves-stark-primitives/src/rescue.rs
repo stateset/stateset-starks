@@ -36,6 +36,10 @@
 //!
 //! The 4-element capacity provides 256 bits of state that is never directly
 //! exposed, divided by 2 for birthday bound gives ~128-bit collision security.
+//! These are classical hash-security margins for the Rescue-Prime sponge itself.
+//! They should not be treated as a complete post-quantum claim for the full
+//! system, and they do not replace PQ migration for transport, key exchange,
+//! or signature verification.
 //!
 //! ## Sponge Construction
 //!
@@ -100,7 +104,9 @@ pub const RATE: usize = 8;
 /// Capacity: security portion of the state that is never directly exposed.
 ///
 /// With capacity=4 and 64-bit elements, we have 256 bits of hidden state.
-/// This provides ~128-bit collision resistance (256/2 for birthday bound).
+/// This provides ~128-bit collision resistance (256/2 for birthday bound)
+/// for the hash construction itself under classical analysis; it is not, by
+/// itself, an end-to-end post-quantum guarantee for the surrounding system.
 pub const CAPACITY: usize = 4;
 
 /// S-box exponent (α) for forward direction: x^7.

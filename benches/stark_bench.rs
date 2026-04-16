@@ -48,7 +48,7 @@ use ves_stark_primitives::public_inputs::{
 };
 use ves_stark_primitives::rescue::{rescue_hash, rescue_hash_pair};
 use ves_stark_prover::{ComplianceProver, ComplianceWitness, Policy};
-use ves_stark_verifier::verify_compliance_proof_strict;
+use ves_stark_verifier::verify_compliance_proof_witness_strict;
 
 /// Create sample public inputs for AML threshold policy
 fn sample_aml_inputs(threshold: u64) -> CompliancePublicInputs {
@@ -70,6 +70,7 @@ fn sample_aml_inputs(threshold: u64) -> CompliancePublicInputs {
         policy_hash: hash.to_hex(),
         witness_commitment: None,
         authorization_receipt_hash: None,
+        amount_binding_hash: None,
     }
 }
 
@@ -93,6 +94,7 @@ fn sample_cap_inputs(cap: u64) -> CompliancePublicInputs {
         policy_hash: hash.to_hex(),
         witness_commitment: None,
         authorization_receipt_hash: None,
+        amount_binding_hash: None,
     }
 }
 
@@ -191,7 +193,7 @@ fn bench_verification(c: &mut Criterion) {
             ),
             |b, (proof_bytes, commitment, inputs, policy)| {
                 b.iter(|| {
-                    verify_compliance_proof_strict(
+                    verify_compliance_proof_witness_strict(
                         black_box(proof_bytes),
                         black_box(inputs),
                         black_box(policy),
@@ -225,7 +227,7 @@ fn bench_end_to_end(c: &mut Criterion) {
             let witness = ComplianceWitness::new(amount, inputs.clone());
 
             let proof = prover.prove(&witness).expect("proof generation failed");
-            verify_compliance_proof_strict(
+            verify_compliance_proof_witness_strict(
                 &proof.proof_bytes,
                 &inputs,
                 &policy,
