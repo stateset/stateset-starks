@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Every `unsafe extern "C"` function in `ves-stark-zig` now documents its pointer-safety contract (validity, NUL-termination, ownership/free rules), and the workspace is clippy-clean under both default and `--all-features` builds.
+- The `bench` profile no longer inherits the `release` profile's `lto = "fat"` + `codegen-units = 1`; it uses thin LTO with multiple codegen units instead. This is partial relief for `cargo bench`'s long compile time — the dominant cost remains `opt-level` optimizing the single 636-constraint `evaluate_transition` function in `ves-stark-batch` (an LLVM pathology that scales with function size). Fully fixing it requires splitting that function into smaller helpers (tracked as follow-up work). Production `release` builds are unchanged.
 
 ## [0.2.2] - 2026-03-19
 

@@ -92,11 +92,13 @@ codegen-units = 1
 panic = "abort"
 
 # The bench profile deliberately does NOT inherit release's `lto = "fat"` +
-# `codegen-units = 1`. Those settings force the whole `ves-stark-batch` crate
-# (including the 636-constraint `evaluate_transition`) into a single codegen/LTO
-# unit, which makes `cargo bench` take 30+ minutes to compile. Thin LTO with
-# multiple codegen units keeps benchmark numbers representative while compiling
-# in minutes. Production builds still use the fully-optimized `release` profile.
+# `codegen-units = 1`; thin LTO with multiple codegen units compiles faster while
+# keeping benchmark numbers representative. This is only partial relief, though:
+# the dominant `cargo bench` compile cost is `opt-level` optimizing the single
+# 636-constraint `evaluate_transition` function in `ves-stark-batch` — a known
+# rustc/LLVM pathology that scales with function *size* and that codegen-units
+# cannot split. The real fix is to break that function into smaller helpers (see
+# the batch AIR). Production builds still use the fully-optimized `release` profile.
 [profile.bench]
 lto = "thin"
 codegen-units = 16
