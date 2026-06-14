@@ -274,6 +274,22 @@ impl BatchVerifier {
         curr_inputs: &BatchPublicInputs,
         batch_index: usize,
     ) -> Result<(), BatchError> {
+        // A valid chain must stay within a single tenant and store. Without this
+        // check, batches from unrelated tenants/stores could be stitched together
+        // purely by coincidental sequence numbers and state-root linkage.
+        if prev_inputs.tenant_id != curr_inputs.tenant_id {
+            return Err(BatchError::InvalidPublicInputs(format!(
+                "Tenant mismatch in chain at batch {}: chained batches must share one tenant",
+                batch_index
+            )));
+        }
+        if prev_inputs.store_id != curr_inputs.store_id {
+            return Err(BatchError::InvalidPublicInputs(format!(
+                "Store mismatch in chain at batch {}: chained batches must share one store",
+                batch_index
+            )));
+        }
+
         let expected_sequence_start = prev_inputs
             .sequence_end
             .as_int()
@@ -497,6 +513,73 @@ mod tests {
             BatchVerifier::validate_sequence_continuity(&prev_inputs, &next_inputs, 1)
                 .expect_err("overflow should be reported");
         assert!(matches!(overflow_err, BatchError::InvalidPublicInputs(_)));
+    }
+
+    #[test]
+    fn test_chain_continuity_rejects_tenant_mismatch() {
+        let prev_inputs = BatchPublicInputs {
+            tenant_id: [felt_from_u64(1); 4],
+            store_id: [felt_from_u64(7); 4],
+            sequence_start: felt_from_u64(10),
+            sequence_end: felt_from_u64(19),
+            ..Default::default()
+        };
+
+        let next_inputs = BatchPublicInputs {
+            tenant_id: [felt_from_u64(2); 4],
+            store_id: [felt_from_u64(7); 4],
+            sequence_start: felt_from_u64(20),
+            sequence_end: felt_from_u64(29),
+            ..Default::default()
+        };
+
+        let err = BatchVerifier::validate_sequence_continuity(&prev_inputs, &next_inputs, 1)
+            .expect_err("tenant mismatch should fail");
+        assert!(matches!(err, BatchError::InvalidPublicInputs(msg) if msg.contains("Tenant")));
+    }
+
+    #[test]
+    fn test_chain_continuity_rejects_store_mismatch() {
+        let prev_inputs = BatchPublicInputs {
+            tenant_id: [felt_from_u64(1); 4],
+            store_id: [felt_from_u64(7); 4],
+            sequence_start: felt_from_u64(10),
+            sequence_end: felt_from_u64(19),
+            ..Default::default()
+        };
+
+        let next_inputs = BatchPublicInputs {
+            tenant_id: [felt_from_u64(1); 4],
+            store_id: [felt_from_u64(8); 4],
+            sequence_start: felt_from_u64(20),
+            sequence_end: felt_from_u64(29),
+            ..Default::default()
+        };
+
+        let err = BatchVerifier::validate_sequence_continuity(&prev_inputs, &next_inputs, 1)
+            .expect_err("store mismatch should fail");
+        assert!(matches!(err, BatchError::InvalidPublicInputs(msg) if msg.contains("Store")));
+    }
+
+    #[test]
+    fn test_chain_continuity_accepts_matching_tenant_store() {
+        let prev_inputs = BatchPublicInputs {
+            tenant_id: [felt_from_u64(1); 4],
+            store_id: [felt_from_u64(7); 4],
+            sequence_start: felt_from_u64(10),
+            sequence_end: felt_from_u64(19),
+            ..Default::default()
+        };
+
+        let next_inputs = BatchPublicInputs {
+            tenant_id: [felt_from_u64(1); 4],
+            store_id: [felt_from_u64(7); 4],
+            sequence_start: felt_from_u64(20),
+            sequence_end: felt_from_u64(29),
+            ..Default::default()
+        };
+
+        assert!(BatchVerifier::validate_sequence_continuity(&prev_inputs, &next_inputs, 1).is_ok());
     }
 
     #[test]

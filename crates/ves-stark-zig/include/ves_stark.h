@@ -192,9 +192,14 @@ VesResult ves_batch_prove_json(
 
 const char    *ves_batch_proof_hash(const VesBatchProof *proof);
 const char    *ves_batch_proof_json(const VesBatchProof *proof);
+const uint8_t *ves_batch_proof_bytes(const VesBatchProof *proof, size_t *out_len);
+size_t         ves_batch_proof_size(const VesBatchProof *proof);
 size_t         ves_batch_proof_num_events(const VesBatchProof *proof);
 bool           ves_batch_proof_all_compliant(const VesBatchProof *proof);
 uint64_t       ves_batch_proof_proving_time_ms(const VesBatchProof *proof);
+/* Writes 4 x uint64_t into out. Returns VES_OK or a negative error code. */
+VesResult      ves_batch_proof_prev_state_root(const VesBatchProof *proof, uint64_t *out);
+VesResult      ves_batch_proof_new_state_root(const VesBatchProof *proof, uint64_t *out);
 void           ves_batch_proof_free(VesBatchProof *proof);
 
 VesResult ves_batch_verify_json(
@@ -205,6 +210,11 @@ bool     ves_batch_verification_valid(const VesBatchVerificationResult *result);
 uint64_t ves_batch_verification_time_ms(const VesBatchVerificationResult *result);
 size_t   ves_batch_verification_num_events(const VesBatchVerificationResult *result);
 bool     ves_batch_verification_all_compliant(const VesBatchVerificationResult *result);
+/* Returns the error message, or NULL if verification succeeded. */
+const char *ves_batch_verification_error(const VesBatchVerificationResult *result);
+/* Writes 4 x uint64_t into out. Returns VES_OK or a negative error code. */
+VesResult ves_batch_verification_prev_state_root(const VesBatchVerificationResult *result, uint64_t *out);
+VesResult ves_batch_verification_new_state_root(const VesBatchVerificationResult *result, uint64_t *out);
 void     ves_batch_verification_result_free(VesBatchVerificationResult *result);
 
 /* ── Memory ────────────────────────────────────────────────────────────── */

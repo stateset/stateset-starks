@@ -195,6 +195,11 @@ fn parse_public_inputs_json(json: &str) -> Result<CompliancePublicInputs, i32> {
 /// Create public inputs from a JSON string.
 ///
 /// Returns NULL on error (check `ves_stark_last_error()`).
+///
+/// # Safety
+/// `json` must be either NULL or a pointer to a valid, NUL-terminated C string
+/// that remains valid for the duration of this call. The returned handle, if
+/// non-NULL, must be released exactly once with [`ves_public_inputs_free`].
 #[no_mangle]
 pub unsafe extern "C" fn ves_public_inputs_from_json(json: *const c_char) -> *mut VesPublicInputs {
     let json_str = match unsafe { cstr_to_str(json) } {
@@ -210,6 +215,12 @@ pub unsafe extern "C" fn ves_public_inputs_from_json(json: *const c_char) -> *mu
 
 /// Serialize public inputs to a JSON string.
 /// The returned string must be freed with `ves_free_string()`.
+///
+/// # Safety
+/// `inputs` must be a valid handle returned by [`ves_public_inputs_from_json`]
+/// (and not yet freed). `out_json` must be a valid, writable pointer to a
+/// `*mut c_char`; on success it receives an owned string that must be released
+/// with [`ves_free_string`]. Both pointers may be NULL (handled as an error).
 #[no_mangle]
 pub unsafe extern "C" fn ves_public_inputs_to_json(
     inputs: *const VesPublicInputs,
@@ -235,6 +246,11 @@ pub unsafe extern "C" fn ves_public_inputs_to_json(
 }
 
 /// Free public inputs.
+///
+/// # Safety
+/// `inputs` must be NULL or a handle previously returned by
+/// [`ves_public_inputs_from_json`] that has not already been freed. After this
+/// call the pointer is dangling and must not be used again (no double-free).
 #[no_mangle]
 pub unsafe extern "C" fn ves_public_inputs_free(inputs: *mut VesPublicInputs) {
     if !inputs.is_null() {
@@ -251,6 +267,13 @@ pub unsafe extern "C" fn ves_public_inputs_free(inputs: *mut VesPublicInputs) {
 /// `policy_type`: one of "aml.threshold", "order_total.cap", "agent.authorization.v1"
 ///
 /// On success, `*out_proof` is set to a new proof handle. Free with `ves_proof_free()`.
+///
+/// # Safety
+/// `inputs` must be a valid, unfreed handle from [`ves_public_inputs_from_json`].
+/// `policy_type` must be a valid NUL-terminated C string. `out_proof` must be a
+/// valid, writable pointer to a `*mut VesProof`; on success it receives a handle
+/// that must be released with [`ves_proof_free`]. `inputs` and `out_proof` may be
+/// NULL (handled as an error).
 #[no_mangle]
 pub unsafe extern "C" fn ves_prove(
     amount: u64,
@@ -352,6 +375,11 @@ pub unsafe extern "C" fn ves_prove(
 // ---------------------------------------------------------------------------
 
 /// Get proof bytes pointer and length.
+///
+/// # Safety
+/// `proof` must be NULL or a valid, unfreed [`VesProof`] handle. `out_len` must
+/// be NULL or a valid, writable `*mut usize`. The returned pointer borrows memory
+/// owned by `proof` and is valid only until `proof` is freed.
 #[no_mangle]
 pub unsafe extern "C" fn ves_proof_bytes(proof: *const VesProof, out_len: *mut usize) -> *const u8 {
     if proof.is_null() {
@@ -365,6 +393,10 @@ pub unsafe extern "C" fn ves_proof_bytes(proof: *const VesProof, out_len: *mut u
 }
 
 /// Get proof hash as a null-terminated string.
+///
+/// # Safety
+/// `proof` must be NULL or a valid, unfreed [`VesProof`] handle. The returned
+/// string borrows memory owned by `proof` and is valid only until it is freed.
 #[no_mangle]
 pub unsafe extern "C" fn ves_proof_hash(proof: *const VesProof) -> *const c_char {
     if proof.is_null() {
@@ -374,6 +406,9 @@ pub unsafe extern "C" fn ves_proof_hash(proof: *const VesProof) -> *const c_char
 }
 
 /// Get proving time in milliseconds.
+///
+/// # Safety
+/// `proof` must be NULL or a valid, unfreed [`VesProof`] handle.
 #[no_mangle]
 pub unsafe extern "C" fn ves_proof_proving_time_ms(proof: *const VesProof) -> u64 {
     if proof.is_null() {
@@ -383,6 +418,9 @@ pub unsafe extern "C" fn ves_proof_proving_time_ms(proof: *const VesProof) -> u6
 }
 
 /// Get proof size in bytes.
+///
+/// # Safety
+/// `proof` must be NULL or a valid, unfreed [`VesProof`] handle.
 #[no_mangle]
 pub unsafe extern "C" fn ves_proof_size(proof: *const VesProof) -> usize {
     if proof.is_null() {
@@ -392,6 +430,10 @@ pub unsafe extern "C" fn ves_proof_size(proof: *const VesProof) -> usize {
 }
 
 /// Get witness commitment as 4 x u64.
+///
+/// # Safety
+/// `proof` must be NULL or a valid, unfreed [`VesProof`] handle. `out` must be
+/// NULL or a valid, writable pointer to an array of at least 4 `u64` values.
 #[no_mangle]
 pub unsafe extern "C" fn ves_proof_witness_commitment(
     proof: *const VesProof,
@@ -408,6 +450,10 @@ pub unsafe extern "C" fn ves_proof_witness_commitment(
 }
 
 /// Get witness commitment as hex string (64 chars).
+///
+/// # Safety
+/// `proof` must be NULL or a valid, unfreed [`VesProof`] handle. The returned
+/// string borrows memory owned by `proof` and is valid only until it is freed.
 #[no_mangle]
 pub unsafe extern "C" fn ves_proof_witness_commitment_hex(proof: *const VesProof) -> *const c_char {
     if proof.is_null() {
@@ -417,6 +463,11 @@ pub unsafe extern "C" fn ves_proof_witness_commitment_hex(proof: *const VesProof
 }
 
 /// Free a proof handle.
+///
+/// # Safety
+/// `proof` must be NULL or a handle previously returned by [`ves_prove`] that has
+/// not already been freed. After this call the pointer is dangling and must not
+/// be used again (no double-free).
 #[no_mangle]
 pub unsafe extern "C" fn ves_proof_free(proof: *mut VesProof) {
     if !proof.is_null() {
@@ -456,6 +507,14 @@ fn do_verify_bound(
 }
 
 /// Verify a STARK compliance proof with witness commitment (4 x u64).
+///
+/// # Safety
+/// `proof_bytes_ptr` must point to at least `proof_len` readable bytes. `inputs`
+/// must be a valid, unfreed [`VesPublicInputs`] handle. `witness_commitment` must
+/// point to at least 4 readable `u64` values. `out_result` must be a valid,
+/// writable `*mut *mut VesVerificationResult`; on success it receives a handle
+/// that must be released with [`ves_verification_result_free`]. Any of these
+/// pointers may be NULL (handled as an error).
 #[no_mangle]
 pub unsafe extern "C" fn ves_verify(
     proof_bytes_ptr: *const u8,
@@ -493,6 +552,14 @@ pub unsafe extern "C" fn ves_verify(
 }
 
 /// Verify a STARK compliance proof with witness commitment as hex string.
+///
+/// # Safety
+/// `proof_bytes_ptr` must point to at least `proof_len` readable bytes. `inputs`
+/// must be a valid, unfreed [`VesPublicInputs`] handle. `witness_commitment_hex`
+/// must be a valid NUL-terminated C string. `out_result` must be a valid, writable
+/// `*mut *mut VesVerificationResult`; on success it receives a handle that must be
+/// released with [`ves_verification_result_free`]. The required pointers may be
+/// NULL (handled as an error).
 #[no_mangle]
 pub unsafe extern "C" fn ves_verify_hex(
     proof_bytes_ptr: *const u8,
@@ -532,6 +599,14 @@ pub unsafe extern "C" fn ves_verify_hex(
 }
 
 /// Verify a STARK compliance proof against a canonical payload amount binding (JSON).
+///
+/// # Safety
+/// `proof_bytes_ptr` must point to at least `proof_len` readable bytes. `inputs`
+/// must be a valid, unfreed [`VesPublicInputs`] handle. `amount_binding_json` must
+/// be a valid NUL-terminated C string. `out_result` must be a valid, writable
+/// `*mut *mut VesVerificationResult`; on success it receives a handle that must be
+/// released with [`ves_verification_result_free`]. The required pointers may be
+/// NULL (handled as an error).
 #[no_mangle]
 pub unsafe extern "C" fn ves_verify_with_amount_binding(
     proof_bytes_ptr: *const u8,
@@ -584,6 +659,15 @@ pub unsafe extern "C" fn ves_verify_with_amount_binding(
 }
 
 /// Verify an agent.authorization.v1 proof with witness commitment (4 x u64).
+///
+/// # Safety
+/// `proof_bytes_ptr` must point to at least `proof_len` readable bytes. `inputs`
+/// must be a valid, unfreed [`VesPublicInputs`] handle. `witness_commitment` must
+/// point to at least 4 readable `u64` values. `receipt_json` must be a valid
+/// NUL-terminated C string. `out_result` must be a valid, writable
+/// `*mut *mut VesVerificationResult`; on success it receives a handle that must be
+/// released with [`ves_verification_result_free`]. The required pointers may be
+/// NULL (handled as an error).
 #[no_mangle]
 pub unsafe extern "C" fn ves_verify_agent_authorization(
     proof_bytes_ptr: *const u8,
@@ -668,6 +752,14 @@ pub unsafe extern "C" fn ves_verify_agent_authorization(
 }
 
 /// Verify an agent.authorization.v1 proof with witness commitment as hex.
+///
+/// # Safety
+/// `proof_bytes_ptr` must point to at least `proof_len` readable bytes. `inputs`
+/// must be a valid, unfreed [`VesPublicInputs`] handle. `witness_commitment_hex`
+/// and `receipt_json` must each be a valid NUL-terminated C string. `out_result`
+/// must be a valid, writable `*mut *mut VesVerificationResult`; on success it
+/// receives a handle that must be released with [`ves_verification_result_free`].
+/// The required pointers may be NULL (handled as an error).
 #[no_mangle]
 pub unsafe extern "C" fn ves_verify_agent_authorization_hex(
     proof_bytes_ptr: *const u8,
@@ -754,6 +846,14 @@ pub unsafe extern "C" fn ves_verify_agent_authorization_hex(
 }
 
 /// Verify an agent.authorization.v1 proof against both amount binding and receipt (JSON).
+///
+/// # Safety
+/// `proof_bytes_ptr` must point to at least `proof_len` readable bytes. `inputs`
+/// must be a valid, unfreed [`VesPublicInputs`] handle. `amount_binding_json` and
+/// `receipt_json` must each be a valid NUL-terminated C string. `out_result` must
+/// be a valid, writable `*mut *mut VesVerificationResult`; on success it receives a
+/// handle that must be released with [`ves_verification_result_free`]. The required
+/// pointers may be NULL (handled as an error).
 #[no_mangle]
 pub unsafe extern "C" fn ves_verify_agent_authorization_with_amount_binding(
     proof_bytes_ptr: *const u8,
@@ -826,6 +926,10 @@ pub unsafe extern "C" fn ves_verify_agent_authorization_with_amount_binding(
 // Verification Result Accessors
 // ---------------------------------------------------------------------------
 
+/// Returns whether the verification succeeded.
+///
+/// # Safety
+/// `result` must be NULL or a valid, unfreed [`VesVerificationResult`] handle.
 #[no_mangle]
 pub unsafe extern "C" fn ves_verification_valid(result: *const VesVerificationResult) -> bool {
     if result.is_null() {
@@ -834,6 +938,10 @@ pub unsafe extern "C" fn ves_verification_valid(result: *const VesVerificationRe
     unsafe { &*result }.valid
 }
 
+/// Returns the verification time in milliseconds.
+///
+/// # Safety
+/// `result` must be NULL or a valid, unfreed [`VesVerificationResult`] handle.
 #[no_mangle]
 pub unsafe extern "C" fn ves_verification_time_ms(result: *const VesVerificationResult) -> u64 {
     if result.is_null() {
@@ -843,6 +951,11 @@ pub unsafe extern "C" fn ves_verification_time_ms(result: *const VesVerification
 }
 
 /// Returns NULL if there is no error message.
+///
+/// # Safety
+/// `result` must be NULL or a valid, unfreed [`VesVerificationResult`] handle.
+/// The returned string borrows memory owned by `result` and is valid only until
+/// it is freed.
 #[no_mangle]
 pub unsafe extern "C" fn ves_verification_error(
     result: *const VesVerificationResult,
@@ -856,6 +969,12 @@ pub unsafe extern "C" fn ves_verification_error(
         .map_or(std::ptr::null(), |s| s.as_ptr())
 }
 
+/// Returns the policy id as a NUL-terminated string.
+///
+/// # Safety
+/// `result` must be NULL or a valid, unfreed [`VesVerificationResult`] handle.
+/// The returned string borrows memory owned by `result` and is valid only until
+/// it is freed.
 #[no_mangle]
 pub unsafe extern "C" fn ves_verification_policy_id(
     result: *const VesVerificationResult,
@@ -866,6 +985,10 @@ pub unsafe extern "C" fn ves_verification_policy_id(
     unsafe { &*result }.policy_id.as_ptr()
 }
 
+/// Returns the policy limit.
+///
+/// # Safety
+/// `result` must be NULL or a valid, unfreed [`VesVerificationResult`] handle.
 #[no_mangle]
 pub unsafe extern "C" fn ves_verification_policy_limit(
     result: *const VesVerificationResult,
@@ -876,6 +999,12 @@ pub unsafe extern "C" fn ves_verification_policy_limit(
     unsafe { &*result }.policy_limit
 }
 
+/// Free a verification result handle.
+///
+/// # Safety
+/// `result` must be NULL or a handle previously returned by one of the
+/// `ves_verify*` functions that has not already been freed. After this call the
+/// pointer is dangling and must not be used again (no double-free).
 #[no_mangle]
 pub unsafe extern "C" fn ves_verification_result_free(result: *mut VesVerificationResult) {
     if !result.is_null() {
@@ -888,6 +1017,12 @@ pub unsafe extern "C" fn ves_verification_result_free(result: *mut VesVerificati
 // ---------------------------------------------------------------------------
 
 /// Compute the policy hash. On success, `*out_hash` is set to a new string. Free with `ves_free_string()`.
+///
+/// # Safety
+/// `policy_id` and `policy_params_json` must each be a valid NUL-terminated C
+/// string. `out_hash` must be a valid, writable `*mut *mut c_char`; on success it
+/// receives an owned string that must be released with [`ves_free_string`].
+/// `out_hash` may be NULL (handled as an error).
 #[no_mangle]
 pub unsafe extern "C" fn ves_compute_policy_hash(
     policy_id: *const c_char,
@@ -933,6 +1068,12 @@ pub unsafe extern "C" fn ves_compute_policy_hash(
 
 /// Create a canonical payload amount binding (returned as JSON string).
 /// Free the result with `ves_free_string()`.
+///
+/// # Safety
+/// `inputs` must be a valid, unfreed [`VesPublicInputs`] handle. `out_json` must be
+/// a valid, writable `*mut *mut c_char`; on success it receives an owned string
+/// that must be released with [`ves_free_string`]. Both pointers may be NULL
+/// (handled as an error).
 #[no_mangle]
 pub unsafe extern "C" fn ves_create_payload_amount_binding(
     inputs: *const VesPublicInputs,
@@ -975,6 +1116,12 @@ pub unsafe extern "C" fn ves_create_payload_amount_binding(
 ///
 /// Returns a JSON object with: proofHash, proofSize, domainHash.
 /// Free the result with `ves_free_string()`.
+///
+/// # Safety
+/// `proof_bytes_ptr` must point to at least `proof_len` readable bytes. `out_json`
+/// must be a valid, writable `*mut *mut c_char`; on success it receives an owned
+/// string that must be released with [`ves_free_string`]. Both pointers may be NULL
+/// (handled as an error).
 #[no_mangle]
 pub unsafe extern "C" fn ves_proof_inspect(
     proof_bytes_ptr: *const u8,
@@ -1018,7 +1165,7 @@ mod batch_ffi {
         BatchMetadata, BatchPolicyKind, BatchProver, BatchVerifier, BatchWitnessBuilder,
         SerializableBatchProof,
     };
-    use ves_stark_primitives::{hash_to_felts, Hash256};
+    use ves_stark_primitives::hash_to_felts;
 
     pub struct VesBatchProof {
         proof_bytes: Vec<u8>,
@@ -1049,6 +1196,12 @@ mod batch_ffi {
     /// `policy_limit`: the policy limit value
     ///
     /// On success, `*out_proof` receives a batch proof handle. Free with `ves_batch_proof_free()`.
+    ///
+    /// # Safety
+    /// `events_json` and `policy_type` must each be a valid NUL-terminated C string.
+    /// `out_proof` must be a valid, writable `*mut *mut VesBatchProof`; on success it
+    /// receives a handle that must be released with [`ves_batch_proof_free`].
+    /// `out_proof` may be NULL (handled as an error).
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_prove_json(
         events_json: *const c_char,
@@ -1161,7 +1314,6 @@ mod batch_ffi {
         };
 
         // Build public inputs for serialization
-        use ves_stark_primitives::{felt_from_u64, Felt, FELT_ONE, FELT_ZERO};
         let new_state_root = match witness.compute_new_state_root() {
             Ok(r) => r,
             Err(e) => {
@@ -1223,6 +1375,12 @@ mod batch_ffi {
         VES_OK
     }
 
+    /// Returns the batch proof hash as a NUL-terminated string.
+    ///
+    /// # Safety
+    /// `proof` must be NULL or a valid, unfreed [`VesBatchProof`] handle. The
+    /// returned string borrows memory owned by `proof` and is valid only until it
+    /// is freed.
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_proof_hash(proof: *const VesBatchProof) -> *const c_char {
         if proof.is_null() {
@@ -1231,6 +1389,12 @@ mod batch_ffi {
         unsafe { &*proof }.proof_hash.as_ptr()
     }
 
+    /// Returns the serialized batch proof JSON as a NUL-terminated string.
+    ///
+    /// # Safety
+    /// `proof` must be NULL or a valid, unfreed [`VesBatchProof`] handle. The
+    /// returned string borrows memory owned by `proof` and is valid only until it
+    /// is freed.
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_proof_json(proof: *const VesBatchProof) -> *const c_char {
         if proof.is_null() {
@@ -1239,6 +1403,83 @@ mod batch_ffi {
         unsafe { &*proof }.serialized_json.as_ptr()
     }
 
+    /// Get the raw batch proof bytes pointer and length.
+    ///
+    /// # Safety
+    /// `proof` must be NULL or a valid, unfreed [`VesBatchProof`] handle. `out_len`
+    /// must be NULL or a valid, writable `*mut usize`. The returned pointer borrows
+    /// memory owned by `proof` and is valid only until `proof` is freed.
+    #[no_mangle]
+    pub unsafe extern "C" fn ves_batch_proof_bytes(
+        proof: *const VesBatchProof,
+        out_len: *mut usize,
+    ) -> *const u8 {
+        if proof.is_null() {
+            return std::ptr::null();
+        }
+        let p = unsafe { &*proof };
+        if !out_len.is_null() {
+            unsafe { *out_len = p.proof_bytes.len() };
+        }
+        p.proof_bytes.as_ptr()
+    }
+
+    /// Returns the batch proof size in bytes.
+    ///
+    /// # Safety
+    /// `proof` must be NULL or a valid, unfreed [`VesBatchProof`] handle.
+    #[no_mangle]
+    pub unsafe extern "C" fn ves_batch_proof_size(proof: *const VesBatchProof) -> usize {
+        if proof.is_null() {
+            return 0;
+        }
+        unsafe { &*proof }.proof_size
+    }
+
+    /// Write the previous state root (4 x u64) into `out`.
+    ///
+    /// # Safety
+    /// `proof` must be NULL or a valid, unfreed [`VesBatchProof`] handle. `out` must
+    /// be NULL or a valid, writable pointer to an array of at least 4 `u64` values.
+    #[no_mangle]
+    pub unsafe extern "C" fn ves_batch_proof_prev_state_root(
+        proof: *const VesBatchProof,
+        out: *mut u64,
+    ) -> i32 {
+        if proof.is_null() || out.is_null() {
+            set_last_error("null pointer argument".into());
+            return VES_ERR_NULL_PTR;
+        }
+        let p = unsafe { &*proof };
+        let out_slice = unsafe { slice::from_raw_parts_mut(out, 4) };
+        out_slice.copy_from_slice(&p.prev_state_root);
+        VES_OK
+    }
+
+    /// Write the new state root (4 x u64) into `out`.
+    ///
+    /// # Safety
+    /// `proof` must be NULL or a valid, unfreed [`VesBatchProof`] handle. `out` must
+    /// be NULL or a valid, writable pointer to an array of at least 4 `u64` values.
+    #[no_mangle]
+    pub unsafe extern "C" fn ves_batch_proof_new_state_root(
+        proof: *const VesBatchProof,
+        out: *mut u64,
+    ) -> i32 {
+        if proof.is_null() || out.is_null() {
+            set_last_error("null pointer argument".into());
+            return VES_ERR_NULL_PTR;
+        }
+        let p = unsafe { &*proof };
+        let out_slice = unsafe { slice::from_raw_parts_mut(out, 4) };
+        out_slice.copy_from_slice(&p.new_state_root);
+        VES_OK
+    }
+
+    /// Returns the number of events in the batch proof.
+    ///
+    /// # Safety
+    /// `proof` must be NULL or a valid, unfreed [`VesBatchProof`] handle.
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_proof_num_events(proof: *const VesBatchProof) -> usize {
         if proof.is_null() {
@@ -1247,6 +1488,10 @@ mod batch_ffi {
         unsafe { &*proof }.num_events
     }
 
+    /// Returns whether all events in the batch are compliant.
+    ///
+    /// # Safety
+    /// `proof` must be NULL or a valid, unfreed [`VesBatchProof`] handle.
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_proof_all_compliant(proof: *const VesBatchProof) -> bool {
         if proof.is_null() {
@@ -1255,6 +1500,10 @@ mod batch_ffi {
         unsafe { &*proof }.all_compliant
     }
 
+    /// Returns the batch proving time in milliseconds.
+    ///
+    /// # Safety
+    /// `proof` must be NULL or a valid, unfreed [`VesBatchProof`] handle.
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_proof_proving_time_ms(proof: *const VesBatchProof) -> u64 {
         if proof.is_null() {
@@ -1263,6 +1512,12 @@ mod batch_ffi {
         unsafe { &*proof }.proving_time_ms
     }
 
+    /// Free a batch proof handle.
+    ///
+    /// # Safety
+    /// `proof` must be NULL or a handle previously returned by
+    /// [`ves_batch_prove_json`] that has not already been freed. After this call the
+    /// pointer is dangling and must not be used again (no double-free).
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_proof_free(proof: *mut VesBatchProof) {
         if !proof.is_null() {
@@ -1271,6 +1526,12 @@ mod batch_ffi {
     }
 
     /// Verify a batch proof from its serialized JSON.
+    ///
+    /// # Safety
+    /// `proof_json` must be a valid NUL-terminated C string. `out_result` must be a
+    /// valid, writable `*mut *mut VesBatchVerificationResult`; on success it receives
+    /// a handle that must be released with [`ves_batch_verification_result_free`].
+    /// `out_result` may be NULL (handled as an error).
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_verify_json(
         proof_json: *const c_char,
@@ -1332,6 +1593,10 @@ mod batch_ffi {
         VES_OK
     }
 
+    /// Returns whether the batch verification succeeded.
+    ///
+    /// # Safety
+    /// `result` must be NULL or a valid, unfreed [`VesBatchVerificationResult`] handle.
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_verification_valid(
         result: *const VesBatchVerificationResult,
@@ -1342,6 +1607,10 @@ mod batch_ffi {
         unsafe { &*result }.valid
     }
 
+    /// Returns the batch verification time in milliseconds.
+    ///
+    /// # Safety
+    /// `result` must be NULL or a valid, unfreed [`VesBatchVerificationResult`] handle.
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_verification_time_ms(
         result: *const VesBatchVerificationResult,
@@ -1352,6 +1621,10 @@ mod batch_ffi {
         unsafe { &*result }.verification_time_ms
     }
 
+    /// Returns the number of events covered by the verified batch.
+    ///
+    /// # Safety
+    /// `result` must be NULL or a valid, unfreed [`VesBatchVerificationResult`] handle.
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_verification_num_events(
         result: *const VesBatchVerificationResult,
@@ -1362,6 +1635,10 @@ mod batch_ffi {
         unsafe { &*result }.num_events
     }
 
+    /// Returns whether all events in the verified batch are compliant.
+    ///
+    /// # Safety
+    /// `result` must be NULL or a valid, unfreed [`VesBatchVerificationResult`] handle.
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_verification_all_compliant(
         result: *const VesBatchVerificationResult,
@@ -1372,6 +1649,71 @@ mod batch_ffi {
         unsafe { &*result }.all_compliant
     }
 
+    /// Returns the batch verification error message, or NULL if there is none.
+    ///
+    /// # Safety
+    /// `result` must be NULL or a valid, unfreed [`VesBatchVerificationResult`] handle.
+    /// The returned string borrows memory owned by `result` and is valid only until
+    /// it is freed.
+    #[no_mangle]
+    pub unsafe extern "C" fn ves_batch_verification_error(
+        result: *const VesBatchVerificationResult,
+    ) -> *const c_char {
+        if result.is_null() {
+            return std::ptr::null();
+        }
+        unsafe { &*result }
+            .error
+            .as_ref()
+            .map_or(std::ptr::null(), |s| s.as_ptr())
+    }
+
+    /// Write the verified batch's previous state root (4 x u64) into `out`.
+    ///
+    /// # Safety
+    /// `result` must be NULL or a valid, unfreed [`VesBatchVerificationResult`] handle.
+    /// `out` must be NULL or a valid, writable pointer to an array of at least 4 `u64`.
+    #[no_mangle]
+    pub unsafe extern "C" fn ves_batch_verification_prev_state_root(
+        result: *const VesBatchVerificationResult,
+        out: *mut u64,
+    ) -> i32 {
+        if result.is_null() || out.is_null() {
+            set_last_error("null pointer argument".into());
+            return VES_ERR_NULL_PTR;
+        }
+        let r = unsafe { &*result };
+        let out_slice = unsafe { slice::from_raw_parts_mut(out, 4) };
+        out_slice.copy_from_slice(&r.prev_state_root);
+        VES_OK
+    }
+
+    /// Write the verified batch's new state root (4 x u64) into `out`.
+    ///
+    /// # Safety
+    /// `result` must be NULL or a valid, unfreed [`VesBatchVerificationResult`] handle.
+    /// `out` must be NULL or a valid, writable pointer to an array of at least 4 `u64`.
+    #[no_mangle]
+    pub unsafe extern "C" fn ves_batch_verification_new_state_root(
+        result: *const VesBatchVerificationResult,
+        out: *mut u64,
+    ) -> i32 {
+        if result.is_null() || out.is_null() {
+            set_last_error("null pointer argument".into());
+            return VES_ERR_NULL_PTR;
+        }
+        let r = unsafe { &*result };
+        let out_slice = unsafe { slice::from_raw_parts_mut(out, 4) };
+        out_slice.copy_from_slice(&r.new_state_root);
+        VES_OK
+    }
+
+    /// Free a batch verification result handle.
+    ///
+    /// # Safety
+    /// `result` must be NULL or a handle previously returned by
+    /// [`ves_batch_verify_json`] that has not already been freed. After this call the
+    /// pointer is dangling and must not be used again (no double-free).
     #[no_mangle]
     pub unsafe extern "C" fn ves_batch_verification_result_free(
         result: *mut VesBatchVerificationResult,
@@ -1383,6 +1725,12 @@ mod batch_ffi {
 }
 
 /// Free a string allocated by this library.
+///
+/// # Safety
+/// `s` must be NULL or a string previously returned by one of this library's
+/// functions (e.g. via an `out_json`/`out_hash` parameter) that has not already
+/// been freed. Do not pass strings borrowed from a handle accessor, and do not
+/// free the same pointer twice.
 #[no_mangle]
 pub unsafe extern "C" fn ves_free_string(s: *mut c_char) {
     if !s.is_null() {

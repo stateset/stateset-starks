@@ -686,6 +686,9 @@ fn verify_compliance_bundle(
     Ok(())
 }
 
+// Arguments map 1:1 to CLI flags for this subcommand; grouping them into a
+// struct would only add indirection over the clap-parsed values.
+#[allow(clippy::too_many_arguments)]
 fn verify_agent_authorization_bundle(
     bundle: AgentAuthorizationProofBundle,
     inputs_path: Option<PathBuf>,
@@ -753,6 +756,9 @@ fn verify_agent_authorization_bundle(
     Ok(())
 }
 
+// Arguments map 1:1 to CLI flags for this subcommand; grouping them into a
+// struct would only add indirection over the clap-parsed values.
+#[allow(clippy::too_many_arguments)]
 fn prove(
     amount: u64,
     limit: u64,
@@ -904,6 +910,9 @@ fn prove(
     Ok(())
 }
 
+// Arguments map 1:1 to CLI flags for this subcommand; grouping them into a
+// struct would only add indirection over the clap-parsed values.
+#[allow(clippy::too_many_arguments)]
 fn prove_submit(
     sequencer_url: String,
     event_id: Uuid,

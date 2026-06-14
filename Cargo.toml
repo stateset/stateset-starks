@@ -91,5 +91,12 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 
+# The bench profile deliberately does NOT inherit release's `lto = "fat"` +
+# `codegen-units = 1`. Those settings force the whole `ves-stark-batch` crate
+# (including the 636-constraint `evaluate_transition`) into a single codegen/LTO
+# unit, which makes `cargo bench` take 30+ minutes to compile. Thin LTO with
+# multiple codegen units keeps benchmark numbers representative while compiling
+# in minutes. Production builds still use the fully-optimized `release` profile.
 [profile.bench]
 lto = "thin"
+codegen-units = 16

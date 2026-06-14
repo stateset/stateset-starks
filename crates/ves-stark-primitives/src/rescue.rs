@@ -75,6 +75,7 @@
 //! - Goldilocks field: <https://cr.yp.to/papers.html#goldilocks>
 
 use crate::field::{felt_from_u64, Felt, FELT_ZERO};
+use std::sync::LazyLock;
 use winter_math::FieldElement;
 
 /// Number of rounds in Rescue-Prime permutation.
@@ -170,10 +171,37 @@ fn sbox(x: Felt) -> Felt {
     x6 * x
 }
 
-/// Apply inverse S-box (x^{alpha_inv})
+/// Square `base` `M` times, then multiply by `tail`: returns `base^(2^M) * tail`.
+///
+/// This is the building block of the inverse-S-box addition chain.
+#[inline(always)]
+fn exp_acc<const M: usize>(base: Felt, tail: Felt) -> Felt {
+    let mut result = base;
+    for _ in 0..M {
+        result = result.square();
+    }
+    result * tail
+}
+
+/// Apply inverse S-box (x^{alpha_inv}).
+///
+/// Computes `x^ALPHA_INV` (= x^(1/7)) via a fixed addition chain rather than
+/// generic square-and-multiply over the 64-bit exponent. The chain performs
+/// ~72 field multiplications instead of ~96, and is the same proven sequence
+/// used by Winterfell's `Rp64_256` hasher for the Goldilocks field. The chain's
+/// exponent is verified to equal `ALPHA_INV` by `test_sbox_inv_addition_chain`.
 #[inline]
 fn sbox_inv(x: Felt) -> Felt {
-    x.exp(ALPHA_INV)
+    let t1 = x.square(); // x^2
+    let t2 = t1.square(); // x^4
+    let t3 = exp_acc::<3>(t2, t2);
+    let t4 = exp_acc::<6>(t3, t3);
+    let t5 = exp_acc::<12>(t4, t4);
+    let t6 = exp_acc::<6>(t5, t3);
+    let t7 = exp_acc::<31>(t6, t6);
+    let a = (t7.square() * t6).square().square();
+    let b = t1 * t2 * x;
+    a * b
 }
 
 /// Maximum Distance Separable (MDS) matrix for state mixing.
@@ -668,13 +696,43 @@ pub const ROUND_CONSTANTS: [[u64; STATE_WIDTH]; NUM_ROUNDS * 2] = [
     ],
 ];
 
+/// Helper: convert a `u64` matrix to its `Felt` representation once.
+fn to_felt_matrix(m: &[[u64; STATE_WIDTH]; STATE_WIDTH]) -> [[Felt; STATE_WIDTH]; STATE_WIDTH] {
+    let mut out = [[FELT_ZERO; STATE_WIDTH]; STATE_WIDTH];
+    for (orow, irow) in out.iter_mut().zip(m.iter()) {
+        for (o, &c) in orow.iter_mut().zip(irow.iter()) {
+            *o = felt_from_u64(c);
+        }
+    }
+    out
+}
+
+/// MDS / MDS_INV matrices and round constants are compile-time constants, but
+/// `felt_from_u64` performs a Montgomery conversion. Converting them on every
+/// permutation (144 conversions per MDS multiply, run twice per round, seven
+/// rounds per hash) is pure overhead, so we precompute the `Felt` forms once.
+static MDS_FELT: LazyLock<[[Felt; STATE_WIDTH]; STATE_WIDTH]> =
+    LazyLock::new(|| to_felt_matrix(&MDS));
+static MDS_INV_FELT: LazyLock<[[Felt; STATE_WIDTH]; STATE_WIDTH]> =
+    LazyLock::new(|| to_felt_matrix(&MDS_INV));
+static ROUND_CONSTANTS_FELT: LazyLock<[[Felt; STATE_WIDTH]; NUM_ROUNDS * 2]> =
+    LazyLock::new(|| {
+        let mut out = [[FELT_ZERO; STATE_WIDTH]; NUM_ROUNDS * 2];
+        for (orow, irow) in out.iter_mut().zip(ROUND_CONSTANTS.iter()) {
+            for (o, &c) in orow.iter_mut().zip(irow.iter()) {
+                *o = felt_from_u64(c);
+            }
+        }
+        out
+    });
+
 /// Apply MDS matrix multiplication
 fn mds_multiply(state: &RescueState) -> RescueState {
     let mut result = [FELT_ZERO; STATE_WIDTH];
-    for (i, row) in MDS.iter().enumerate() {
+    for (i, row) in MDS_FELT.iter().enumerate() {
         let mut sum = FELT_ZERO;
         for (&coeff, &s) in row.iter().zip(state.iter()) {
-            sum += felt_from_u64(coeff) * s;
+            sum += coeff * s;
         }
         result[i] = sum;
     }
@@ -684,25 +742,25 @@ fn mds_multiply(state: &RescueState) -> RescueState {
 /// Apply inverse MDS matrix multiplication
 fn mds_inv_multiply(state: &RescueState) -> RescueState {
     let mut result = [FELT_ZERO; STATE_WIDTH];
-    for (i, row) in MDS_INV.iter().enumerate() {
+    for (i, row) in MDS_INV_FELT.iter().enumerate() {
         let mut sum = FELT_ZERO;
         for (&coeff, &s) in row.iter().zip(state.iter()) {
-            sum += felt_from_u64(coeff) * s;
+            sum += coeff * s;
         }
         result[i] = sum;
     }
     result
 }
 
-/// Add round constants to state
-fn add_constants(state: &mut RescueState, round_constants: &[u64; STATE_WIDTH]) {
+/// Add round constants to state (precomputed `Felt` form).
+fn add_constants_felt(state: &mut RescueState, round_constants: &[Felt; STATE_WIDTH]) {
     for (s, &c) in state.iter_mut().zip(round_constants.iter()) {
-        *s += felt_from_u64(c);
+        *s += c;
     }
 }
 
 /// Apply one forward half-round: S-box -> MDS -> Add constants
-fn half_round_forward(state: &mut RescueState, constants: &[u64; STATE_WIDTH]) {
+fn half_round_forward(state: &mut RescueState, constants: &[Felt; STATE_WIDTH]) {
     // Apply S-box
     for s in state.iter_mut() {
         *s = sbox(*s);
@@ -710,11 +768,11 @@ fn half_round_forward(state: &mut RescueState, constants: &[u64; STATE_WIDTH]) {
     // MDS
     *state = mds_multiply(state);
     // Add constants
-    add_constants(state, constants);
+    add_constants_felt(state, constants);
 }
 
 /// Apply one backward half-round: MDS_inv -> S-box_inv -> Add constants
-fn half_round_backward(state: &mut RescueState, constants: &[u64; STATE_WIDTH]) {
+fn half_round_backward(state: &mut RescueState, constants: &[Felt; STATE_WIDTH]) {
     // MDS inverse
     *state = mds_inv_multiply(state);
     // Apply inverse S-box
@@ -722,14 +780,14 @@ fn half_round_backward(state: &mut RescueState, constants: &[u64; STATE_WIDTH]) 
         *s = sbox_inv(*s);
     }
     // Add constants
-    add_constants(state, constants);
+    add_constants_felt(state, constants);
 }
 
 /// Apply the full Rescue-Prime permutation
 pub fn rescue_permutation(state: &mut RescueState) {
     for round in 0..NUM_ROUNDS {
-        half_round_forward(state, &ROUND_CONSTANTS[round * 2]);
-        half_round_backward(state, &ROUND_CONSTANTS[round * 2 + 1]);
+        half_round_forward(state, &ROUND_CONSTANTS_FELT[round * 2]);
+        half_round_backward(state, &ROUND_CONSTANTS_FELT[round * 2 + 1]);
     }
 }
 
@@ -744,9 +802,9 @@ pub fn rescue_permutation_trace(initial_state: &RescueState) -> Vec<RescueState>
     states.push(state);
 
     for round in 0..NUM_ROUNDS {
-        half_round_forward(&mut state, &ROUND_CONSTANTS[round * 2]);
+        half_round_forward(&mut state, &ROUND_CONSTANTS_FELT[round * 2]);
         states.push(state);
-        half_round_backward(&mut state, &ROUND_CONSTANTS[round * 2 + 1]);
+        half_round_backward(&mut state, &ROUND_CONSTANTS_FELT[round * 2 + 1]);
         states.push(state);
     }
 
@@ -804,6 +862,36 @@ mod tests {
         let y = sbox(x);
         let z = sbox_inv(y);
         assert_eq!(felt_to_u64(x), felt_to_u64(z));
+    }
+
+    #[test]
+    fn test_sbox_inv_addition_chain() {
+        // The optimized addition-chain sbox_inv must equal generic exponentiation
+        // by ALPHA_INV for every input, and round-trip with the forward S-box.
+        let samples = [
+            0u64,
+            1,
+            2,
+            7,
+            12345678,
+            0xFFFF_FFFF,
+            0xFFFF_FFFF_0000_0000,
+            0xFFFF_FFFF_0000_0001 - 1, // p - 1 (Goldilocks modulus minus one)
+            0xDEAD_BEEF_CAFE_F00D,
+            u64::MAX,
+        ];
+        for &v in &samples {
+            let x = felt_from_u64(v);
+            // Matches the reference generic exponentiation.
+            assert_eq!(
+                felt_to_u64(sbox_inv(x)),
+                felt_to_u64(x.exp(ALPHA_INV)),
+                "sbox_inv mismatch for input {v}"
+            );
+            // Forward/backward S-box round-trips in both directions.
+            assert_eq!(felt_to_u64(sbox(sbox_inv(x))), felt_to_u64(x));
+            assert_eq!(felt_to_u64(sbox_inv(sbox(x))), felt_to_u64(x));
+        }
     }
 
     #[test]

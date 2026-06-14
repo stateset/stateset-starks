@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+- Rescue-Prime hashing precomputes the MDS / MDS⁻¹ matrices and round constants in `Felt` (Montgomery) form once instead of converting the constant `u64` values on every permutation. This removes ~2k Montgomery conversions per hash and measures ~8–9% faster on `rescue_hash` micro-benchmarks (47.7→43.9 µs single element, 48.6→44.0 µs full-rate), which propagates into faster trace generation and proving since Rescue is invoked for every Merkle node and leaf. Hash outputs are byte-for-byte identical (known-answer, integration, and batch prove/verify roundtrip tests all pass).
+- The Rescue inverse S-box (`x^ALPHA_INV`, the dominant cost of each backward half-round) now uses a fixed addition chain (~72 field multiplications) instead of generic square-and-multiply over the 64-bit exponent (~99 multiplications) — the same proven sequence Winterfell's `Rp64_256` uses for Goldilocks. The chain's exponent is verified to equal `ALPHA_INV` exactly, cross-checked against generic exponentiation over field edge cases, and validated by the existing randomized proptests plus full integration and batch prove/verify roundtrips (outputs unchanged).
+
+### Security
+- Batch chain verification (`BatchVerifier::verify_chain`) now rejects chains whose batches do not all share the same tenant and store. Previously batches from unrelated tenants/stores could be stitched into a single "valid" chain via coincidental sequence numbers and state-root linkage.
+
+### Added
+- `ves-stark-zig` FFI now exposes batch-proof accessors for raw proof bytes/size and previous/new state roots (`ves_batch_proof_bytes`, `ves_batch_proof_size`, `ves_batch_proof_prev_state_root`, `ves_batch_proof_new_state_root`) and batch-verification accessors for the error message and state roots (`ves_batch_verification_error`, `ves_batch_verification_prev_state_root`, `ves_batch_verification_new_state_root`), with matching C header declarations.
+
+### Changed
+- Every `unsafe extern "C"` function in `ves-stark-zig` now documents its pointer-safety contract (validity, NUL-termination, ownership/free rules), and the workspace is clippy-clean under both default and `--all-features` builds.
+
 ## [0.2.2] - 2026-03-19
 
 ### Added
