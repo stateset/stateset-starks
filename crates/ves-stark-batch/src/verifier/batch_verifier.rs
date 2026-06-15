@@ -390,7 +390,9 @@ mod tests {
         hash_to_felts(&hash)
     }
 
-    fn sample_fast_batch_proof() -> (Vec<u8>, BatchPublicInputs) {
+    /// Build a real single-event `fast` batch proof, returning the full proof
+    /// object alongside its public inputs.
+    fn sample_fast_batch_proof_full() -> (crate::BatchProof, BatchPublicInputs) {
         let threshold = 10_000u64;
         let tenant_id = Uuid::new_v4();
         let store_id = Uuid::new_v4();
@@ -428,6 +430,11 @@ mod tests {
             witness.public_inputs_accumulator().unwrap(),
         );
 
+        (proof, public_inputs)
+    }
+
+    fn sample_fast_batch_proof() -> (Vec<u8>, BatchPublicInputs) {
+        let (proof, public_inputs) = sample_fast_batch_proof_full();
         (proof.proof_bytes, public_inputs)
     }
 
@@ -646,6 +653,33 @@ mod tests {
             .verify_chain(&[(p1, pi1), (p2, pi2)])
             .expect_err("broken state-root linkage must be rejected");
         assert!(matches!(err, BatchError::InvalidStateChain { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn test_batch_proof_survives_json_round_trip_and_verifies() {
+        // Mirrors the FFI/client transport path (ves_batch_prove_json -> wire ->
+        // ves_batch_verify_json): a real proof serialized to JSON and back must
+        // still verify against the public inputs recovered from that JSON. The
+        // existing serialization tests only check field fidelity with placeholder
+        // proof bytes, never that a genuine proof survives transport and verifies.
+        use crate::serialization::SerializableBatchProof;
+
+        let (proof, public_inputs) = sample_fast_batch_proof_full();
+
+        let serializable = SerializableBatchProof::new(proof, public_inputs).unwrap();
+        let json = serializable.to_json().unwrap();
+        let restored = SerializableBatchProof::from_json(&json).unwrap();
+        let restored_inputs = restored.to_batch_public_inputs().unwrap();
+
+        let verifier = fast_verifier();
+        let result = verifier
+            .verify(&restored.proof.proof_bytes, &restored_inputs)
+            .unwrap();
+        assert!(
+            result.valid,
+            "round-tripped proof failed to verify: {:?}",
+            result.error
+        );
     }
 
     #[test]
