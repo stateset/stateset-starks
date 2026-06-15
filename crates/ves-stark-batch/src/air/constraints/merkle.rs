@@ -62,6 +62,68 @@ fn felt_to_ext<E: FieldElement<BaseField = Felt>>(val: u64) -> E {
     E::from(felt_from_u64(val))
 }
 
+/// Evaluate the Rescue permutation transition constraints (one per state lane).
+///
+/// This is the IR-densest part of the Merkle constraints — 24 degree-7 `pow7`
+/// evaluations plus two 12×12 MDS multiplies, monomorphized over the extension
+/// field. `#[inline(never)]` keeps it in its own codegen unit so it compiles in
+/// parallel with the rest of `evaluate_merkle_constraints` (under the bench
+/// profile's `codegen-units > 1`) instead of serializing one giant function. All
+/// inputs are recomputed from `current`/`next`/`periodic_values`, so the helper is
+/// self-contained; it writes exactly `RESCUE_STATE_WIDTH` constraints and returns
+/// that count. Forward half-round:  `next = MDS * sbox(curr) + constants`.
+/// Backward half-round: rewritten as `sbox(next - constants) = MDS_inv * curr`
+/// (degree 7) to avoid a degree-`alpha_inv` (~10^19) constraint.
+#[inline(never)]
+fn evaluate_rescue_permutation_constraints<E: FieldElement<BaseField = Felt>>(
+    current: &[E],
+    next: &[E],
+    periodic_values: &[E],
+    result: &mut [E],
+) -> usize {
+    let is_leaf_hash = current[batch_cols::IS_LEAF_HASH_ROW];
+    let is_commit = current[batch_cols::IS_COMMITMENT_HASH_ROW];
+    let is_merkle = current[batch_cols::IS_MERKLE_ROW];
+    let is_finalize = current[batch_cols::IS_FINALIZE_HASH];
+    let is_hash_row = is_leaf_hash + is_commit + is_merkle + is_finalize;
+
+    let rescue_active = periodic_values[PERIODIC_RESCUE_ACTIVE_IDX];
+    let rescue_is_forward = periodic_values[PERIODIC_RESCUE_IS_FORWARD_IDX];
+    let is_hash_row_active = is_hash_row * rescue_active;
+
+    let mut round_const = [E::ZERO; RESCUE_STATE_WIDTH];
+    round_const.copy_from_slice(
+        &periodic_values
+            [PERIODIC_RESCUE_CONST_START_IDX..PERIODIC_RESCUE_CONST_START_IDX + RESCUE_STATE_WIDTH],
+    );
+
+    let mut curr_state = [E::ZERO; RESCUE_STATE_WIDTH];
+    let mut next_state = [E::ZERO; RESCUE_STATE_WIDTH];
+    let rescue_state_start = batch_cols::MERKLE_RESCUE_STATE_START;
+    let rescue_state_end = rescue_state_start + RESCUE_STATE_WIDTH;
+    curr_state.copy_from_slice(&current[rescue_state_start..rescue_state_end]);
+    next_state.copy_from_slice(&next[rescue_state_start..rescue_state_end]);
+
+    let mut sbox_state = [E::ZERO; RESCUE_STATE_WIDTH];
+    for i in 0..RESCUE_STATE_WIDTH {
+        sbox_state[i] = pow7(curr_state[i]);
+    }
+
+    let forward_state = apply_mds(&sbox_state, &MDS);
+    let backward_state = apply_mds(&curr_state, &MDS_INV);
+
+    let mut idx = 0;
+    for i in 0..RESCUE_STATE_WIDTH {
+        let forward_constraint = next_state[i] - (forward_state[i] + round_const[i]);
+        let backward_constraint = pow7(next_state[i] - round_const[i]) - backward_state[i];
+        let transition = rescue_is_forward * forward_constraint
+            + (E::ONE - rescue_is_forward) * backward_constraint;
+        result[idx] = is_hash_row_active * transition;
+        idx += 1;
+    }
+    idx
+}
+
 /// Evaluate Merkle and finalization hash constraints
 ///
 /// `#[inline(never)]`: this is a large function called once per row from
@@ -95,17 +157,12 @@ pub fn evaluate_merkle_constraints<E: FieldElement<BaseField = Felt>>(
     let merkle_node_index = current[batch_cols::MERKLE_NODE_INDEX];
     let merkle_level_size = current[batch_cols::MERKLE_LEVEL_SIZE];
 
+    // Rescue permutation selectors/constants (`rescue_is_forward`, `round_const`,
+    // `is_hash_row_active`) are used only by the extracted
+    // `evaluate_rescue_permutation_constraints` helper.
     let rescue_active = periodic_values[PERIODIC_RESCUE_ACTIVE_IDX];
     let rescue_init = periodic_values[PERIODIC_RESCUE_INIT_IDX];
-    let rescue_is_forward = periodic_values[PERIODIC_RESCUE_IS_FORWARD_IDX];
 
-    let mut round_const = [E::ZERO; RESCUE_STATE_WIDTH];
-    round_const.copy_from_slice(
-        &periodic_values
-            [PERIODIC_RESCUE_CONST_START_IDX..PERIODIC_RESCUE_CONST_START_IDX + RESCUE_STATE_WIDTH],
-    );
-
-    let is_hash_row_active = is_hash_row * rescue_active;
     let is_output_row = is_hash_row * (E::ONE - rescue_active);
     let is_commit_output = is_commit * (E::ONE - rescue_active);
     let is_final_merkle_row = is_merkle * (E::ONE - next[batch_cols::IS_MERKLE_ROW]);
@@ -315,37 +372,18 @@ pub fn evaluate_merkle_constraints<E: FieldElement<BaseField = Felt>>(
         * (felt_to_ext::<E>(2) * next[batch_cols::MERKLE_LEVEL_SIZE] - merkle_level_size);
     idx += 1;
 
+    // The `curr_state` lanes are reused by the hash-initialization constraints
+    // below; the IR-dense permutation transitions themselves are evaluated in a
+    // separate `#[inline(never)]` helper so they form their own codegen unit.
     let mut curr_state = [E::ZERO; RESCUE_STATE_WIDTH];
-    let mut next_state = [E::ZERO; RESCUE_STATE_WIDTH];
     let rescue_state_start = batch_cols::MERKLE_RESCUE_STATE_START;
     let rescue_state_end = rescue_state_start + RESCUE_STATE_WIDTH;
     curr_state.copy_from_slice(&current[rescue_state_start..rescue_state_end]);
-    next_state.copy_from_slice(&next[rescue_state_start..rescue_state_end]);
 
     // 38-49) Rescue permutation transitions on active hash rows.
-    //
-    // Forward half-round:  next = MDS * sbox(curr) + constants
-    //   Constraint: next - MDS * sbox(curr) - constants = 0  (degree 7 in trace)
-    //
-    // Backward half-round: next = sbox_inv(MDS_inv * curr) + constants
-    //   Rewritten as: sbox(next - constants) = MDS_inv * curr  (degree 7 in trace)
-    //   Using sbox instead of sbox_inv avoids a degree-alpha_inv (~10^19) constraint.
-    let mut sbox_state = [E::ZERO; RESCUE_STATE_WIDTH];
-    for i in 0..RESCUE_STATE_WIDTH {
-        sbox_state[i] = pow7(curr_state[i]);
-    }
-
-    let forward_state = apply_mds(&sbox_state, &MDS);
-    let backward_state = apply_mds(&curr_state, &MDS_INV);
-
-    for i in 0..RESCUE_STATE_WIDTH {
-        let forward_constraint = next_state[i] - (forward_state[i] + round_const[i]);
-        let backward_constraint = pow7(next_state[i] - round_const[i]) - backward_state[i];
-        let transition = rescue_is_forward * forward_constraint
-            + (E::ONE - rescue_is_forward) * backward_constraint;
-        result[idx] = is_hash_row_active * transition;
-        idx += 1;
-    }
+    let used =
+        evaluate_rescue_permutation_constraints::<E>(current, next, periodic_values, &mut result[idx..]);
+    idx += used;
 
     // 50-61) Hash initialization.
     for i in 0..RESCUE_STATE_WIDTH {
