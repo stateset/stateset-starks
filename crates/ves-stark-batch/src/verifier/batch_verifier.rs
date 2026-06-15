@@ -324,7 +324,7 @@ mod tests {
     use crate::air::trace_layout::MAX_BATCH_SIZE;
     use crate::prover::{BatchProver, BatchProverConfig, BatchWitnessBuilder};
     use crate::public_inputs::BatchPolicyKind;
-    use crate::state::BatchMetadata;
+    use crate::state::{BatchMetadata, BatchStateRoot};
     use uuid::Uuid;
     use ves_stark_primitives::hash_to_felts;
     use ves_stark_primitives::public_inputs::{
@@ -560,6 +560,92 @@ mod tests {
             rejected(verifier.verify(&proof_bytes, &public_inputs)),
             "bit-flipped batch proof accepted"
         );
+    }
+
+    /// Build a single-event batch proof chained onto `prev_root` at `sequence`,
+    /// returning the proof bytes, its public inputs, and the resulting new state root.
+    fn build_chained_batch(
+        prev_root: BatchStateRoot,
+        sequence: u64,
+        tenant_id: Uuid,
+        store_id: Uuid,
+    ) -> (Vec<u8>, BatchPublicInputs, BatchStateRoot) {
+        let threshold = 10_000u64;
+        let metadata =
+            BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, sequence, sequence);
+        let witness = BatchWitnessBuilder::new()
+            .metadata(metadata)
+            .policy_hash(sample_policy_hash(threshold))
+            .policy_limit(threshold)
+            .prev_state_root(prev_root)
+            .add_event(
+                5_000,
+                sample_public_inputs(threshold, 5_000, sequence, tenant_id, store_id),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let prover = BatchProver::with_config(
+            BatchProverConfig::default().with_options(ProofOptions::fast()),
+        );
+        let proof = prover.prove(&witness).unwrap();
+        let new_root = witness.compute_new_state_root().unwrap();
+        let public_inputs = BatchPublicInputs::new(
+            witness.prev_state_root.root,
+            new_root.root,
+            witness.batch_id_felts(),
+            witness.tenant_id_felts(),
+            witness.store_id_felts(),
+            witness.metadata.sequence_start,
+            witness.metadata.sequence_end,
+            witness.metadata.timestamp,
+            witness.num_events(),
+            witness.all_compliant(),
+            BatchPolicyKind::AmlThreshold,
+            witness.policy_limit,
+            witness.public_inputs_accumulator().unwrap(),
+        );
+        (proof.proof_bytes, public_inputs, new_root)
+    }
+
+    #[test]
+    fn test_verify_chain_accepts_valid_linked_chain() {
+        // Two batches where batch 2 starts from batch 1's new state root and
+        // continues its sequence — the canonical L2 anchoring scenario.
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+
+        let (p1, pi1, root1) = build_chained_batch(BatchStateRoot::genesis(), 0, tenant_id, store_id);
+        let (p2, pi2, _root2) = build_chained_batch(root1, 1, tenant_id, store_id);
+
+        let verifier = fast_verifier();
+        let results = verifier
+            .verify_chain(&[(p1, pi1), (p2, pi2)])
+            .expect("valid linked chain should verify");
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.valid));
+    }
+
+    #[test]
+    fn test_verify_chain_rejects_broken_state_root_linkage() {
+        // Both batches are individually valid, but batch 2 starts from genesis
+        // instead of batch 1's new state root, so the chain linkage is broken.
+        // Sequence continuity and tenant/store match, so the failure must come
+        // specifically from the state-root linkage check.
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+
+        let (p1, pi1, _root1) =
+            build_chained_batch(BatchStateRoot::genesis(), 0, tenant_id, store_id);
+        let (p2, pi2, _root2) =
+            build_chained_batch(BatchStateRoot::genesis(), 1, tenant_id, store_id);
+
+        let verifier = fast_verifier();
+        let err = verifier
+            .verify_chain(&[(p1, pi1), (p2, pi2)])
+            .expect_err("broken state-root linkage must be rejected");
+        assert!(matches!(err, BatchError::InvalidStateChain { .. }), "got {err:?}");
     }
 
     #[test]
