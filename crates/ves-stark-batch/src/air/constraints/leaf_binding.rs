@@ -17,6 +17,10 @@ use winter_math::FieldElement;
 pub const NUM_LEAF_BINDING_CONSTRAINTS: usize = 151;
 
 /// Evaluate event-to-leaf stream binding constraints.
+///
+/// `#[inline(never)]` keeps this large per-row function out of `evaluate_transition`
+/// so LLVM optimizes it as its own unit — see `evaluate_merkle_constraints` for why.
+#[inline(never)]
 pub fn evaluate_leaf_binding_constraints<E: FieldElement<BaseField = Felt>>(
     current: &[E],
     next: &[E],

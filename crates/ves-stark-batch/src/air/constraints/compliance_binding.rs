@@ -37,6 +37,10 @@ pub const NUM_COMPLIANCE_BINDING_CONSTRAINTS: usize = 149;
 /// - 1 final flag binding constraint
 ///
 /// Returns the number of constraints written.
+///
+/// `#[inline(never)]` keeps this large per-row function out of `evaluate_transition`
+/// so LLVM optimizes it as its own unit — see `evaluate_merkle_constraints` for why.
+#[inline(never)]
 pub fn evaluate_compliance_binding_constraints<E: FieldElement<BaseField = Felt>>(
     current: &[E],
     result: &mut [E],

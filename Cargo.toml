@@ -91,14 +91,16 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 
-# The bench profile deliberately does NOT inherit release's `lto = "fat"` +
-# `codegen-units = 1`; thin LTO with multiple codegen units compiles faster while
-# keeping benchmark numbers representative. This is only partial relief, though:
-# the dominant `cargo bench` compile cost is `opt-level` optimizing the single
-# 636-constraint `evaluate_transition` function in `ves-stark-batch` — a known
-# rustc/LLVM pathology that scales with function *size* and that codegen-units
-# cannot split. The real fix is to break that function into smaller helpers (see
-# the batch AIR). Production builds still use the fully-optimized `release` profile.
+# Benchmark compile time was dominated by optimizing the large batch-AIR
+# constraint functions at opt-level=3. Two changes make `cargo bench` tractable:
+#   1. The constraint evaluators are `#[inline(never)]` (see the batch AIR), so
+#      they stay separate functions instead of being merged into one giant
+#      `evaluate_transition`.
+#   2. This profile disables LTO and uses many codegen units, so those now-separate
+#      functions are optimized in parallel across cores. (Any LTO setting forces
+#      rustc back to a single serial codegen unit, which erases the benefit.)
+# Benchmark numbers therefore lack cross-crate inlining; for production-accurate
+# timing build against the `release` profile, which is unchanged and fully optimized.
 [profile.bench]
-lto = "thin"
+lto = false
 codegen-units = 16

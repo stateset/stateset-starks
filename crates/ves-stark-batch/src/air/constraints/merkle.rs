@@ -63,6 +63,14 @@ fn felt_to_ext<E: FieldElement<BaseField = Felt>>(val: u64) -> E {
 }
 
 /// Evaluate Merkle and finalization hash constraints
+///
+/// `#[inline(never)]`: this is a large function called once per row from
+/// `evaluate_transition`. Without this hint LLVM's `-O3` inliner folds its whole
+/// body into the caller, producing one enormous function whose optimization
+/// scales super-linearly and dominates `cargo bench`/release compile time. Kept
+/// separate, each constraint group is its own (much faster) optimization unit;
+/// the single extra call per row is negligible against the work inside.
+#[inline(never)]
 pub fn evaluate_merkle_constraints<E: FieldElement<BaseField = Felt>>(
     current: &[E],
     next: &[E],

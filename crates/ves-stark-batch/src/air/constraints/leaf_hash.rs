@@ -18,6 +18,10 @@ fn felt_to_ext<E: FieldElement<BaseField = Felt>>(value: u64) -> E {
 }
 
 /// Evaluate leaf-hash phase constraints.
+///
+/// `#[inline(never)]` keeps this large per-row function out of `evaluate_transition`
+/// so LLVM optimizes it as its own unit — see `evaluate_merkle_constraints` for why.
+#[inline(never)]
 pub fn evaluate_leaf_hash_constraints<E: FieldElement<BaseField = Felt>>(
     current: &[E],
     next: &[E],
