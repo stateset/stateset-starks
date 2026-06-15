@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - Batch chain verification (`BatchVerifier::verify_chain`) now rejects chains whose batches do not all share the same tenant and store. Previously batches from unrelated tenants/stores could be stitched into a single "valid" chain via coincidental sequence numbers and state-root linkage.
 
+### Testing
+- Added adversarial coverage for batch-proof verification, asserting the batch STARK binds its public inputs: a valid proof presented with a forged `new_state_root`, `prev_state_root`, `all_compliant` flag, `policy_limit`, `batch_id`, or public-inputs accumulator is rejected, as is a bit-flipped proof. This guards the core soundness property behind on-chain state-root anchoring, which previously had essentially no negative-path tests on the batch path.
+
 ### Added
 - `ves-stark-zig` FFI now exposes batch-proof accessors for raw proof bytes/size and previous/new state roots (`ves_batch_proof_bytes`, `ves_batch_proof_size`, `ves_batch_proof_prev_state_root`, `ves_batch_proof_new_state_root`) and batch-verification accessors for the error message and state roots (`ves_batch_verification_error`, `ves_batch_verification_prev_state_root`, `ves_batch_verification_new_state_root`), with matching C header declarations.
 

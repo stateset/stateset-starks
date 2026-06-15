@@ -330,7 +330,7 @@ mod tests {
     use ves_stark_primitives::public_inputs::{
         compute_policy_hash, witness_commitment_u64_to_hex, CompliancePublicInputs, PolicyParams,
     };
-    use ves_stark_primitives::{felt_from_u64, rescue::rescue_hash};
+    use ves_stark_primitives::{felt_from_u64, rescue::rescue_hash, FELT_ONE};
     use winter_verifier::AcceptableOptions;
 
     #[test]
@@ -490,6 +490,76 @@ mod tests {
                 .unwrap()]));
         let result = verifier.verify(&proof_bytes, &public_inputs).unwrap();
         assert!(result.valid, "{:?}", result.error);
+    }
+
+    /// A verifier that accepts the `fast` proof options used by the test helper.
+    fn fast_verifier() -> BatchVerifier {
+        BatchVerifier::with_options(AcceptableOptions::OptionSet(vec![ProofOptions::fast()
+            .try_to_winterfell()
+            .unwrap()]))
+    }
+
+    /// True if verification did NOT succeed (either an error or `valid == false`).
+    fn rejected(result: Result<BatchVerificationResult, BatchError>) -> bool {
+        result.map(|r| !r.valid).unwrap_or(true)
+    }
+
+    #[test]
+    fn test_batch_verifier_rejects_tampered_public_inputs() {
+        // A valid batch proof binds its public inputs. Lying about any bound field
+        // while presenting the original proof must fail verification — this is the
+        // core soundness property of the batch STARK and the basis for trusting
+        // the state roots that get anchored on-chain.
+        let (proof_bytes, valid_inputs) = sample_fast_batch_proof();
+        let verifier = fast_verifier();
+
+        // Sanity: the untampered pair verifies.
+        assert!(verifier.verify(&proof_bytes, &valid_inputs).unwrap().valid);
+
+        // Forged new state root (the value anchored on-chain).
+        let mut pi = valid_inputs.clone();
+        pi.new_state_root[0] += FELT_ONE;
+        assert!(rejected(verifier.verify(&proof_bytes, &pi)), "tampered new_state_root accepted");
+
+        // Forged previous state root (breaks chain linkage).
+        let mut pi = valid_inputs.clone();
+        pi.prev_state_root[0] += FELT_ONE;
+        assert!(rejected(verifier.verify(&proof_bytes, &pi)), "tampered prev_state_root accepted");
+
+        // Flipped all-compliant flag (claiming a non-compliant batch is clean, or vice versa).
+        let mut pi = valid_inputs.clone();
+        pi.all_compliant = FELT_ONE - pi.all_compliant;
+        assert!(rejected(verifier.verify(&proof_bytes, &pi)), "flipped all_compliant accepted");
+
+        // Forged policy limit.
+        let mut pi = valid_inputs.clone();
+        pi.policy_limit += FELT_ONE;
+        assert!(rejected(verifier.verify(&proof_bytes, &pi)), "tampered policy_limit accepted");
+
+        // Forged batch identity.
+        let mut pi = valid_inputs.clone();
+        pi.batch_id[0] += FELT_ONE;
+        assert!(rejected(verifier.verify(&proof_bytes, &pi)), "tampered batch_id accepted");
+
+        // Forged public-inputs accumulator (the per-event binding digest).
+        let mut pi = valid_inputs.clone();
+        pi.public_inputs_accumulator[0] += FELT_ONE;
+        assert!(rejected(verifier.verify(&proof_bytes, &pi)), "tampered accumulator accepted");
+    }
+
+    #[test]
+    fn test_batch_verifier_rejects_bit_flipped_proof() {
+        let (mut proof_bytes, public_inputs) = sample_fast_batch_proof();
+        let verifier = fast_verifier();
+        assert!(verifier.verify(&proof_bytes, &public_inputs).unwrap().valid);
+
+        // Flip a single bit in the middle of the proof; it must no longer verify.
+        let mid = proof_bytes.len() / 2;
+        proof_bytes[mid] ^= 0x01;
+        assert!(
+            rejected(verifier.verify(&proof_bytes, &public_inputs)),
+            "bit-flipped batch proof accepted"
+        );
     }
 
     #[test]
