@@ -13,7 +13,9 @@ use zeroize::Zeroizing;
 use crate::error::{ClientError, Result};
 
 const ZERO_REGISTRY_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
-const BATCH_PROOF_HASH_DOMAIN: &[u8] = b"STATESET_VES_BATCH_PROOF_HASH_V1";
+// Single source of truth shared with the batch prover/verifier; the submitted
+// proof hash must match what the verifier computes.
+const BATCH_PROOF_HASH_DOMAIN: &[u8] = ves_stark_primitives::BATCH_PROOF_HASH_DOMAIN;
 
 fn compute_set_chain_batch_proof_hash(proof_bytes: &[u8]) -> String {
     let hash = Hash256::sha256_with_domain(BATCH_PROOF_HASH_DOMAIN, proof_bytes);

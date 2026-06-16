@@ -10,7 +10,7 @@ use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
 use winter_prover::{Prover, Trace, TraceTable};
 
 use ves_stark_air::options::ProofOptions;
-use ves_stark_primitives::{Felt, Hash256};
+use ves_stark_primitives::{Felt, Hash256, BATCH_PROOF_HASH_DOMAIN};
 
 use crate::air::batch_air::BatchComplianceAir;
 use crate::air::trace_layout::MAX_BATCH_SIZE;
@@ -126,7 +126,7 @@ pub struct BatchProofMetadata {
 impl BatchProof {
     /// Compute the proof hash using the domain separator
     pub fn compute_hash(proof_bytes: &[u8]) -> Hash256 {
-        Hash256::sha256_with_domain(b"STATESET_VES_BATCH_PROOF_HASH_V1", proof_bytes)
+        Hash256::sha256_with_domain(BATCH_PROOF_HASH_DOMAIN, proof_bytes)
     }
 
     /// Get previous state root as field elements

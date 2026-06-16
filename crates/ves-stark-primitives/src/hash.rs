@@ -66,6 +66,21 @@ impl Hash256 {
     }
 }
 
+/// Domain-separation tag for the compliance (single-event) proof hash.
+///
+/// This is the single source of truth for the tag, shared by the prover, the
+/// verifier, and the language bindings. They must all agree — a drift would make
+/// proof hashes computed on one side fail to match the other. The `_V1` suffix
+/// marks the wire format; changing the tag is a breaking change.
+pub const COMPLIANCE_PROOF_HASH_DOMAIN: &[u8] = b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1";
+
+/// Domain-separation tag for the batch proof hash.
+///
+/// Shared by the batch prover, the batch verifier, and the Set Chain submission
+/// client (which recomputes this hash for on-chain anchoring). All three must
+/// agree; see [`COMPLIANCE_PROOF_HASH_DOMAIN`] for the rationale.
+pub const BATCH_PROOF_HASH_DOMAIN: &[u8] = b"STATESET_VES_BATCH_PROOF_HASH_V1";
+
 impl AsRef<[u8]> for Hash256 {
     fn as_ref(&self) -> &[u8] {
         &self.0

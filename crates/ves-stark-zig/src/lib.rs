@@ -1137,7 +1137,7 @@ pub unsafe extern "C" fn ves_proof_inspect(
 
     // Compute domain-separated proof hash (same as Rust prover)
     let hash = ves_stark_primitives::Hash256::sha256_with_domain(
-        b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1",
+        ves_stark_primitives::COMPLIANCE_PROOF_HASH_DOMAIN,
         proof_bytes,
     );
 

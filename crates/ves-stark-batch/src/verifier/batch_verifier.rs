@@ -8,7 +8,7 @@ use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
 use winter_verifier::{verify, AcceptableOptions};
 
 use ves_stark_air::options::ProofOptions;
-use ves_stark_primitives::{felt_from_u64, Felt, Hash256};
+use ves_stark_primitives::{felt_from_u64, Felt, Hash256, BATCH_PROOF_HASH_DOMAIN};
 
 use crate::air::batch_air::BatchComplianceAir;
 use crate::error::BatchError;
@@ -241,8 +241,7 @@ impl BatchVerifier {
 
     /// Verify proof hash matches
     pub fn verify_proof_hash(proof_bytes: &[u8], expected_hash: &str) -> bool {
-        let computed =
-            Hash256::sha256_with_domain(b"STATESET_VES_BATCH_PROOF_HASH_V1", proof_bytes);
+        let computed = Hash256::sha256_with_domain(BATCH_PROOF_HASH_DOMAIN, proof_bytes);
         computed.to_hex() == expected_hash
     }
 

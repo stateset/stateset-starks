@@ -9,6 +9,7 @@ use ves_stark_air::policy::Policy;
 use ves_stark_primitives::public_inputs::CompliancePublicInputs;
 use ves_stark_primitives::{
     felt_from_u64, CommerceAuthorizationReceipt, Felt, Hash256, PayloadAmountBinding,
+    COMPLIANCE_PROOF_HASH_DOMAIN,
 };
 use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
 use winter_verifier::{verify, AcceptableOptions};
@@ -861,8 +862,7 @@ impl ComplianceVerifier {
 
     /// Verify proof hash matches
     pub fn verify_proof_hash(proof_bytes: &[u8], expected_hash: &str) -> bool {
-        let computed =
-            Hash256::sha256_with_domain(b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1", proof_bytes);
+        let computed = Hash256::sha256_with_domain(COMPLIANCE_PROOF_HASH_DOMAIN, proof_bytes);
         computed.to_hex() == expected_hash
     }
 }

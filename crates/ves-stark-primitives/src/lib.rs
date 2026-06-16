@@ -17,7 +17,9 @@ pub use commerce_intent::{
     DOMAIN_COMMERCE_AUTHORIZATION_RECEIPT_HASH, DOMAIN_COMMERCE_INTENT_HASH,
 };
 pub use field::{felt_from_u64, felt_to_u64, Felt, FELT_ONE, FELT_ZERO};
-pub use hash::{felts_to_hash, hash_to_felts, Hash256};
+pub use hash::{
+    felts_to_hash, hash_to_felts, Hash256, BATCH_PROOF_HASH_DOMAIN, COMPLIANCE_PROOF_HASH_DOMAIN,
+};
 pub use public_inputs::{
     canonical_json, compute_bound_public_inputs_hash, compute_full_public_inputs_hash,
     compute_policy_hash, compute_public_inputs_hash, witness_commitment_hex_to_u64,

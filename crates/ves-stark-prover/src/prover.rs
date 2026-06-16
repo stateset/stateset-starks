@@ -31,7 +31,7 @@ use ves_stark_air::options::ProofOptions;
 use ves_stark_air::policies::aml_threshold::AmlThresholdPolicy;
 use ves_stark_primitives::public_inputs::witness_commitment_u64_to_hex;
 use ves_stark_primitives::rescue::rescue_hash;
-use ves_stark_primitives::{Felt, Hash256};
+use ves_stark_primitives::{Felt, Hash256, COMPLIANCE_PROOF_HASH_DOMAIN};
 use winter_air::TraceInfo;
 use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
 use winter_prover::{Prover, Trace, TraceTable};
@@ -118,7 +118,7 @@ pub struct ProofMetadata {
 impl ComplianceProof {
     /// Compute the proof hash using the domain separator
     pub fn compute_hash(proof_bytes: &[u8]) -> Hash256 {
-        Hash256::sha256_with_domain(b"STATESET_VES_COMPLIANCE_PROOF_HASH_V1", proof_bytes)
+        Hash256::sha256_with_domain(COMPLIANCE_PROOF_HASH_DOMAIN, proof_bytes)
     }
 }
 
