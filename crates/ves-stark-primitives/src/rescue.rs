@@ -1174,6 +1174,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_rescue_constants_json_matches_code() {
+        // The published reproducibility artifact (docs/rescue_constants.json) is used
+        // for external audit, but only the in-code constants are hash-tested. Lock the
+        // JSON to the code so the two cannot drift: every value must match exactly.
+        let json: serde_json::Value =
+            serde_json::from_str(include_str!("../../../docs/rescue_constants.json"))
+                .expect("rescue_constants.json must be valid JSON");
+
+        assert_eq!(json["state_width"].as_u64().unwrap() as usize, STATE_WIDTH);
+        assert_eq!(json["num_rounds"].as_u64().unwrap() as usize, NUM_ROUNDS);
+        // The artifact embeds the same digest the integrity test pins.
+        assert_eq!(
+            json["sha256_le_u64_row_major"].as_str().unwrap(),
+            "2936f26121c35c83d3a1922855d289ac0e6b6be4e31874cc13233239bc3adb5b",
+        );
+
+        let parse_hex = |v: &serde_json::Value| -> u64 {
+            let s = v.as_str().expect("constant must be a hex string");
+            let s = s.strip_prefix("0x").unwrap_or(s);
+            u64::from_str_radix(s, 16).expect("constant must be valid hex")
+        };
+
+        let check_matrix = |key: &str, expected: &[[u64; STATE_WIDTH]]| {
+            let rows = json[key]
+                .as_array()
+                .unwrap_or_else(|| panic!("{key} must be an array"));
+            assert_eq!(rows.len(), expected.len(), "{key} row count");
+            for (i, row) in rows.iter().enumerate() {
+                let cols = row.as_array().expect("matrix row must be an array");
+                assert_eq!(cols.len(), STATE_WIDTH, "{key} row {i} width");
+                for (j, cell) in cols.iter().enumerate() {
+                    assert_eq!(parse_hex(cell), expected[i][j], "{key}[{i}][{j}] mismatch");
+                }
+            }
+        };
+
+        check_matrix("mds", &MDS);
+        check_matrix("mds_inv", &MDS_INV);
+        check_matrix("round_constants", &ROUND_CONSTANTS);
+    }
+
     /// Verify MDS × MDS_INV = Identity in the Goldilocks field.
     ///
     /// This catches copy-paste errors or incorrect inverse computation.
