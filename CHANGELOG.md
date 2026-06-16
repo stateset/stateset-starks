@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - Batch chain verification (`BatchVerifier::verify_chain`) now rejects chains whose batches do not all share the same tenant and store. Previously batches from unrelated tenants/stores could be stitched into a single "valid" chain via coincidental sequence numbers and state-root linkage.
+- `BatchProofSubmission::validate()` now rejects proofs larger than `MAX_SUBMISSION_PROOF_SIZE` (10 MiB) before they are submitted to Set Chain. Such a proof exceeds the batch verifier's `MAX_BATCH_PROOF_SIZE` and could never verify, so it is now caught client-side instead of wasting an on-chain submission. A compile-time assertion (under the `batch` feature) keeps the submission limit locked to the verifier's limit.
 
 ### Testing
 - Added adversarial coverage for batch-proof verification, asserting the batch STARK binds its public inputs: a valid proof presented with a forged `new_state_root`, `prev_state_root`, `all_compliant` flag, `policy_limit`, `batch_id`, or public-inputs accumulator is rejected, as is a bit-flipped proof. This guards the core soundness property behind on-chain state-root anchoring, which previously had essentially no negative-path tests on the batch path.

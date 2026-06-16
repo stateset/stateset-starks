@@ -139,6 +139,17 @@ impl SetChainConfig {
     }
 }
 
+/// Maximum decoded proof size accepted for submission (10 MiB).
+///
+/// Mirrors the batch verifier's `MAX_BATCH_PROOF_SIZE`: a proof larger than this
+/// cannot be verified and would be rejected downstream, so it is rejected
+/// client-side before paying to submit it on-chain. The compile-time assertion
+/// below keeps the two limits in lockstep whenever the `batch` feature is built.
+pub const MAX_SUBMISSION_PROOF_SIZE: usize = 10 * 1024 * 1024;
+
+#[cfg(feature = "batch")]
+const _: () = assert!(MAX_SUBMISSION_PROOF_SIZE == ves_stark_batch::verifier::MAX_BATCH_PROOF_SIZE);
+
 /// STARK batch proof for Set Chain submission
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -212,6 +223,12 @@ impl BatchProofSubmission {
             return Err(ClientError::InvalidPublicInputs(
                 "proof_b64 must decode to a non-empty proof".to_string(),
             ));
+        }
+        if proof_size > MAX_SUBMISSION_PROOF_SIZE as u64 {
+            return Err(ClientError::InvalidPublicInputs(format!(
+                "proof is {} bytes, exceeding the maximum submittable size of {} bytes",
+                proof_size, MAX_SUBMISSION_PROOF_SIZE
+            )));
         }
 
         let expected_event_count = self
@@ -858,6 +875,59 @@ mod tests {
         assert!(submission.validate().is_err());
         assert_eq!(submission.proof_size(), 0);
         assert!(submission.try_proof_size().is_err());
+    }
+
+    #[test]
+    fn test_batch_proof_submission_validate_rejects_oversized_proof() {
+        // A proof larger than MAX_SUBMISSION_PROOF_SIZE cannot be verified
+        // downstream, so it must be rejected client-side before submission.
+        let oversized = vec![0u8; MAX_SUBMISSION_PROOF_SIZE + 1];
+        let submission = SetChainClient::create_submission(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            [0u8; 32],
+            [1u8; 32],
+            [2u8; 32],
+            1,
+            10,
+            10,
+            &oversized,
+            [3u8; 32],
+            10000,
+            true,
+        );
+
+        assert_eq!(submission.proof_size(), (MAX_SUBMISSION_PROOF_SIZE + 1) as u64);
+        let err = submission.validate().expect_err("oversized proof must be rejected");
+        assert!(
+            matches!(err, ClientError::InvalidPublicInputs(msg) if msg.contains("maximum submittable size")),
+            "expected a size-limit error",
+        );
+    }
+
+    #[test]
+    fn test_batch_proof_submission_validate_accepts_proof_at_size_limit() {
+        // A proof at exactly the limit is not rejected for size (the size check
+        // is an upper bound, mirroring the verifier's boundary behaviour).
+        let at_limit = vec![0u8; MAX_SUBMISSION_PROOF_SIZE];
+        let submission = SetChainClient::create_submission(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            [0u8; 32],
+            [1u8; 32],
+            [2u8; 32],
+            1,
+            10,
+            10,
+            &at_limit,
+            [3u8; 32],
+            10000,
+            true,
+        );
+
+        assert!(submission.validate().is_ok());
     }
 
     #[test]
