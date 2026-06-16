@@ -182,7 +182,17 @@ cd crates/ves-stark-python && maturin develop --release                   # Pyth
 ## Testing
 
 ```bash
-cargo test --release -p ves-stark-primitives -p ves-stark-air -p ves-stark-prover -p ves-stark-verifier --lib
+cargo test --workspace --all-features          # full suite (matches CI)
+```
+
+### Fuzzing
+
+Fuzz harnesses (libFuzzer, run with [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz)) live in
+`fuzz/` and cover the untrusted-input surfaces, including the Rescue hash, public-input parsing,
+proof deserialization, and batch-proof JSON deserialization + verification:
+
+```bash
+cargo +nightly fuzz run fuzz_batch_proof       # e.g. the batch verifier path
 ```
 
 ## Benchmarking
