@@ -142,6 +142,38 @@ When applications maintain ordered streams of public-input hashes locally, they 
 bound public-input hash that includes `witnessCommitment` so the stream commits to the proved
 witness as well as the event metadata.
 
+### 6. Batch Public-Input Substitution
+
+Attack: present a valid batch proof while claiming a different `new_state_root` (the value anchored
+on-chain), `prev_state_root`, `all_compliant` flag, `policy_limit`, `batch_id`, or public-inputs
+accumulator.
+
+Mitigation: the batch AIR binds every one of these into the proof instance via the
+`BatchPublicInputs` passed to verification; the STARK fails if any bound field is altered. This
+binding is regression-tested by adversarial tests that tamper each field and confirm rejection.
+
+### 7. Batch Chain Stitching
+
+Attack: assemble a "valid" state chain from batches that do not actually follow one another — for
+example, batches belonging to different tenants/stores, with sequence gaps, or whose state roots do
+not link.
+
+Mitigation: `BatchVerifier::verify_chain` verifies each batch individually and then enforces, between
+consecutive batches: (a) the same tenant and store, (b) sequence continuity (`prev.sequence_end + 1
+== curr.sequence_start`, with overflow checks), and (c) state-root linkage (`curr.prev_state_root ==
+prev.new_state_root`). A mismatch on any of these is rejected (`InvalidStateChain` /
+`InvalidPublicInputs`), preventing unrelated batches from being stitched together by coincidental
+sequence numbers.
+
+### 8. Oversized-Proof Resource Exhaustion
+
+Attack: submit an enormous proof blob to exhaust verifier or submission resources.
+
+Mitigation: batch verification rejects proofs larger than `MAX_BATCH_PROOF_SIZE` (10 MiB) before
+attempting deserialization, and `BatchProofSubmission::validate()` rejects oversized proofs
+client-side before they are sent for on-chain anchoring (the two limits are held equal by a
+compile-time assertion).
+
 ## Security Parameters
 
 Proof soundness and performance are determined by `ves_stark_air::options::ProofOptions`. As of

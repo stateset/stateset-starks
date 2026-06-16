@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a completeness test for the canonical `PayloadAmountBinding` hash, asserting it changes when any committed field is perturbed (event_id, tenant_id, store_id, sequence_number, payload_kind, both payload hashes, event_signing_hash, amount). This guards against a regression silently dropping a field from the commitment, which would let a proof bound to one event be replayed for another.
 - Added a `fuzz_batch_proof` libFuzzer target covering the batch untrusted-input surface (`SerializableBatchProof::from_json` and `verify_batch_proof`) — the most complex parser in the system and the path behind the `ves_batch_verify_json` FFI entry point. Both must return `Ok`/`Err` rather than panic on arbitrary input.
 
+### Documentation
+- Extended `docs/THREAT_MODEL.md` with batch-proof attack vectors and mitigations (batch public-input substitution, chain stitching across tenants/stores or broken state-root linkage, and oversized-proof resource exhaustion), so the canonical threat model reflects the batch verifier's actual security properties.
+
 ### Added
 - `ves-stark-zig` FFI now exposes batch-proof accessors for raw proof bytes/size and previous/new state roots (`ves_batch_proof_bytes`, `ves_batch_proof_size`, `ves_batch_proof_prev_state_root`, `ves_batch_proof_new_state_root`) and batch-verification accessors for the error message and state roots (`ves_batch_verification_error`, `ves_batch_verification_prev_state_root`, `ves_batch_verification_new_state_root`), with matching C header declarations.
 
