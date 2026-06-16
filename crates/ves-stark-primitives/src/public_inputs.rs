@@ -1347,6 +1347,80 @@ mod tests {
     }
 
     #[test]
+    fn test_payload_amount_binding_hash_commits_to_every_field() {
+        // The canonical binding hash must depend on every committed field. If a
+        // regression dropped a field from the hashed payload, two semantically
+        // different events would share a binding hash, and a proof bound to one
+        // could be replayed for the other. Perturb each field independently and
+        // assert the hash changes.
+        let base = PayloadAmountBinding {
+            event_id: Uuid::from_u128(1),
+            tenant_id: Uuid::from_u128(2),
+            store_id: Uuid::from_u128(3),
+            sequence_number: 7,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "1".repeat(64),
+            event_signing_hash: "2".repeat(64),
+            amount: 5_000,
+            binding_hash: String::new(),
+        };
+        let base_hash = base.compute_hash_hex().unwrap();
+
+        let hash_with = |mutate: &dyn Fn(&mut PayloadAmountBinding)| {
+            let mut b = base.clone();
+            mutate(&mut b);
+            b.compute_hash_hex().unwrap()
+        };
+
+        assert_ne!(
+            hash_with(&|b| b.event_id = Uuid::from_u128(99)),
+            base_hash,
+            "binding hash does not commit to event_id"
+        );
+        assert_ne!(
+            hash_with(&|b| b.tenant_id = Uuid::from_u128(99)),
+            base_hash,
+            "binding hash does not commit to tenant_id"
+        );
+        assert_ne!(
+            hash_with(&|b| b.store_id = Uuid::from_u128(99)),
+            base_hash,
+            "binding hash does not commit to store_id"
+        );
+        assert_ne!(
+            hash_with(&|b| b.sequence_number = 8),
+            base_hash,
+            "binding hash does not commit to sequence_number"
+        );
+        assert_ne!(
+            hash_with(&|b| b.payload_kind = 2),
+            base_hash,
+            "binding hash does not commit to payload_kind"
+        );
+        assert_ne!(
+            hash_with(&|b| b.payload_plain_hash = "a".repeat(64)),
+            base_hash,
+            "binding hash does not commit to payload_plain_hash"
+        );
+        assert_ne!(
+            hash_with(&|b| b.payload_cipher_hash = "a".repeat(64)),
+            base_hash,
+            "binding hash does not commit to payload_cipher_hash"
+        );
+        assert_ne!(
+            hash_with(&|b| b.event_signing_hash = "a".repeat(64)),
+            base_hash,
+            "binding hash does not commit to event_signing_hash"
+        );
+        assert_ne!(
+            hash_with(&|b| b.amount = 5_001),
+            base_hash,
+            "binding hash does not commit to amount"
+        );
+    }
+
+    #[test]
     fn test_payload_amount_binding_from_public_inputs_matches_method() {
         let inputs = CompliancePublicInputs {
             event_id: Uuid::new_v4(),
