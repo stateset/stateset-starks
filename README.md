@@ -9,14 +9,18 @@ STARK proving system for VES (Verifiable Event Sync) compliance proofs.
 
 `stateset-stark` provides witness-level cryptographic proofs that a private amount satisfies compliance policies without revealing the amount itself. Built on [Winterfell](https://github.com/facebook/winterfell), it uses STARKs (Scalable Transparent ARguments of Knowledge) for transparent, post-quantum secure proofs.
 
-### Performance (v0.3.3)
+### Performance
+
+Indicative single-event figures on reference hardware (`fast` profile). These are
+order-of-magnitude guidance, not a benchmarked guarantee — reproduce with
+`cargo bench --bench stark_bench`:
 
 | Metric | Value |
 |--------|-------|
-| **Prove time** | ~17ms |
-| **Proof size** | ~42 KB |
-| **Verify time** | <5ms |
-| **Security** | 82-bit (configurable up to 128-bit) |
+| **Prove time** | ~tens of ms |
+| **Proof size** | ~tens of KB |
+| **Verify time** | single-digit ms |
+| **Security** | 82-bit `fast` / 100+-bit `secure` (configurable) |
 | **Field** | Goldilocks (p = 2^64 - 2^32 + 1) |
 | **Hash** | Rescue-Prime (7 rounds, alpha=7) |
 
@@ -205,6 +209,7 @@ cargo bench --bench stark_bench
 
 - Soundness notes: `docs/SOUNDNESS.md`
 - Threat model: `docs/THREAT_MODEL.md`
+- Verification matrix (property → test mapping): `docs/VERIFICATION.md`
 - Rescue constants (frozen + hashed): `docs/RESCUE_CONSTANTS.md`
 
 ## License
