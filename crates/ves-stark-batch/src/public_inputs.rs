@@ -388,6 +388,34 @@ mod tests {
     use ves_stark_primitives::public_inputs::witness_commitment_u64_to_hex;
 
     #[test]
+    fn test_batch_policy_kind_ids_match_canonical_constants() {
+        // BatchPolicyKind hardcodes policy-id strings independently of the canonical
+        // `ves_stark_air::policies::policy_ids`. The two must agree: a batch event's
+        // policy hash is derived from this string, so a drift would make batch policy
+        // hashes diverge from the core. Lock them together.
+        use ves_stark_air::policies::policy_ids;
+
+        assert_eq!(
+            BatchPolicyKind::AmlThreshold.policy_id(),
+            policy_ids::AML_THRESHOLD
+        );
+        assert_eq!(
+            BatchPolicyKind::OrderTotalCap.policy_id(),
+            policy_ids::ORDER_TOTAL_CAP
+        );
+
+        // Round-trip through the canonical identifiers.
+        assert_eq!(
+            BatchPolicyKind::from_policy_id(policy_ids::AML_THRESHOLD),
+            Some(BatchPolicyKind::AmlThreshold)
+        );
+        assert_eq!(
+            BatchPolicyKind::from_policy_id(policy_ids::ORDER_TOTAL_CAP),
+            Some(BatchPolicyKind::OrderTotalCap)
+        );
+    }
+
+    #[test]
     fn test_default_public_inputs() {
         let inputs = BatchPublicInputs::default();
         assert_eq!(inputs.prev_state_root, [FELT_ZERO; 4]);
