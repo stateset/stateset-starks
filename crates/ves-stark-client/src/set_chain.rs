@@ -62,7 +62,7 @@ fn normalize_and_validate_set_chain_batch_proof_hash(expected_hash: &str) -> Res
 /// Set Chain configuration
 #[derive(Debug, Clone)]
 pub struct SetChainConfig {
-    /// RPC URL for Set Chain (e.g., "https://rpc.set.stateset.network")
+    /// RPC URL for Set Chain (e.g., `https://rpc.set.stateset.network`)
     pub rpc_url: String,
     /// Chain ID for Set Chain (84532001)
     pub chain_id: u64,
@@ -341,7 +341,7 @@ impl SetChainClient {
     ///
     /// # Arguments
     ///
-    /// * `base_url` - The base URL of the sequencer (e.g., "http://localhost:8080")
+    /// * `base_url` - The base URL of the sequencer (e.g., `http://localhost:8080`)
     /// * `api_key` - The API key for authentication
     /// * `config` - Set Chain configuration
     pub fn new(base_url: &str, api_key: &str, config: SetChainConfig) -> Result<Self> {

@@ -13,6 +13,10 @@ dev = ["ves-stark-client/dev"]
 [[bin]]
 name = "ves-stark"
 path = "src/main.rs"
+# Disable rustdoc for the binary: its output crate name ("ves_stark") otherwise
+# collides with the root `ves-stark` library under `cargo doc --workspace`, and a
+# binary's rustdoc output is not consumable anyway.
+doc = false
 
 [dependencies]
 ves-stark-primitives = { version = "0.3.4", path = "../ves-stark-primitives" }

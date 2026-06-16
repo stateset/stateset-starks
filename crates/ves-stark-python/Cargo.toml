@@ -10,6 +10,11 @@ description = "Python bindings for VES STARK proof system"
 [lib]
 name = "ves_stark"
 crate-type = ["cdylib"]
+# The Python module is named `ves_stark`, which collides with the root
+# `ves-stark` library's rustdoc output under `cargo doc --workspace`. This is a
+# cdylib extension module whose Rust-level rustdoc is not the consumable artifact
+# (Python users read the Python API), so disable doc generation for it.
+doc = false
 
 [dependencies]
 # PyO3 for Python bindings

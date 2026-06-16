@@ -27,10 +27,10 @@ use ves_stark_primitives::Felt;
 /// - Columns 40-71: Amount limb 0 bit decomposition (32 bits)
 /// - Columns 72-103: Amount limb 1 bit decomposition (32 bits)
 /// - Column 104: Legacy commitment flag (unused by current AIR)
-/// - Columns 105-112: diff[i] (subtraction witness; limbs 2-7 are asserted to 0)
-/// - Columns 113-120: borrow[i] (subtraction witness; limbs 2-7 are unused)
-/// - Columns 121-128: Legacy is_less[i] (unused by current AIR)
-/// - Columns 129-136: Legacy is_equal[i] (unused by current AIR)
+/// - Columns 105-112: `diff[i]` (subtraction witness; limbs 2-7 are asserted to 0)
+/// - Columns 113-120: `borrow[i]` (subtraction witness; limbs 2-7 are unused)
+/// - Columns 121-128: Legacy `is_less[i]` (unused by current AIR)
+/// - Columns 129-136: Legacy `is_equal[i]` (unused by current AIR)
 ///
 /// Note: Limbs 2-7 are boundary-asserted to zero (for u64 amounts), so no binary
 /// decomposition is needed. The value 0 is trivially a valid u32.

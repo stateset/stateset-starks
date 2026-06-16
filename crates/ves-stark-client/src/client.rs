@@ -37,7 +37,7 @@ impl SequencerClient {
     ///
     /// # Arguments
     ///
-    /// * `base_url` - The base URL of the sequencer (e.g., "http://localhost:8080")
+    /// * `base_url` - The base URL of the sequencer (e.g., `http://localhost:8080`)
     pub fn from_env(base_url: &str) -> Result<Self> {
         let api_key = std::env::var("STATESET_API_KEY").map_err(|_| {
             ClientError::InvalidHeader("STATESET_API_KEY environment variable not set".to_string())
@@ -49,7 +49,7 @@ impl SequencerClient {
     ///
     /// # Arguments
     ///
-    /// * `base_url` - The base URL of the sequencer (e.g., "http://localhost:8080")
+    /// * `base_url` - The base URL of the sequencer (e.g., `http://localhost:8080`)
     /// * `api_key` - The API key for authentication
     pub fn new(base_url: &str, api_key: &str) -> Result<Self> {
         let base_url = base_url.trim();

@@ -167,7 +167,7 @@ enum Commands {
     ///
     /// Authentication: set the STATESET_API_KEY environment variable.
     ProveSubmit {
-        /// Sequencer base URL (e.g., http://localhost:8080)
+        /// Sequencer base URL (e.g., `http://localhost:8080`)
         #[arg(long, default_value = "http://localhost:8080")]
         sequencer_url: String,
 

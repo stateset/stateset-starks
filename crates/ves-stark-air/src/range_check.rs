@@ -63,7 +63,7 @@ pub fn decompose_u32(value: u32) -> [Felt; U32_BITS] {
 
 /// Recompose a u32 from its binary decomposition
 ///
-/// Computes sum(bits[i] * 2^i) for i in 0..32
+/// Computes `sum(bits[i] * 2^i)` for i in 0..32
 pub fn recompose_u32(bits: &[Felt; U32_BITS]) -> Felt {
     let mut result = FELT_ZERO;
     let mut power = FELT_ONE;
