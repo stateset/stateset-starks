@@ -764,6 +764,52 @@ mod tests {
     }
 
     #[test]
+    fn test_authorization_receipt_hash_commits_to_every_field() {
+        // The receipt hash binds the agent-authorization execution. It must commit to
+        // every payload field; a regression dropping one would let an attacker swap
+        // that field (e.g. amount, merchant, agent) under a fixed receipt hash and a
+        // proof bound to that hash. Perturb each hashed field and assert it changes.
+        let base = sample_intent()
+            .authorize_execution(&sample_execution())
+            .unwrap();
+        let base_hash = base.compute_hash_hex().unwrap();
+
+        let check = |field: &str, mutate: &dyn Fn(&mut CommerceAuthorizationReceipt)| {
+            let mut r = base.clone();
+            mutate(&mut r);
+            assert_ne!(
+                r.compute_hash_hex()
+                    .expect("perturbed receipt must still hash"),
+                base_hash,
+                "receipt hash does not commit to {field}"
+            );
+        };
+
+        check("intent_id", &|r| r.intent_id = Uuid::from_u128(0xA1));
+        check("tenant_id", &|r| r.tenant_id = Uuid::from_u128(0xA2));
+        check("store_id", &|r| r.store_id = Uuid::from_u128(0xA3));
+        check("agent_id", &|r| r.agent_id = Uuid::from_u128(0xA4));
+        check("delegation_id", &|r| {
+            r.delegation_id = Uuid::from_u128(0xA5)
+        });
+        check("nonce", &|r| r.nonce = format!("0x{}", "a".repeat(64)));
+        check("expires_at", &|r| r.expires_at += 1);
+        check("event_id", &|r| r.event_id = Uuid::from_u128(0xA6));
+        check("sequence_number", &|r| r.sequence_number += 1);
+        check("currency", &|r| r.currency = "EUR".to_string());
+        check("amount", &|r| r.amount += 1);
+        check("merchant", &|r| r.merchant = "Other Market".to_string());
+        check("payee", &|r| r.payee = "other@stateset.app".to_string());
+        check("sku_ids", &|r| r.sku_ids = vec!["sku-a".to_string()]);
+        check("category_ids", &|r| {
+            r.category_ids = vec!["grocery".to_string()]
+        });
+        check("shipping_country", &|r| r.shipping_country = None);
+        check("executed_at", &|r| r.executed_at += 1);
+        check("intent_hash", &|r| r.intent_hash = "f".repeat(64));
+    }
+
+    #[test]
     fn test_authorize_execution_rejects_expired_intent() {
         let intent = sample_intent();
         let mut execution = sample_execution();
