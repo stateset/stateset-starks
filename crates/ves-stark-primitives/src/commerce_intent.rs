@@ -730,6 +730,53 @@ mod tests {
     }
 
     #[test]
+    fn test_commerce_intent_hash_commits_to_every_field() {
+        // The intent hash binds the authorization constraints themselves (spend
+        // cap, merchant/payee, allowed scopes, expiry, nonce). A regression dropping
+        // a field would let those constraints be forged under a fixed intent hash.
+        // The sample populates every optional field, so perturbing each must change
+        // the hash. (`receipt_hash` carries this `intent_hash`, extending the guard.)
+        let base = sample_intent();
+        let base_hash = base.compute_hash_hex().unwrap();
+
+        let check = |field: &str, mutate: &dyn Fn(&mut CommerceIntent)| {
+            let mut i = base.clone();
+            mutate(&mut i);
+            assert_ne!(
+                i.compute_hash_hex()
+                    .expect("perturbed intent must still hash"),
+                base_hash,
+                "intent hash does not commit to {field}"
+            );
+        };
+
+        check("intent_id", &|i| i.intent_id = Uuid::from_u128(0xB1));
+        check("tenant_id", &|i| i.tenant_id = Uuid::from_u128(0xB2));
+        check("store_id", &|i| i.store_id = Uuid::from_u128(0xB3));
+        check("agent_id", &|i| i.agent_id = Uuid::from_u128(0xB4));
+        check("delegation_id", &|i| {
+            i.delegation_id = Uuid::from_u128(0xB5)
+        });
+        check("currency", &|i| i.currency = "EUR".to_string());
+        check("max_total", &|i| i.max_total += 1);
+        check("merchant", &|i| {
+            i.merchant = Some("Other Market".to_string())
+        });
+        check("payee", &|i| {
+            i.payee = Some("other@stateset.app".to_string())
+        });
+        check("allowed_skus", &|i| {
+            i.allowed_skus = vec!["sku-a".to_string()]
+        });
+        check("allowed_categories", &|i| {
+            i.allowed_categories = vec!["grocery".to_string()]
+        });
+        check("shipping_country", &|i| i.shipping_country = None);
+        check("expires_at", &|i| i.expires_at += 1);
+        check("nonce", &|i| i.nonce = format!("0x{}", "a".repeat(64)));
+    }
+
+    #[test]
     fn test_authorize_execution_generates_deterministic_receipt() {
         let intent = sample_intent();
         let execution = sample_execution();
