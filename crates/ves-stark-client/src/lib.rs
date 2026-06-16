@@ -66,7 +66,7 @@ pub use client::SequencerClient;
 pub use error::ClientError;
 pub use set_chain::{
     BatchProofResponse, BatchProofStatus, BatchProofSubmission, BatchProofVerification,
-    SetChainClient, SetChainConfig,
+    SetChainClient, SetChainConfig, MAX_SUBMISSION_PROOF_SIZE,
 };
 pub use types::*;
 
