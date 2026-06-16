@@ -381,8 +381,12 @@ pub fn evaluate_merkle_constraints<E: FieldElement<BaseField = Felt>>(
     curr_state.copy_from_slice(&current[rescue_state_start..rescue_state_end]);
 
     // 38-49) Rescue permutation transitions on active hash rows.
-    let used =
-        evaluate_rescue_permutation_constraints::<E>(current, next, periodic_values, &mut result[idx..]);
+    let used = evaluate_rescue_permutation_constraints::<E>(
+        current,
+        next,
+        periodic_values,
+        &mut result[idx..],
+    );
     idx += used;
 
     // 50-61) Hash initialization.

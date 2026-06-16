@@ -100,9 +100,8 @@ fn build_batch_proof(num_events: usize) -> (Vec<u8>, BatchPublicInputs) {
 
     let witness = builder.build().unwrap();
 
-    let prover = BatchProver::with_config(
-        BatchProverConfig::default().with_options(ProofOptions::fast()),
-    );
+    let prover =
+        BatchProver::with_config(BatchProverConfig::default().with_options(ProofOptions::fast()));
     let proof = prover.prove(&witness).unwrap();
     let public_inputs = BatchPublicInputs::new(
         witness.prev_state_root.root,

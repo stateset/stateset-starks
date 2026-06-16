@@ -20,7 +20,9 @@
 
 use crate::witness::ComplianceWitness;
 use crate::Policy;
-use ves_stark_primitives::public_inputs::{compute_policy_hash, CompliancePublicInputs, PolicyParams};
+use ves_stark_primitives::public_inputs::{
+    compute_policy_hash, CompliancePublicInputs, PolicyParams,
+};
 
 /// Construct a budget witness for the `agent.budget.v1` policy.
 ///
@@ -152,7 +154,10 @@ mod tests {
     fn test_budget_witness_exceeds_limit() {
         let inputs = sample_budget_inputs(50_000);
         let result = build_budget_witness(20_001, 30_000, 50_000, inputs);
-        assert!(matches!(result, Err(BudgetWitnessError::ExceedsBudget { .. })));
+        assert!(matches!(
+            result,
+            Err(BudgetWitnessError::ExceedsBudget { .. })
+        ));
     }
 
     #[test]
@@ -169,13 +174,8 @@ mod tests {
         let prev_total = 12_200u64;
 
         let inputs = sample_budget_inputs(budget_limit);
-        let (witness, policy) = build_budget_witness(
-            this_amount,
-            prev_total,
-            budget_limit,
-            inputs,
-        )
-        .unwrap();
+        let (witness, policy) =
+            build_budget_witness(this_amount, prev_total, budget_limit, inputs).unwrap();
 
         let prover = ComplianceProver::with_policy(policy);
         let proof = prover.prove(&witness).expect("budget proof should succeed");

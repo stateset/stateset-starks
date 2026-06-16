@@ -1189,7 +1189,8 @@ mod tests {
                     });
                 let expected = if i == j { Felt::ONE } else { Felt::ZERO };
                 assert_eq!(
-                    acc, expected,
+                    acc,
+                    expected,
                     "MDS × MDS_INV != I at ({i}, {j}): got {}, expected {}",
                     acc.as_int(),
                     expected.as_int()
@@ -1211,7 +1212,8 @@ mod tests {
                     });
                 let expected = if i == j { Felt::ONE } else { Felt::ZERO };
                 assert_eq!(
-                    acc, expected,
+                    acc,
+                    expected,
                     "MDS_INV × MDS != I at ({i}, {j}): got {}, expected {}",
                     acc.as_int(),
                     expected.as_int()

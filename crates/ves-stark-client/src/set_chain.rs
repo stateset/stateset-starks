@@ -898,8 +898,13 @@ mod tests {
             true,
         );
 
-        assert_eq!(submission.proof_size(), (MAX_SUBMISSION_PROOF_SIZE + 1) as u64);
-        let err = submission.validate().expect_err("oversized proof must be rejected");
+        assert_eq!(
+            submission.proof_size(),
+            (MAX_SUBMISSION_PROOF_SIZE + 1) as u64
+        );
+        let err = submission
+            .validate()
+            .expect_err("oversized proof must be rejected");
         assert!(
             matches!(err, ClientError::InvalidPublicInputs(msg) if msg.contains("maximum submittable size")),
             "expected a size-limit error",

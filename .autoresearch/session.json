@@ -1,0 +1,11 @@
+{
+  "repo": "/home/dom/icommerce-app/stateset-stark",
+  "state_dir": ".autoresearch",
+  "metric_name": "stark_score",
+  "goal": "max",
+  "eval_cmd": "/home/dom/karpathy/autoresearch/targets/stateset-stark-eval.sh /home/dom/icommerce-app/stateset-stark",
+  "metric_regex": "^stark_score:\\s*([0-9.]+)$",
+  "timeout_seconds": 900,
+  "branch": "autoresearch/mar25-stark-optimize-v5",
+  "base_ref": "master"
+}

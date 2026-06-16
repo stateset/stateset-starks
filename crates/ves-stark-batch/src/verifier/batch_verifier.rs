@@ -526,32 +526,50 @@ mod tests {
         // Forged new state root (the value anchored on-chain).
         let mut pi = valid_inputs.clone();
         pi.new_state_root[0] += FELT_ONE;
-        assert!(rejected(verifier.verify(&proof_bytes, &pi)), "tampered new_state_root accepted");
+        assert!(
+            rejected(verifier.verify(&proof_bytes, &pi)),
+            "tampered new_state_root accepted"
+        );
 
         // Forged previous state root (breaks chain linkage).
         let mut pi = valid_inputs.clone();
         pi.prev_state_root[0] += FELT_ONE;
-        assert!(rejected(verifier.verify(&proof_bytes, &pi)), "tampered prev_state_root accepted");
+        assert!(
+            rejected(verifier.verify(&proof_bytes, &pi)),
+            "tampered prev_state_root accepted"
+        );
 
         // Flipped all-compliant flag (claiming a non-compliant batch is clean, or vice versa).
         let mut pi = valid_inputs.clone();
         pi.all_compliant = FELT_ONE - pi.all_compliant;
-        assert!(rejected(verifier.verify(&proof_bytes, &pi)), "flipped all_compliant accepted");
+        assert!(
+            rejected(verifier.verify(&proof_bytes, &pi)),
+            "flipped all_compliant accepted"
+        );
 
         // Forged policy limit.
         let mut pi = valid_inputs.clone();
         pi.policy_limit += FELT_ONE;
-        assert!(rejected(verifier.verify(&proof_bytes, &pi)), "tampered policy_limit accepted");
+        assert!(
+            rejected(verifier.verify(&proof_bytes, &pi)),
+            "tampered policy_limit accepted"
+        );
 
         // Forged batch identity.
         let mut pi = valid_inputs.clone();
         pi.batch_id[0] += FELT_ONE;
-        assert!(rejected(verifier.verify(&proof_bytes, &pi)), "tampered batch_id accepted");
+        assert!(
+            rejected(verifier.verify(&proof_bytes, &pi)),
+            "tampered batch_id accepted"
+        );
 
         // Forged public-inputs accumulator (the per-event binding digest).
         let mut pi = valid_inputs.clone();
         pi.public_inputs_accumulator[0] += FELT_ONE;
-        assert!(rejected(verifier.verify(&proof_bytes, &pi)), "tampered accumulator accepted");
+        assert!(
+            rejected(verifier.verify(&proof_bytes, &pi)),
+            "tampered accumulator accepted"
+        );
     }
 
     #[test]
@@ -623,7 +641,8 @@ mod tests {
         let tenant_id = Uuid::new_v4();
         let store_id = Uuid::new_v4();
 
-        let (p1, pi1, root1) = build_chained_batch(BatchStateRoot::genesis(), 0, tenant_id, store_id);
+        let (p1, pi1, root1) =
+            build_chained_batch(BatchStateRoot::genesis(), 0, tenant_id, store_id);
         let (p2, pi2, _root2) = build_chained_batch(root1, 1, tenant_id, store_id);
 
         let verifier = fast_verifier();
@@ -652,7 +671,10 @@ mod tests {
         let err = verifier
             .verify_chain(&[(p1, pi1), (p2, pi2)])
             .expect_err("broken state-root linkage must be rejected");
-        assert!(matches!(err, BatchError::InvalidStateChain { .. }), "got {err:?}");
+        assert!(
+            matches!(err, BatchError::InvalidStateChain { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
