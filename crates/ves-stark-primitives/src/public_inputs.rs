@@ -1198,6 +1198,82 @@ mod tests {
     }
 
     #[test]
+    fn test_public_inputs_canonical_hash_commits_to_every_field() {
+        // The sequencer-canonical hash binds the event metadata into the main
+        // compliance proof's public-input stream. It must commit to every field
+        // except witnessCommitment (carried out of band). Perturb each and assert it
+        // changes; a dropped field would let event metadata be swapped under a fixed
+        // hash. The optional receipt/amount-binding hashes are present in the baseline
+        // so their contribution is exercised too.
+        let base = CompliancePublicInputs {
+            event_id: Uuid::from_u128(1),
+            tenant_id: Uuid::from_u128(2),
+            store_id: Uuid::from_u128(3),
+            sequence_number: 7,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "1".repeat(64),
+            event_signing_hash: "2".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10_000),
+            policy_hash: compute_policy_hash("aml.threshold", &PolicyParams::threshold(10_000))
+                .unwrap()
+                .to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: Some("a".repeat(64)),
+            amount_binding_hash: Some("b".repeat(64)),
+        };
+        let base_hash = base.compute_hash().unwrap();
+
+        let check = |field: &str, mutate: &dyn Fn(&mut CompliancePublicInputs)| {
+            let mut i = base.clone();
+            mutate(&mut i);
+            assert_ne!(
+                i.compute_hash().expect("perturbed inputs must still hash"),
+                base_hash,
+                "canonical hash does not commit to {field}"
+            );
+        };
+
+        check("event_id", &|i| i.event_id = Uuid::from_u128(99));
+        check("tenant_id", &|i| i.tenant_id = Uuid::from_u128(98));
+        check("store_id", &|i| i.store_id = Uuid::from_u128(97));
+        check("sequence_number", &|i| i.sequence_number += 1);
+        check("payload_kind", &|i| i.payload_kind += 1);
+        check("payload_plain_hash", &|i| {
+            i.payload_plain_hash = "f".repeat(64)
+        });
+        check("payload_cipher_hash", &|i| {
+            i.payload_cipher_hash = "e".repeat(64)
+        });
+        check("event_signing_hash", &|i| {
+            i.event_signing_hash = "d".repeat(64)
+        });
+        check("policy_id", &|i| {
+            i.policy_id = "order_total.cap".to_string()
+        });
+        check("policy_params", &|i| {
+            i.policy_params = PolicyParams::threshold(20_000)
+        });
+        check("policy_hash", &|i| i.policy_hash = "c".repeat(64));
+        check("authorization_receipt_hash", &|i| {
+            i.authorization_receipt_hash = Some("9".repeat(64))
+        });
+        check("amount_binding_hash", &|i| {
+            i.amount_binding_hash = Some("8".repeat(64))
+        });
+
+        // witnessCommitment is intentionally excluded from the canonical hash.
+        let mut with_commitment = base.clone();
+        with_commitment.witness_commitment = Some(witness_commitment_u64_to_hex(&[1, 2, 3, 4]));
+        assert_eq!(
+            with_commitment.compute_hash().unwrap(),
+            base_hash,
+            "canonical hash must ignore witnessCommitment"
+        );
+    }
+
+    #[test]
     fn test_witness_commitment_hex_roundtrip() {
         let commitment = [1u64, 2, 3, 4];
         let commitment_hex = witness_commitment_u64_to_hex(&commitment);
