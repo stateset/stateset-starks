@@ -109,6 +109,42 @@ Proof security/size/performance are parameterized by `ProofOptions`:
 The helper `ProofOptions::try_security_level()` provides an internal rough estimate; it is not a
 formal security proof.
 
+## Batch State-Transition Soundness
+
+A batch proof (`ves-stark-batch`) attests a single statement over an ordered set of events:
+
+> Starting from `prev_state_root`, applying these `num_events` events (each individually policy
+> compliant per the per-event argument above) produces exactly `new_state_root`, the `all_compliant`
+> flag correctly summarizes their compliance, and the events form a contiguous, ordered sequence
+> within one tenant/store.
+
+What the in-circuit constraints establish (all bound to `BatchPublicInputs`):
+
+- **Per-event compliance.** Each event's amount is range-checked and compared against the policy
+  limit using the same subtraction-gadget argument as the single-event proof, replicated per event
+  in the batch trace.
+- **Event → state-root binding.** Event leaves are hashed and Merkle-combined to an event-tree root
+  in-circuit (Rescue), and the finalization rows bind `new_state_root` to a Rescue hash over
+  `prev_state_root`, the event-tree root, and the batch metadata. Forging a `new_state_root`
+  inconsistent with the events therefore requires breaking Rescue.
+- **Compliance accumulator.** An ordered accumulator (powers of a fixed challenge) ties the public
+  `all_compliant` flag to the actual per-event compliance flags, so the flag cannot be flipped
+  independently of the events.
+- **Ordering & structure.** Event-row/index progression constraints enforce a contiguous event
+  sequence; phase constraints enforce the leaf → commitment → Merkle → finalize structure.
+- **Public-input accumulator.** An ordered digest binds the per-event public inputs, so the proof
+  commits to *which* events were included, in order.
+
+Boundaries (enforced outside a single proof, by the verifier or protocol):
+
+- **Cross-batch continuity** (a chain of batches links `new_state_root` → next `prev_state_root`,
+  stays within one tenant/store, and has contiguous sequence ranges) is enforced by
+  `BatchVerifier::verify_chain`, not inside one proof.
+- **Proof-size bounds** are enforced before deserialization (`MAX_BATCH_PROOF_SIZE`).
+- **Payload-to-amount linkage** is protocol-level, as for the single-event proof.
+
+These properties are exercised by the batch tests catalogued in `docs/VERIFICATION.md` (§2, §3, §5).
+
 ## Known Limitations
 
 - Amount-to-payload binding is not enforced in the AIR today, even though protocol-level binding
