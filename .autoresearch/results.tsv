@@ -1,8 +1,0 @@
-timestamp	commit	metric	status	description	log_file
-20260325T231147969875Z	4431c8a	432.021574	keep	v0.3.3 + budget policy baseline	.autoresearch/logs/20260325T231147969875Z-4431c8a.log
-20260325T231838650679Z	98c336a	610.917283	keep	precompute powers of 2 for bit recomposition	.autoresearch/logs/20260325T231838650679Z-98c336a.log
-20260325T232115277630Z	5af5525	515.530352	discard	hoist loop-invariant Rescue expressions	.autoresearch/logs/20260325T232115277630Z-5af5525.log
-20260325T232506702609Z	486dad6	669.004699	keep	grinding_factor 10→8	.autoresearch/logs/20260325T232506702609Z-486dad6.log
-20260325T232748134018Z	f66b176	555.478406	discard	queries=20, grinding=0 (zero PoW)	.autoresearch/logs/20260325T232748134018Z-f66b176.log
-20260325T232944520344Z	cab7c69	591.739228	discard	queries=19, grinding=4	.autoresearch/logs/20260325T232944520344Z-cab7c69.log
-20260325T233147403256Z	4fc3597	591.932150	discard	FRI remainder degree 15→31	.autoresearch/logs/20260325T233147403256Z-4fc3597.log

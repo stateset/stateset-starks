@@ -39,3 +39,7 @@ lcov.info
 # Zig build artifacts
 .zig-cache/
 zig-out/
+
+# Local autoresearch session artifacts (the committed REPORT.md is kept)
+.autoresearch/*
+!.autoresearch/REPORT.md
