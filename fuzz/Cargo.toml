@@ -16,6 +16,7 @@ ves-stark-primitives = { path = "../crates/ves-stark-primitives" }
 ves-stark-air = { path = "../crates/ves-stark-air" }
 ves-stark-prover = { path = "../crates/ves-stark-prover" }
 ves-stark-verifier = { path = "../crates/ves-stark-verifier" }
+ves-stark-batch = { path = "../crates/ves-stark-batch" }
 
 uuid = { version = "1", features = ["v4"] }
 serde_json = "1.0"
@@ -48,6 +49,13 @@ bench = false
 [[bin]]
 name = "fuzz_public_inputs"
 path = "fuzz_targets/fuzz_public_inputs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_batch_proof"
+path = "fuzz_targets/fuzz_batch_proof.rs"
 test = false
 doc = false
 bench = false
