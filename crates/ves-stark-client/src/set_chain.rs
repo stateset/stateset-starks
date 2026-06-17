@@ -701,6 +701,30 @@ mod tests {
     }
 
     #[test]
+    fn test_set_chain_config_rejects_malformed_registry_address() {
+        // The registry address gates which contract proofs anchor to, so client
+        // construction validates its format. The zero address is covered above;
+        // exercise the other branches (missing 0x prefix, wrong length, non-hex).
+        let base = SetChainConfig::local();
+        let with_addr = |addr: &str| {
+            let mut config = base.clone();
+            config.registry_address = addr.to_string();
+            SetChainClient::try_new("http://localhost:8080", "test_key", config)
+        };
+
+        // Sanity: the valid local() address is accepted.
+        let valid = base.registry_address.clone();
+        assert!(with_addr(&valid).is_ok());
+
+        // Missing 0x prefix.
+        assert!(with_addr("5FbDB2315678afecb367f032d93F642f64180aa3").is_err());
+        // Wrong length (not 20 bytes).
+        assert!(with_addr("0x1234").is_err());
+        // Correct length but non-hex characters.
+        assert!(with_addr("0xZZbDB2315678afecb367f032d93F642f64180aa3").is_err());
+    }
+
+    #[test]
     fn test_set_chain_client_rejects_invalid_base_url() {
         let config = SetChainConfig::local();
         assert!(SetChainClient::new("", "test_key", config.clone()).is_err());
