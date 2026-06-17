@@ -56,7 +56,22 @@ the hash. This catches the "silently dropped field → forgeable binding" class.
 | `CommerceAuthorizationReceipt` hash (execution) | 18 | `test_authorization_receipt_hash_commits_to_every_field` (prim) |
 | `CommerceIntent` hash (authorization constraints) | 14 | `test_commerce_intent_hash_commits_to_every_field` (prim) |
 
-## 4. Integrity / anti-drift invariants
+## 4. Validation branch coverage (negative path)
+
+The complement to §3: every multi-condition check from untrusted input to on-chain
+anchoring rejects on **each** condition independently, so no single branch can
+silently regress (e.g. dropping a spend-cap or context-binding check).
+
+| Check | Branches | Test(s) |
+|---|---|---|
+| Delegated-authorization limits (`authorize_execution`) | amount/spend-cap, currency, merchant, payee, shipping country, SKU scope, category scope, expiry | `test_authorize_execution_rejects_remaining_violations`, `test_authorize_execution_rejects_expired_intent`, `test_authorize_execution_rejects_scope_violation`, `test_authorize_execution_rejects_merchant_mismatch` (prim) |
+| Authorization-receipt context binding | event/tenant/store ids, sequence number | `test_validate_authorization_receipt_rejects_each_context_field` (prim) |
+| Payload-amount-binding context | event/tenant/store ids, sequence, payload kind, 3 payload hashes | `test_validate_payload_amount_binding_rejects_each_context_field` (prim) |
+| Batch event identity vs metadata | tenant id, store id | `test_batch_witness_tenant_store_mismatch`, `test_batch_witness_store_mismatch` (batch) |
+| Policy parsing (`Policy::from_public_inputs`) | unknown id, missing threshold/cap/maxTotal/intentHash/budgetLimit | `test_from_public_inputs_rejects_invalid_policies` (air) |
+| Registry-address config | missing 0x prefix, wrong length, non-hex, zero address | `test_set_chain_config_rejects_malformed_registry_address`, `test_set_chain_config_zero_registry_is_rejected` (client) |
+
+## 5. Integrity / anti-drift invariants
 
 Critical shared values are pinned or single-sourced, with tests preventing silent
 divergence.
@@ -70,7 +85,7 @@ divergence.
 | Batch policy-id strings match canonical `policy_ids` | `test_batch_policy_kind_ids_match_canonical_constants` (batch) |
 | Proof-hash domain tags single-sourced in `ves-stark-primitives` | enforced by construction (`COMPLIANCE_PROOF_HASH_DOMAIN`, `BATCH_PROOF_HASH_DOMAIN`); prove/verify roundtrips would fail on drift |
 
-## 5. Transport & serialization
+## 6. Transport & serialization
 
 | Property | Test |
 |---|---|
@@ -78,7 +93,7 @@ divergence.
 | Serialized batch proof binary round-trip preserves fields | `test_binary_round_trip` (batch/serialization) |
 | Malformed/tampered serialized proofs rejected | `test_binary_deserialization_rejects_*`, `test_json_deserialization_rejects_*`, `test_*_rejects_tampered_*` (batch/serialization) |
 
-## 6. Robustness (no panic on untrusted input)
+## 7. Robustness (no panic on untrusted input)
 
 The untrusted-input surfaces never panic — they return `Ok`/`Err`. Continuous
 fuzzing (libFuzzer, `fuzz/`) plus example-based rejection tests:
@@ -93,7 +108,7 @@ fuzzing (libFuzzer, `fuzz/`) plus example-based rejection tests:
 
 Run fuzzers with `cargo +nightly fuzz run <target>`.
 
-## 7. CI gates (every PR)
+## 8. CI gates (every PR)
 
 `fmt --check`, `clippy --all-features -D warnings`, `test --all-features`,
 `doc -D warnings`, `bench --no-run`, and `llvm-cov` coverage — see
