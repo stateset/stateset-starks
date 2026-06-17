@@ -887,6 +887,43 @@ mod tests {
     }
 
     #[test]
+    fn test_authorize_execution_rejects_remaining_violations() {
+        // authorize_execution enforces every delegated-authorization limit. Expired,
+        // SKU-scope, and merchant are covered elsewhere; cover the remaining five
+        // rejection branches so none can silently regress -- most importantly the
+        // spend cap (AmountExceedsLimit), whose loss would let an agent overspend.
+        let intent = sample_intent();
+        let reject = |mutate: &dyn Fn(&mut CommerceExecution)| -> CommerceIntentError {
+            let mut execution = sample_execution();
+            mutate(&mut execution);
+            intent
+                .authorize_execution(&execution)
+                .expect_err("violating execution must be rejected")
+        };
+
+        assert!(matches!(
+            reject(&|e| e.amount = intent.max_total + 1),
+            CommerceIntentError::AmountExceedsLimit { .. }
+        ));
+        assert!(matches!(
+            reject(&|e| e.currency = "EUR".to_string()),
+            CommerceIntentError::CurrencyMismatch { .. }
+        ));
+        assert!(matches!(
+            reject(&|e| e.payee = "other@stateset.app".to_string()),
+            CommerceIntentError::PayeeMismatch { .. }
+        ));
+        assert!(matches!(
+            reject(&|e| e.shipping_country = Some("CA".to_string())),
+            CommerceIntentError::ShippingCountryMismatch { .. }
+        ));
+        assert!(matches!(
+            reject(&|e| e.category_ids = vec!["contraband".to_string()]),
+            CommerceIntentError::UnauthorizedCategory { .. }
+        ));
+    }
+
+    #[test]
     fn test_authorization_receipt_hash_rejects_non_canonical_fields() {
         let mut receipt = sample_intent()
             .authorize_execution(&sample_execution())
