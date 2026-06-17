@@ -1713,6 +1713,33 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_authorization_receipt_rejects_each_context_field() {
+        // The receipt binding checks event_id, tenant_id, store_id, and
+        // sequence_number against the public inputs in separate branches. Each must
+        // be exercised independently so none can silently regress -- a dropped check
+        // would let a receipt for one context bind to a different event's proof.
+        let receipt = sample_authorization_receipt();
+        let base = sample_authorization_inputs(&receipt);
+
+        let reject = |label: &str, mutate: &dyn Fn(&mut CompliancePublicInputs)| {
+            let mut inputs = base.clone();
+            mutate(&mut inputs);
+            let err = inputs
+                .validate_authorization_receipt(&receipt)
+                .expect_err(label);
+            assert!(
+                matches!(err, PublicInputsError::AuthorizationReceiptBinding(_)),
+                "{label}: expected AuthorizationReceiptBinding, got {err:?}"
+            );
+        };
+
+        reject("event_id", &|i| i.event_id = Uuid::new_v4());
+        reject("tenant_id", &|i| i.tenant_id = Uuid::new_v4());
+        reject("store_id", &|i| i.store_id = Uuid::new_v4());
+        reject("sequence_number", &|i| i.sequence_number += 1);
+    }
+
+    #[test]
     fn test_validate_authorization_receipt_rejects_mismatched_receipt_hash_binding() {
         let receipt = sample_authorization_receipt();
         let mut inputs = sample_authorization_inputs(&receipt);
