@@ -379,4 +379,48 @@ mod tests {
         assert_eq!(policy.limit(), 50_000);
         assert_eq!(policy.policy_id(), "agent.budget.v1");
     }
+
+    #[test]
+    fn test_from_public_inputs_rejects_invalid_policies() {
+        // Policy parsing is a security boundary: a malformed policy must error, not
+        // silently parse into the wrong constraint. Exercise every error branch.
+        // Cross-policy params (which lack the target policy's required key) trigger
+        // the missing-param branches without needing a JSON builder.
+
+        // Unknown policy id.
+        assert!(matches!(
+            Policy::from_public_inputs("not.a.real.policy", &PolicyParams::threshold(1)),
+            Err(PolicyError::UnsupportedPolicyId(_))
+        ));
+
+        // Each policy with params lacking its required field.
+        assert!(matches!(
+            Policy::from_public_inputs("aml.threshold", &PolicyParams::budget(5)),
+            Err(PolicyError::MissingPolicyParam("threshold"))
+        ));
+        assert!(matches!(
+            Policy::from_public_inputs("order_total.cap", &PolicyParams::threshold(5)),
+            Err(PolicyError::MissingPolicyParam("cap"))
+        ));
+        assert!(matches!(
+            Policy::from_public_inputs("agent.authorization.v1", &PolicyParams::threshold(5)),
+            Err(PolicyError::MissingPolicyParam("maxTotal"))
+        ));
+        assert!(matches!(
+            Policy::from_public_inputs("agent.budget.v1", &PolicyParams::threshold(5)),
+            Err(PolicyError::MissingPolicyParam("budgetLimit"))
+        ));
+
+        // maxTotal present but intentHash missing.
+        let mut missing_intent = PolicyParams::agent_authorization(1_000, &"0".repeat(64)).unwrap();
+        missing_intent
+            .0
+            .as_object_mut()
+            .unwrap()
+            .remove("intentHash");
+        assert!(matches!(
+            Policy::from_public_inputs("agent.authorization.v1", &missing_intent),
+            Err(PolicyError::MissingPolicyParam("intentHash"))
+        ));
+    }
 }
