@@ -103,6 +103,30 @@ When modifying constraints, verify:
 - [ ] Boundary constraints bind public inputs
 - [ ] Transition constraints maintain consistency
 - [ ] Witness commitment binds private data
+- [ ] If you change constraint ordering or counts, the `debug_assert_eq!(idx, NUM_*_CONSTRAINTS)`
+      at the end of each `evaluate_transition` must still hold (it runs in tests). Update the
+      `NUM_*_CONSTRAINTS` constants and their `test_constraint_count` assertions deliberately.
+
+### Batch AIR compile-time notes
+
+`evaluate_transition` in `ves-stark-batch` is large and generic over the field, so under
+`opt-level=3` (release/bench profiles) LLVM spends a long time optimizing it — historically 20-35
+min for the whole crate. Mitigations already in place, which you should preserve and extend if you
+add constraints:
+
+- The big per-row constraint evaluators (`evaluate_merkle_constraints`, `evaluate_leaf_*`,
+  `evaluate_compliance_binding_constraints`) and the IR-dense Rescue block
+  (`evaluate_rescue_permutation_constraints`) are `#[inline(never)]` so they stay separate codegen
+  units instead of being folded into one giant function.
+- `[profile.bench]` uses `lto = false` + `codegen-units = 16` so those units optimize in parallel.
+  **Any LTO setting forces a single serial codegen unit** and erases the benefit.
+
+The residual cost is that the remaining body of `evaluate_merkle_constraints` (the structural +
+accumulator-linkage constraints) is still one sizeable function. Splitting it further is the next
+improvement, but do it only when you can **measure** the compile-time delta on a quiet machine —
+correctness is cheap to verify (`cargo test -p ves-stark-batch` runs at `opt-level=0`), but a split
+that isn't measured may not be worth the constraint-ordering risk. Verify proof outputs are
+unchanged via the batch prove/verify roundtrip tests.
 
 ## Security Considerations
 
