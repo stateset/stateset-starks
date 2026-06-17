@@ -1134,4 +1134,35 @@ mod tests {
             Err(BatchError::InvalidWitness(_))
         ));
     }
+
+    #[test]
+    fn test_batch_witness_store_mismatch() {
+        // The store_id check is a separate branch from the tenant_id check; exercise
+        // it independently (tenant correct, store mismatched) so it cannot silently
+        // regress. A mismatched store would otherwise let a batch attest events from
+        // a different store under one claimed store_id.
+        let threshold = 10_000u64;
+        let tenant_id = Uuid::new_v4();
+        let store_id = Uuid::new_v4();
+        let metadata = BatchMetadata::with_ids(Uuid::new_v4(), tenant_id, store_id, 0, 0);
+        let policy_hash = sample_policy_hash(threshold);
+
+        let mut inputs = sample_public_inputs(threshold, 5_000, 0, tenant_id, store_id);
+        inputs.store_id = Uuid::new_v4(); // Intentionally mismatch (tenant left correct)
+        let witness = BatchWitness::new(
+            vec![BatchEventWitness::new(0, 5_000, inputs, threshold).unwrap()],
+            metadata,
+            BatchStateRoot::genesis(),
+            policy_hash,
+            threshold,
+        );
+
+        let err = witness
+            .validate()
+            .expect_err("store mismatch must be rejected");
+        assert!(
+            matches!(err, BatchError::InvalidWitness(ref msg) if msg.contains("store")),
+            "expected a store-id mismatch error, got {err:?}"
+        );
+    }
 }
