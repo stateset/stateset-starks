@@ -1624,6 +1624,62 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_payload_amount_binding_rejects_each_context_field() {
+        // The amount binding is tied to the event by checking event_id, tenant_id,
+        // store_id, sequence_number, payload_kind, and the three payload hashes in
+        // separate branches. Each must be exercised independently so none can
+        // silently regress -- a dropped check would let an amount binding from a
+        // different event be accepted for this proof.
+        let base = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 1,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "1".repeat(64),
+            event_signing_hash: "2".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10_000),
+            policy_hash: compute_policy_hash("aml.threshold", &PolicyParams::threshold(10_000))
+                .unwrap()
+                .to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+            amount_binding_hash: None,
+        };
+        // Binding built from the unmodified inputs, so it matches `base` exactly.
+        let binding = sample_payload_amount_binding(&base, 5_000);
+
+        let reject = |label: &str, mutate: &dyn Fn(&mut CompliancePublicInputs)| {
+            let mut inputs = base.clone();
+            mutate(&mut inputs);
+            let err = inputs
+                .validate_payload_amount_binding(&binding)
+                .expect_err(label);
+            assert!(
+                matches!(err, PublicInputsError::AmountBinding(_)),
+                "{label}: expected AmountBinding, got {err:?}"
+            );
+        };
+
+        reject("event_id", &|i| i.event_id = Uuid::new_v4());
+        reject("tenant_id", &|i| i.tenant_id = Uuid::new_v4());
+        reject("store_id", &|i| i.store_id = Uuid::new_v4());
+        reject("sequence_number", &|i| i.sequence_number += 1);
+        reject("payload_kind", &|i| i.payload_kind += 1);
+        reject("payload_plain_hash", &|i| {
+            i.payload_plain_hash = "a".repeat(64)
+        });
+        reject("payload_cipher_hash", &|i| {
+            i.payload_cipher_hash = "b".repeat(64)
+        });
+        reject("event_signing_hash", &|i| {
+            i.event_signing_hash = "c".repeat(64)
+        });
+    }
+
+    #[test]
     fn test_bind_authorization_receipt_sets_witness_commitment_and_hash() {
         let receipt = sample_authorization_receipt();
         let inputs = sample_authorization_inputs(&receipt);
