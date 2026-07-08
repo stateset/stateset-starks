@@ -9,6 +9,7 @@
 pub mod commerce_intent;
 pub mod field;
 pub mod hash;
+pub mod payload_amount;
 pub mod public_inputs;
 pub mod rescue;
 
@@ -19,6 +20,10 @@ pub use commerce_intent::{
 pub use field::{felt_from_u64, felt_to_u64, Felt, FELT_ONE, FELT_ZERO};
 pub use hash::{
     felts_to_hash, hash_to_felts, Hash256, BATCH_PROOF_HASH_DOMAIN, COMPLIANCE_PROOF_HASH_DOMAIN,
+};
+pub use payload_amount::{
+    amount_field_candidates, amount_witness_commitment, extract_payload_amount,
+    AmountExtractionError,
 };
 pub use public_inputs::{
     canonical_json, compute_bound_public_inputs_hash, compute_full_public_inputs_hash,
