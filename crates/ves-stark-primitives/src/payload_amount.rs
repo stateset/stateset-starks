@@ -143,10 +143,8 @@ pub fn extract_payload_amount(
 
 /// Parse a single payload value as a canonical integer minor-unit amount.
 fn parse_amount_value(field: &'static str, value: &Value) -> Result<u64, AmountExtractionError> {
-    let non_canonical = |reason: String| AmountExtractionError::NonCanonicalAmount {
-        field,
-        reason,
-    };
+    let non_canonical =
+        |reason: String| AmountExtractionError::NonCanonicalAmount { field, reason };
 
     match value {
         Value::Number(n) => n.as_u64().ok_or_else(|| {
@@ -165,9 +163,8 @@ fn parse_amount_value(field: &'static str, value: &Value) -> Result<u64, AmountE
                      (no sign, decimal point, or whitespace); got {s:?}"
                 )));
             }
-            s.parse::<u64>().map_err(|_| {
-                non_canonical(format!("amount string {s:?} does not fit in u64"))
-            })
+            s.parse::<u64>()
+                .map_err(|_| non_canonical(format!("amount string {s:?} does not fit in u64")))
         }
         other => Err(non_canonical(format!(
             "amount must be a u64 integer or digit string (got {})",
@@ -327,7 +324,10 @@ mod tests {
         let payload = json!({ "amount": 1482.37 });
         assert!(matches!(
             extract_payload_amount("payment.captured", &payload),
-            Err(AmountExtractionError::NonCanonicalAmount { field: "amount", .. })
+            Err(AmountExtractionError::NonCanonicalAmount {
+                field: "amount",
+                ..
+            })
         ));
     }
 
@@ -378,7 +378,12 @@ mod tests {
 
     #[test]
     fn rejects_non_scalar_amount() {
-        for bad in [json!({ "amount": null }), json!({ "amount": [1] }), json!({ "amount": { "v": 1 } }), json!({ "amount": true })] {
+        for bad in [
+            json!({ "amount": null }),
+            json!({ "amount": [1] }),
+            json!({ "amount": { "v": 1 } }),
+            json!({ "amount": true }),
+        ] {
             assert!(matches!(
                 extract_payload_amount("payment.captured", &bad),
                 Err(AmountExtractionError::NonCanonicalAmount { .. })
@@ -423,7 +428,10 @@ mod tests {
         let payload = json!({ "total_amount": 1482.37, "total": 1u64 });
         assert!(matches!(
             extract_payload_amount("order.created", &payload),
-            Err(AmountExtractionError::NonCanonicalAmount { field: "total_amount", .. })
+            Err(AmountExtractionError::NonCanonicalAmount {
+                field: "total_amount",
+                ..
+            })
         ));
     }
 
@@ -449,8 +457,14 @@ mod tests {
             amount: 12_500,
             binding_hash: String::new(),
         };
-        assert_eq!(amount_witness_commitment(12_500), binding.witness_commitment_u64());
-        assert_ne!(amount_witness_commitment(12_500), amount_witness_commitment(12_501));
+        assert_eq!(
+            amount_witness_commitment(12_500),
+            binding.witness_commitment_u64()
+        );
+        assert_ne!(
+            amount_witness_commitment(12_500),
+            amount_witness_commitment(12_501)
+        );
     }
 
     #[test]

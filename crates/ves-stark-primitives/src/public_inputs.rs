@@ -1497,7 +1497,10 @@ mod tests {
         let bound = inputs
             .bind_amount_from_payload("payment.captured", &payload)
             .unwrap();
-        assert_eq!(bound.amount_binding_hash, Some(binding.binding_hash.clone()));
+        assert_eq!(
+            bound.amount_binding_hash,
+            Some(binding.binding_hash.clone())
+        );
         assert_eq!(
             bound.witness_commitment,
             Some(witness_commitment_u64_to_hex(
@@ -1540,8 +1543,7 @@ mod tests {
             .unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("committed amount 5000")
-                && msg.contains("does not match amount 50000"),
+            msg.contains("committed amount 5000") && msg.contains("does not match amount 50000"),
             "unexpected error: {msg}"
         );
     }
