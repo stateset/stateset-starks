@@ -126,12 +126,25 @@ Attack: the published commitment is a deterministic hash of the amount, and amou
 low-entropy — an observer hashes candidate amounts and compares against `C` to recover the
 witness without breaking any primitive.
 
-Mitigation: the salted commitment scheme. `C = Rescue([amount_lo, amount_hi, salt0..salt3, 0, 0])`
+Mitigation (INCOMPLETE — see defect below): the salted commitment scheme. `C = Rescue([amount_lo, amount_hi, salt0..salt3, 0, 0])`
 with a fresh random 128-bit salt (`ComplianceWitness::new_salted` / the `proveSalted` WASM
 export). The salt is private witness data — zeroized after proving, never serialized, never
 needed by verifiers. Salting also makes two commitments to the same amount unlinkable. The
 legacy zero-salt form remains verifiable but should not be published; see
 `tests/salted_commitment_test.rs` for the dictionary-attack regression.
+
+> **OPEN DEFECT — PERMUTATION DIFFUSION.** The salted scheme's *hiding* does
+> not currently hold, because `rescue.rs`'s permutation does not diffuse: the
+> backward half-round applies `MDS_INV`, cancelling the forward half-round's
+> `MDS`, so every state lane evolves independently (verified empirically: a
+> one-lane input delta affects only the same output lane across the full
+> permutation). The salt lanes therefore never mix into the amount lanes, and
+> the amount is recoverable from a published commitment by inverting the fixed
+> per-lane maps. FIX: the backward half-round must apply `MDS` (standard
+> Rescue-Prime); this also changes the in-circuit Rescue constraints and
+> invalidates existing proofs, so prover and AIR must change together and be
+> re-verified. Binding is unaffected (per-lane S-boxes are injective in the
+> amount limbs); only hiding depends on the fix.
 
 ### 4. Policy Mismatch
 
