@@ -609,12 +609,16 @@ impl Air for ComplianceAir {
         }
 
         let mds_forward = apply_mds(&sbox_state, &MDS);
-        let mds_inv = apply_mds(&curr_state, &MDS_INV);
+        // Backward half-round uses the FORWARD MDS (matching the native
+        // permutation fix): next = sbox_inv(MDS(curr)) + const, i.e.
+        // pow7(next - const) = MDS(curr). Using MDS_INV here would let the
+        // backward MDS cancel the forward one, destroying diffusion.
+        let mds_backward = apply_mds(&curr_state, &MDS);
 
         for i in 0..RESCUE_STATE_WIDTH {
             let round_const = periodic_values[PERIODIC_RESCUE_CONST_START_IDX + i];
             let forward_constraint = next_state[i] - (mds_forward[i] + round_const);
-            let backward_constraint = pow7(next_state[i] - round_const) - mds_inv[i];
+            let backward_constraint = pow7(next_state[i] - round_const) - mds_backward[i];
             let step_constraint = rescue_is_forward * forward_constraint
                 + (E::ONE - rescue_is_forward) * backward_constraint;
 

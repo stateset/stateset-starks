@@ -64,10 +64,13 @@
 //! Each round consists of two half-rounds:
 //!
 //! 1. **Forward half-round**: S-box → MDS → Add constants
-//! 2. **Backward half-round**: MDS⁻¹ → S-box⁻¹ → Add constants
+//! 2. **Backward half-round**: MDS → S-box⁻¹ → Add constants
 //!
-//! This symmetric structure provides better security margins than
-//! single-direction designs.
+//! Both half-rounds apply the (forward) MDS; they differ only in S-box
+//! direction. This is essential: an earlier version applied MDS⁻¹ in the
+//! backward half-round, which cancelled the forward MDS and collapsed the
+//! permutation into independent per-lane maps with no diffusion. See the
+//! `diffusion_regression` tests.
 //!
 //! ## References
 //!
@@ -771,10 +774,18 @@ fn half_round_forward(state: &mut RescueState, constants: &[Felt; STATE_WIDTH]) 
     add_constants_felt(state, constants);
 }
 
-/// Apply one backward half-round: MDS_inv -> S-box_inv -> Add constants
+/// Apply one backward half-round: MDS -> S-box_inv -> Add constants.
+///
+/// NOTE: this applies the FORWARD MDS, not `MDS_INV`. Using `MDS_INV` here
+/// (as an earlier version did) makes the backward MDS cancel the forward
+/// half-round's MDS, collapsing the permutation into independent per-lane maps
+/// with zero diffusion — which broke commitment hiding. A standard
+/// Rescue-Prime round applies MDS in *both* half-rounds; the two steps differ
+/// only in the S-box direction. (`mds_inv_multiply` remains for the
+/// MDS×MDS⁻¹=I property test.)
 fn half_round_backward(state: &mut RescueState, constants: &[Felt; STATE_WIDTH]) {
-    // MDS inverse
-    *state = mds_inv_multiply(state);
+    // MDS (forward) — NOT inverse; see the note above.
+    *state = mds_multiply(state);
     // Apply inverse S-box
     for s in state.iter_mut() {
         *s = sbox_inv(*s);
@@ -1420,5 +1431,50 @@ mod proptests {
                 prop_assert_eq!(felt_to_u64(hash1[i]), felt_to_u64(hash2[i]));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod diffusion_regression {
+    use super::*;
+
+    /// The permutation must diffuse: a change in any single input lane must
+    /// affect MORE than just its own output lane. (Regression for the
+    /// MDS/MDS_INV cancellation bug, which gave each lane→itself only.)
+    #[test]
+    fn permutation_diffuses_across_lanes() {
+        let base = [felt_from_u64(7); STATE_WIDTH];
+        let mut b0 = base;
+        rescue_permutation(&mut b0);
+        for pos in 0..STATE_WIDTH {
+            let mut v = base;
+            v[pos] = felt_from_u64(999);
+            rescue_permutation(&mut v);
+            let affected = (0..STATE_WIDTH).filter(|&o| v[o] != b0[o]).count();
+            assert!(
+                affected > 1,
+                "input lane {pos} affects only {affected} output lane(s); permutation does not diffuse"
+            );
+        }
+    }
+
+    /// The salt must actually hide the amount: the amount lanes of a salted
+    /// commitment must depend on the salt, so the amount is NOT recoverable by
+    /// matching amount lanes against unsalted guesses.
+    #[test]
+    fn salt_hides_the_amount() {
+        use crate::payload_amount::amount_witness_commitment_salted;
+        let amount = 62_000u64;
+        let c_a = amount_witness_commitment_salted(amount, &[111, 222, 333, 444]);
+        let c_b = amount_witness_commitment_salted(amount, &[999, 888, 777, 666]);
+        assert_ne!(c_a, c_b, "different salts must give different commitments");
+        // No prefix of the commitment may be salt-independent.
+        assert_ne!(c_a[..2], c_b[..2], "amount lanes must depend on the salt");
+        // The lane-only recovery attack must fail.
+        let target = amount_witness_commitment_salted(amount, &[123, 456, 789, 101]);
+        let recovered = (0..200_000u64)
+            .step_by(500)
+            .find(|&g| amount_witness_commitment_salted(g, &[0, 0, 0, 0])[..2] == target[..2]);
+        assert!(recovered.is_none(), "amount must not be recoverable via amount lanes: {recovered:?}");
     }
 }
