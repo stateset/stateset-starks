@@ -151,11 +151,12 @@ The AIR proves a relationship about a private `amount` witness bound via a Rescu
 | S-box | x^7 (forward), x^{alpha_inv} (backward) |
 | MDS | 12x12 circulant matrix |
 | Trace | 248 columns x 16 rows |
-| Constraints | 157 transition + 80 boundary |
+| Constraints | 157 transition + 76 boundary |
+| Commitment | salted Rescue: `H(amount_lo, amount_hi, salt0..3, 0, 0)`, 128-bit blinding salt (zero salt = legacy) |
 | FRI queries | 18 (4 bits/query) |
-| Grinding | 10-bit proof-of-work |
+| Grinding | 8-bit proof-of-work |
 | Blowup | 16x |
-| Security | ~82 bits (default), ~128 bits (secure preset) |
+| Security | ~80 bits estimated (default: 18·4 + 8), ~190 bits estimated (secure preset: 40 queries, 20-bit grinding, quadratic extension) |
 
 ## Proof Options
 

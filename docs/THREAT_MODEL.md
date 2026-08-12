@@ -120,6 +120,19 @@ Attack: provide a commitment `C` unrelated to the actual witness.
 
 Mitigation: Rescue permutation constraints + boundary assertion on the Rescue output row.
 
+### 3b. Commitment Guess-Confirmation (Dictionary Attack)
+
+Attack: the published commitment is a deterministic hash of the amount, and amounts are
+low-entropy — an observer hashes candidate amounts and compares against `C` to recover the
+witness without breaking any primitive.
+
+Mitigation: the salted commitment scheme. `C = Rescue([amount_lo, amount_hi, salt0..salt3, 0, 0])`
+with a fresh random 128-bit salt (`ComplianceWitness::new_salted` / the `proveSalted` WASM
+export). The salt is private witness data — zeroized after proving, never serialized, never
+needed by verifiers. Salting also makes two commitments to the same amount unlinkable. The
+legacy zero-salt form remains verifiable but should not be published; see
+`tests/salted_commitment_test.rs` for the dictionary-attack regression.
+
 ### 4. Policy Mismatch
 
 Attack: generate a proof under one policy but have it verify under a different policy.

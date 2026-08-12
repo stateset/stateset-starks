@@ -10,10 +10,18 @@ Given:
 - A public effective policy limit `L`
 - A public witness commitment `C` (4 field elements)
 
-A valid proof attests that there exists a private witness `amount` (a u64) such that:
+A valid proof attests that there exists a private witness `(amount, salt)` (a u64 amount and a
+128-bit blinding salt as four u32 limbs) such that:
 - `amount <= L`
-- `C == Rescue(amount_limbs)` (a Rescue commitment to the witness amount limbs, constrained in-AIR)
+- `C == Rescue([amount_lo, amount_hi, salt0..salt3, 0, 0])` (a Rescue commitment to the salted
+  witness block, constrained in-AIR; a zero salt reproduces the legacy unsalted commitment
+  exactly, so both schemes verify under the same circuit)
 - `P` is bound to the proof instance via boundary assertions into trace columns at row 0
+
+The salt limbs occupy trace positions AMOUNT[2..6], which are deliberately not boundary-asserted
+(only AMOUNT[6..8] remain asserted zero). The comparison gadget reads only AMOUNT[0..2], so the
+salt influences nothing but the Rescue sponge. A uniformly random salt makes the published
+commitment *hiding*: it cannot confirm a guessed amount even over low-entropy domains.
 
 Optional hardening: the canonical public inputs may include `witnessCommitment` (the same `C`,
 hex-encoded). If present, verifiers should require it matches the proof's witness commitment to

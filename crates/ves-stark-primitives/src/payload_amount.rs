@@ -34,7 +34,7 @@ use thiserror::Error;
 
 use crate::field::felt_from_u64;
 use crate::rescue::rescue_hash;
-use crate::FELT_ZERO;
+use crate::{Felt, FELT_ZERO};
 
 /// Amount field candidates for `order.*` events (except payment receipt).
 const ORDER_AMOUNT_FIELDS: &[&str] = &[
@@ -184,23 +184,56 @@ fn json_type_name(value: &Value) -> &'static str {
     }
 }
 
+/// A 128-bit blinding salt for witness commitments, as four 32-bit limbs.
+///
+/// The salt occupies Rescue input limbs 2..6 — the slots that are zero in the
+/// unsalted scheme — so a zero salt reproduces the legacy commitment exactly.
+/// A random salt makes the commitment *hiding* even over low-entropy witness
+/// domains (a dollar amount can no longer be confirmed by hashing guesses).
+pub type WitnessSalt = [u32; 4];
+
 /// Compute the Rescue witness commitment for an amount.
 ///
 /// This is the commitment format used across the prover, verifier, and
 /// sequencer: the amount is split into two 32-bit limbs, zero-padded to a
-/// Rescue input block, and hashed.
+/// Rescue input block, and hashed. Equivalent to
+/// [`amount_witness_commitment_salted`] with a zero salt — binding, but only
+/// weakly hiding over low-entropy amounts. Prefer the salted form wherever
+/// the commitment is published.
 pub fn amount_witness_commitment(amount: u64) -> [u64; 4] {
-    let mut amount_limbs = [FELT_ZERO; 8];
-    amount_limbs[0] = felt_from_u64(amount & 0xFFFF_FFFF);
-    amount_limbs[1] = felt_from_u64(amount >> 32);
+    amount_witness_commitment_salted(amount, &[0u32; 4])
+}
 
-    let hash_output = rescue_hash(&amount_limbs);
+/// Compute the salted Rescue witness commitment for an amount.
+///
+/// The Rescue input block is `[amount_lo, amount_hi, salt0..salt3, 0, 0]`:
+/// the amount's two 32-bit limbs, then the 128-bit salt in the four limbs
+/// the unsalted scheme leaves zero. The commitment is binding on the pair
+/// `(amount, salt)` and — for a uniformly random salt — hiding: no
+/// dictionary over candidate amounts can confirm a guess without the salt.
+pub fn amount_witness_commitment_salted(amount: u64, salt: &WitnessSalt) -> [u64; 4] {
+    let hash_output = rescue_hash(&salted_amount_limbs(amount, salt));
     [
         hash_output[0].as_int(),
         hash_output[1].as_int(),
         hash_output[2].as_int(),
         hash_output[3].as_int(),
     ]
+}
+
+/// The canonical Rescue input block for a salted amount commitment:
+/// `[amount_lo, amount_hi, salt0, salt1, salt2, salt3, 0, 0]`.
+///
+/// Shared by the protocol-side commitment above and the prover's trace
+/// builder, so the in-circuit sponge absorbs exactly this block.
+pub fn salted_amount_limbs(amount: u64, salt: &WitnessSalt) -> [Felt; 8] {
+    let mut limbs = [FELT_ZERO; 8];
+    limbs[0] = felt_from_u64(amount & 0xFFFF_FFFF);
+    limbs[1] = felt_from_u64(amount >> 32);
+    for (i, s) in salt.iter().enumerate() {
+        limbs[2 + i] = felt_from_u64(*s as u64);
+    }
+    limbs
 }
 
 #[cfg(test)]

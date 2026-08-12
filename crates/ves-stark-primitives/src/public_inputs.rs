@@ -519,10 +519,21 @@ impl CompliancePublicInputs {
         Ok(())
     }
 
-    /// Validate that this public-input object is consistent with a payload amount binding.
+    /// Validate that this public-input object is consistent with a payload amount binding
+    /// (legacy zero-salt commitment).
     pub fn validate_payload_amount_binding(
         &self,
         binding: &PayloadAmountBinding,
+    ) -> Result<(), PublicInputsError> {
+        self.validate_payload_amount_binding_salted(binding, &[0u32; 4])
+    }
+
+    /// Validate consistency with a payload amount binding whose published witness
+    /// commitment is blinded by `salt` (zero salt = the legacy unsalted scheme).
+    pub fn validate_payload_amount_binding_salted(
+        &self,
+        binding: &PayloadAmountBinding,
+        salt: &crate::payload_amount::WitnessSalt,
     ) -> Result<(), PublicInputsError> {
         let normalized = binding.normalized()?;
         normalized.validate()?;
@@ -576,7 +587,11 @@ impl CompliancePublicInputs {
         }
 
         if let Some(expected_commitment) = self.witness_commitment_u64()? {
-            let binding_commitment = normalized.witness_commitment_u64();
+            // The commitment the binding's amount implies. `salt` is the
+            // blinding salt of the salted commitment scheme; the legacy
+            // unsalted flow passes zero, which reproduces the old check.
+            let binding_commitment =
+                crate::payload_amount::amount_witness_commitment_salted(normalized.amount, salt);
             if expected_commitment != binding_commitment {
                 return Err(PublicInputsError::AmountBinding(
                     "payload amount binding amount does not match witnessCommitment".to_string(),
@@ -665,9 +680,36 @@ impl CompliancePublicInputs {
     }
 
     /// Return a copy of these public inputs canonically bound to a private amount.
+    ///
+    /// Uses the legacy zero-salt commitment. Prefer
+    /// [`CompliancePublicInputs::bind_amount_salted`] wherever the resulting
+    /// commitment will be published: the unsalted commitment is binding but
+    /// only weakly hiding over low-entropy amounts.
     pub fn bind_amount(&self, amount: u64) -> Result<Self, PublicInputsError> {
+        self.bind_amount_salted(amount, &[0u32; 4])
+    }
+
+    /// Return a copy of these public inputs canonically bound to a private amount
+    /// under a 128-bit blinding salt.
+    ///
+    /// The `amountBindingHash` is unchanged from the unsalted flow (the binding
+    /// object is amount-only and stays with parties entitled to the amount);
+    /// only the published `witnessCommitment` is salted. The salt never appears
+    /// in the public inputs — the prover discards or retains it privately.
+    pub fn bind_amount_salted(
+        &self,
+        amount: u64,
+        salt: &crate::payload_amount::WitnessSalt,
+    ) -> Result<Self, PublicInputsError> {
         let binding = self.payload_amount_binding(amount)?;
-        self.bind_payload_amount_binding(&binding)
+        self.validate_payload_amount_binding_salted(&binding, salt)?;
+        let normalized = binding.normalized()?;
+        let mut bound = self.clone();
+        bound.witness_commitment = Some(witness_commitment_u64_to_hex(
+            &crate::payload_amount::amount_witness_commitment_salted(amount, salt),
+        ));
+        bound.amount_binding_hash = Some(normalized.binding_hash);
+        Ok(bound)
     }
 
     /// Return a copy of these public inputs bound to the amount canonically extracted from the

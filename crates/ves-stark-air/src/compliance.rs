@@ -53,8 +53,11 @@
 //!    T[THRESHOLD_START+1][0] = limit_high
 //!    Purpose: Bind public threshold to trace
 //!
-//! 5. T[AMOUNT_START+i][0] = 0  for i in 2..8
-//!    Purpose: Upper limbs zero (amount fits in 64 bits)
+//! 5. T[AMOUNT_START+i][0] = 0  for i in 6..8
+//!    Purpose: Reserved limbs zero. Limbs 2..6 are NOT asserted: they carry
+//!    the private 128-bit blinding salt of the salted commitment scheme
+//!    (zero in the legacy unsalted scheme). The comparison gadget reads only
+//!    limbs 0-1, so the salt feeds nothing but the Rescue sponge.
 //!
 //! 6. T[THRESHOLD_START+i][0] = 0  for i in 2..8
 //!    Purpose: Upper limbs zero (limit fits in 64 bits)
@@ -362,8 +365,8 @@ impl ComplianceAir {
             degrees.push(TransitionConstraintDegree::new(2));
         }
 
-        // Number of boundary assertions: 80 (see get_assertions)
-        let context = AirContext::new(trace_info, degrees, 80, options);
+        // Number of boundary assertions: 76 (see get_assertions)
+        let context = AirContext::new(trace_info, degrees, 76, options);
 
         Ok(Self {
             context,
@@ -421,8 +424,16 @@ impl Air for ComplianceAir {
             threshold_high,
         ));
 
-        // Boundary constraint: upper limbs (2-7) must be zero for u64 amounts
-        for i in 2..8 {
+        // Boundary constraint: reserved limbs (6-7) must be zero.
+        //
+        // Limbs 2..6 are deliberately NOT asserted: they carry the private
+        // 128-bit blinding salt of the salted commitment scheme (zero in the
+        // legacy unsalted scheme, which therefore remains fully compatible).
+        // The comparison gadget reads only limbs 0-1 (the u64 amount), so the
+        // salt limbs influence nothing but the Rescue sponge — which is the
+        // point: the public commitment binds (amount, salt) and a random salt
+        // makes it hiding over low-entropy amounts.
+        for i in 6..8 {
             assertions.push(Assertion::single(cols::AMOUNT_START + i, 0, FELT_ZERO));
         }
 
@@ -872,7 +883,7 @@ mod tests {
             .unwrap();
 
         let assertions = air.get_assertions();
-        assert_eq!(assertions.len(), 80);
+        assert_eq!(assertions.len(), 76);
     }
 
     #[test]
