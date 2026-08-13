@@ -141,8 +141,12 @@ legacy zero-salt form remains verifiable but should not be published; see
 > (standard Rescue-Prime); the native permutation and the in-circuit AIR
 > constraint (`compliance.rs`) were changed together and re-verified, and
 > `rescue.rs::diffusion_regression` now asserts full cross-lane diffusion and
-> non-recoverability of the amount from a salted commitment. Existing proofs
-> generated under the old permutation no longer verify (expected).
+> non-recoverability of the amount from a salted commitment. The same fix
+> also repaired a second consequence: `rescue_hash_pair` (the batch prover's
+> Rescue-Merkle 2-to-1 compression) previously ignored its right child — now
+> both children bind (regression: `rescue_hash_pair_binds_both_children`).
+> Existing proofs generated under the old permutation no longer verify
+> (expected).
 
 ### 4. Policy Mismatch
 

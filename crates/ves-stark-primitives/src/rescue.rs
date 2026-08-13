@@ -1477,4 +1477,24 @@ mod diffusion_regression {
             .find(|&g| amount_witness_commitment_salted(g, &[0, 0, 0, 0])[..2] == target[..2]);
         assert!(recovered.is_none(), "amount must not be recoverable via amount lanes: {recovered:?}");
     }
+
+    /// The 2-to-1 Merkle compression (`rescue_hash_pair`) must bind BOTH
+    /// children. Before the diffusion fix, the right child (input lanes 4-7)
+    /// did not affect the digest, so a Rescue-Merkle tree — as the batch
+    /// prover uses — failed to bind right siblings. This locks in that every
+    /// limb of both children is now bound.
+    #[test]
+    fn rescue_hash_pair_binds_both_children() {
+        let l = [felt_from_u64(1), felt_from_u64(2), felt_from_u64(3), felt_from_u64(4)];
+        let r = [felt_from_u64(5), felt_from_u64(6), felt_from_u64(7), felt_from_u64(8)];
+        let base = rescue_hash_pair(&l, &r);
+        for i in 0..4 {
+            let mut l2 = l;
+            l2[i] = felt_from_u64(99);
+            assert_ne!(rescue_hash_pair(&l2, &r), base, "left limb {i} must bind");
+            let mut r2 = r;
+            r2[i] = felt_from_u64(99);
+            assert_ne!(rescue_hash_pair(&l, &r2), base, "right limb {i} must bind");
+        }
+    }
 }
