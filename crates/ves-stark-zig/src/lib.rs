@@ -380,9 +380,19 @@ pub unsafe extern "C" fn ves_prove(
 /// `proof` must be NULL or a valid, unfreed [`VesProof`] handle. `out_len` must
 /// be NULL or a valid, writable `*mut usize`. The returned pointer borrows memory
 /// owned by `proof` and is valid only until `proof` is freed.
+///
+/// When `proof` is NULL this returns NULL and writes `0` to `*out_len` (when
+/// `out_len` is non-NULL), so the returned length is never stale.
 #[no_mangle]
 pub unsafe extern "C" fn ves_proof_bytes(proof: *const VesProof, out_len: *mut usize) -> *const u8 {
     if proof.is_null() {
+        // Zero the out-parameter before bailing out. Returning NULL while
+        // leaving `*out_len` untouched hands the caller a garbage (often
+        // uninitialized) length next to a NULL pointer, which the usual C
+        // idiom `p = f(h, &len); memcpy(dst, p, len);` will happily act on.
+        if !out_len.is_null() {
+            unsafe { *out_len = 0 };
+        }
         return std::ptr::null();
     }
     let p = unsafe { &*proof };
@@ -1415,6 +1425,11 @@ mod batch_ffi {
         out_len: *mut usize,
     ) -> *const u8 {
         if proof.is_null() {
+            // See `ves_proof_bytes`: the length must be zeroed on the NULL path
+            // so a caller cannot pair a NULL pointer with a stale length.
+            if !out_len.is_null() {
+                unsafe { *out_len = 0 };
+            }
             return std::ptr::null();
         }
         let p = unsafe { &*proof };
@@ -1735,5 +1750,237 @@ mod batch_ffi {
 pub unsafe extern "C" fn ves_free_string(s: *mut c_char) {
     if !s.is_null() {
         drop(unsafe { CString::from_raw(s) });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the C FFI boundary.
+    //!
+    //! This crate holds every `unsafe` block in the workspace (the other ten
+    //! crates are `#![forbid(unsafe_code)]`), so it is where memory-safety bugs
+    //! can live: null dereferences, mismatched allocate/free pairs, and strings
+    //! handed across the boundary with the wrong ownership.
+    //!
+    //! The pointer-lifecycle tests below are written to run under Miri, which
+    //! checks exactly those properties. Anything that generates or verifies a
+    //! real STARK proof is `#[cfg_attr(miri, ignore)]` — sound, but far too slow
+    //! to interpret.
+
+    use super::*;
+    use std::ffi::CString;
+
+    /// A syntactically valid `CompliancePublicInputs` document.
+    fn valid_public_inputs_json() -> CString {
+        let zero_hash = "0".repeat(64);
+        let params = ves_stark_primitives::public_inputs::PolicyParams::threshold(10_000);
+        let policy_hash = ves_stark_primitives::compute_policy_hash("aml.threshold", &params)
+            .expect("policy hash")
+            .to_hex();
+        let json = serde_json::json!({
+            "eventId": uuid::Uuid::nil(),
+            "tenantId": uuid::Uuid::nil(),
+            "storeId": uuid::Uuid::nil(),
+            "sequenceNumber": 1,
+            "payloadKind": 1,
+            "payloadPlainHash": zero_hash,
+            "payloadCipherHash": zero_hash,
+            "eventSigningHash": zero_hash,
+            "policyId": "aml.threshold",
+            "policyParams": { "threshold": 10_000 },
+            "policyHash": policy_hash,
+        });
+        CString::new(json.to_string()).expect("no interior NUL")
+    }
+
+    /// Every entry point documented as NULL-tolerant must return an error
+    /// rather than dereference. A regression here is a crash triggerable by any
+    /// caller, in any language binding built on this ABI.
+    #[test]
+    fn null_pointers_are_rejected_not_dereferenced() {
+        unsafe {
+            assert!(ves_public_inputs_from_json(std::ptr::null()).is_null());
+
+            let mut out: *mut c_char = std::ptr::null_mut();
+            assert_eq!(
+                ves_public_inputs_to_json(std::ptr::null(), &mut out),
+                VES_ERR_NULL_PTR
+            );
+
+            // A valid handle with a NULL out-parameter must also be refused.
+            let inputs = ves_public_inputs_from_json(valid_public_inputs_json().as_ptr());
+            assert!(!inputs.is_null(), "fixture should parse");
+            assert_eq!(
+                ves_public_inputs_to_json(inputs, std::ptr::null_mut()),
+                VES_ERR_NULL_PTR
+            );
+            ves_public_inputs_free(inputs);
+        }
+    }
+
+    /// Accessors on a NULL handle must yield defined values, not read from
+    /// address zero.
+    #[test]
+    fn proof_accessors_tolerate_a_null_handle() {
+        unsafe {
+            let mut len: usize = 12345;
+            assert!(ves_proof_bytes(std::ptr::null(), &mut len).is_null());
+            assert_eq!(len, 0, "length must be zeroed when no proof is available");
+
+            assert!(ves_proof_hash(std::ptr::null()).is_null());
+            assert_eq!(ves_proof_proving_time_ms(std::ptr::null()), 0);
+            assert_eq!(ves_proof_size(std::ptr::null()), 0);
+            assert!(ves_proof_witness_commitment_hex(std::ptr::null()).is_null());
+        }
+    }
+
+    /// Regression: a NULL handle must also zero the out-length on the batch
+    /// entry point, not only the single-proof one.
+    #[cfg(feature = "batch")]
+    #[test]
+    fn batch_proof_bytes_zeroes_out_len_on_null_handle() {
+        unsafe {
+            let mut len: usize = 999;
+            assert!(batch_ffi::ves_batch_proof_bytes(std::ptr::null(), &mut len).is_null());
+            assert_eq!(len, 0, "length must be zeroed when no proof is available");
+        }
+    }
+
+    /// Verification accessors must be equally defensive.
+    #[test]
+    fn verification_accessors_tolerate_a_null_handle() {
+        unsafe {
+            assert!(!ves_verification_valid(std::ptr::null()));
+            assert_eq!(ves_verification_time_ms(std::ptr::null()), 0);
+            assert_eq!(ves_verification_policy_limit(std::ptr::null()), 0);
+        }
+    }
+
+    /// Freeing NULL is a documented no-op; C callers rely on it.
+    #[test]
+    fn freeing_null_is_a_no_op() {
+        unsafe {
+            ves_public_inputs_free(std::ptr::null_mut());
+            ves_proof_free(std::ptr::null_mut());
+            ves_verification_result_free(std::ptr::null_mut());
+            ves_free_string(std::ptr::null_mut());
+        }
+    }
+
+    /// Full allocate/borrow/free cycle. Under Miri this checks that the handle
+    /// is boxed and unboxed consistently and that the returned string is owned
+    /// by the caller — a `CString::from_raw` / `into_raw` mismatch shows up here.
+    #[test]
+    fn public_inputs_round_trip_allocates_and_frees_cleanly() {
+        unsafe {
+            let handle = ves_public_inputs_from_json(valid_public_inputs_json().as_ptr());
+            assert!(!handle.is_null(), "valid JSON must parse");
+
+            let mut out: *mut c_char = std::ptr::null_mut();
+            assert_eq!(ves_public_inputs_to_json(handle, &mut out), VES_OK);
+            assert!(!out.is_null());
+
+            let round_tripped = CStr::from_ptr(out).to_str().expect("valid UTF-8");
+            assert!(
+                round_tripped.contains("aml.threshold"),
+                "serialized inputs should retain the policy id, got: {round_tripped}"
+            );
+
+            ves_free_string(out);
+            ves_public_inputs_free(handle);
+        }
+    }
+
+    /// Repeating the cycle catches allocator state corrupted by the first pass.
+    #[test]
+    fn repeated_round_trips_do_not_corrupt_allocator_state() {
+        for _ in 0..8 {
+            unsafe {
+                let handle = ves_public_inputs_from_json(valid_public_inputs_json().as_ptr());
+                assert!(!handle.is_null());
+                let mut out: *mut c_char = std::ptr::null_mut();
+                assert_eq!(ves_public_inputs_to_json(handle, &mut out), VES_OK);
+                ves_free_string(out);
+                ves_public_inputs_free(handle);
+            }
+        }
+    }
+
+    /// Malformed input must fail closed and leave a retrievable message rather
+    /// than returning a partially built handle.
+    #[test]
+    fn invalid_json_returns_null_and_records_an_error() {
+        unsafe {
+            let bad = CString::new("{ not json").unwrap();
+            assert!(ves_public_inputs_from_json(bad.as_ptr()).is_null());
+
+            let err = ves_stark_last_error();
+            assert!(!err.is_null(), "an error message must be recorded");
+            let msg = CStr::from_ptr(err).to_str().expect("valid UTF-8");
+            assert!(!msg.is_empty(), "error message must not be empty");
+        }
+    }
+
+    /// Well-formed JSON that is not a valid public-inputs document must also be
+    /// rejected, exercising the fallback parser's error path.
+    #[test]
+    fn structurally_valid_but_wrong_json_is_rejected() {
+        unsafe {
+            for doc in ["[]", "42", "\"a string\"", "{}"] {
+                let c = CString::new(doc).unwrap();
+                assert!(
+                    ves_public_inputs_from_json(c.as_ptr()).is_null(),
+                    "`{doc}` must not parse as public inputs"
+                );
+            }
+        }
+    }
+
+    /// The policy-hash helper is pure and cheap, so it is a good Miri subject
+    /// for the out-parameter string protocol.
+    #[test]
+    fn compute_policy_hash_writes_an_owned_string() {
+        unsafe {
+            let policy = CString::new("aml.threshold").unwrap();
+            let params = CString::new(r#"{"threshold":10000}"#).unwrap();
+            let mut out: *mut c_char = std::ptr::null_mut();
+
+            let rc = ves_compute_policy_hash(policy.as_ptr(), params.as_ptr(), &mut out);
+            assert_eq!(rc, VES_OK, "valid policy must hash");
+            assert!(!out.is_null());
+
+            let hex = CStr::from_ptr(out).to_str().expect("valid UTF-8");
+            assert_eq!(hex.len(), 64, "policy hash must be 32 bytes of hex");
+            assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
+
+            ves_free_string(out);
+        }
+    }
+
+    /// NULL arguments to the hash helper must not be dereferenced.
+    #[test]
+    fn compute_policy_hash_rejects_null_arguments() {
+        unsafe {
+            let policy = CString::new("aml.threshold").unwrap();
+            let params = CString::new(r#"{"threshold":10000}"#).unwrap();
+            let mut out: *mut c_char = std::ptr::null_mut();
+
+            assert_ne!(
+                ves_compute_policy_hash(std::ptr::null(), params.as_ptr(), &mut out),
+                VES_OK
+            );
+            assert_ne!(
+                ves_compute_policy_hash(policy.as_ptr(), std::ptr::null(), &mut out),
+                VES_OK
+            );
+            assert_ne!(
+                ves_compute_policy_hash(policy.as_ptr(), params.as_ptr(), std::ptr::null_mut()),
+                VES_OK
+            );
+        }
     }
 }
