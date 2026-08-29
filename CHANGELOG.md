@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-29
+
 ### Security
 
 - **BREAKING — proof parameters are now secure by default.** `ProofOptions::security_level()`

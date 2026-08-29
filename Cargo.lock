@@ -2004,7 +2004,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "ves-stark"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "criterion",
  "proptest",
@@ -2020,7 +2020,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-air"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "proptest",
  "rand 0.8.8",
@@ -2035,7 +2035,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-batch"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "criterion",
  "hex",
@@ -2059,7 +2059,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-cli"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -2081,7 +2081,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-client"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "base64",
  "hex",
@@ -2101,7 +2101,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-nodejs"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "napi",
  "napi-build",
@@ -2117,7 +2117,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-primitives"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "hex",
  "proptest",
@@ -2135,7 +2135,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-prover"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "base64",
  "getrandom 0.2.17",
@@ -2159,7 +2159,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-python"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "pyo3",
  "serde",
@@ -2173,7 +2173,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-verifier"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "hex",
  "js-sys",
@@ -2193,7 +2193,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-wasm"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "js-sys",
  "serde_json",
@@ -2207,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "ves-stark-zig"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
