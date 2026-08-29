@@ -84,8 +84,76 @@ divergence.
 | Inverse S-box addition chain == generic `x^ALPHA_INV` | `test_sbox_inv_addition_chain` (prim/rescue) |
 | Batch policy-id strings match canonical `policy_ids` | `test_batch_policy_kind_ids_match_canonical_constants` (batch) |
 | Proof-hash domain tags single-sourced in `ves-stark-primitives` | enforced by construction (`COMPLIANCE_PROOF_HASH_DOMAIN`, `BATCH_PROOF_HASH_DOMAIN`); prove/verify roundtrips would fail on drift |
+| `SOUNDNESS.md` transition-constraint count matches the AIR | `soundness_doc_transition_constraint_count_matches_air` (it/docs_consistency_test) |
+| `SOUNDNESS.md` boundary-assertion count matches the AIR | `soundness_doc_boundary_assertion_count_matches_air`, `test_air_assertions` (air) |
+| `SOUNDNESS.md` does not claim the salt limbs are pinned to zero | `soundness_doc_does_not_claim_the_salt_limbs_are_pinned` |
+| README security numbers equal what the estimator returns | `readme_security_levels_match_the_estimator` |
+| Superseded (mutually contradictory) security claims removed | `readme_does_not_carry_superseded_security_claims` |
+| Rescue variant disclosed in the soundness argument | `docs_disclose_the_rescue_variant` |
 
-## 6. Transport & serialization
+## 6. Hash primitive correctness (Rescue)
+
+The rest of the Rescue suite is self-referential — determinism, order-sensitivity,
+`MDS x MDS_INV = I`, constants matching a JSON generated from those same
+constants. None of it constrains the permutation's *output*, which is how a
+defect that cancelled all cross-lane diffusion (and with it commitment hiding)
+once passed the entire workspace. These tests close that class.
+
+| Property | Test |
+|---|---|
+| Optimized permutation equals a naive from-spec reimplementation | `optimized_permutation_matches_independent_reference` (it/rescue_kat_test) |
+| Agreement holds on structured edge cases (zero, all-ones, p-1) | `reference_agreement_on_edge_case_states` |
+| Permutation output pinned to externally generated vectors | `kat_permutation_of_zero_state` |
+| Merkle 2-to-1 compression output pinned | `kat_hash_pair` |
+| Sponge output pinned across the rate boundary (len 0/1/8/9) | `kat_hash_across_input_lengths` |
+| Effective linear layer `MDS^2` retains the MDS property | `effective_linear_layer_between_sboxes_is_still_mds` |
+| Permutation diffuses across lanes | `diffusion_regression` tests (prim/rescue) |
+
+## 7. Proof parameter soundness
+
+The reported security level is `min(query bound, algebraic bound)`. The algebraic
+bound is set by the challenge field and is what binds over 64-bit Goldilocks.
+
+| Property | Test |
+|---|---|
+| Security is capped by the challenge field, not raised by query count | `test_security_is_capped_by_challenge_field_not_query_count` (air/options) |
+| Extension field raises the cap rather than adding a flat bonus | `test_extension_field_raises_the_cap_it_is_not_an_additive_bonus` |
+| Longer traces are strictly less sound | `test_security_decreases_as_trace_grows` |
+| No shipped preset uses the bare base field | `test_no_preset_uses_the_bare_base_field` |
+| `default()` clears the documented security floor | `test_default_is_secure_by_default`, `default_preset_clears_the_documented_security_floor` |
+| A query-starved config is still reported weak | `test_query_starved_config_is_still_reported_weak` |
+| The assumed max trace length really bounds every AIR's trace | `assumed_max_trace_length_bounds_every_real_trace` (it/docs_consistency_test) |
+
+## 8. Credential and transport handling
+
+| Property | Test |
+|---|---|
+| API key is never sent in cleartext to a non-loopback host | `http_to_remote_host_is_rejected` (client/transport_policy) |
+| Loopback development endpoints still work | `http_to_loopback_is_accepted` |
+| Lookalike hosts (`127.0.0.1.evil.com`) are not treated as loopback | `lookalike_hosts_are_not_treated_as_loopback` |
+| Non-HTTP schemes rejected | `non_http_schemes_are_rejected` |
+| Authorization header is redacted in `Debug` output | `auth_header_is_marked_sensitive_and_redacted_in_debug` |
+
+## 9. FFI memory safety (`ves-stark-zig`)
+
+This crate holds every `unsafe` block in the workspace; the other ten are
+`#![forbid(unsafe_code)]`. These tests run under Miri in CI.
+
+| Property | Test |
+|---|---|
+| NULL handles are rejected, never dereferenced | `null_pointers_are_rejected_not_dereferenced` |
+| Proof accessors tolerate a NULL handle | `proof_accessors_tolerate_a_null_handle` |
+| Verification accessors tolerate a NULL handle | `verification_accessors_tolerate_a_null_handle` |
+| A NULL handle zeroes the out-length (no stale length beside a NULL pointer) | `batch_proof_bytes_zeroes_out_len_on_null_handle` |
+| Freeing NULL is a no-op | `freeing_null_is_a_no_op` |
+| Allocate/borrow/free cycle is balanced | `public_inputs_round_trip_allocates_and_frees_cleanly` |
+| Repeated cycles do not corrupt allocator state | `repeated_round_trips_do_not_corrupt_allocator_state` |
+| Malformed input fails closed with a retrievable message | `invalid_json_returns_null_and_records_an_error` |
+| Well-formed but wrong JSON is rejected | `structurally_valid_but_wrong_json_is_rejected` |
+| Out-parameter string protocol hands over ownership correctly | `compute_policy_hash_writes_an_owned_string` |
+| Hash helper rejects NULL arguments | `compute_policy_hash_rejects_null_arguments` |
+
+## 10. Transport & serialization
 
 | Property | Test |
 |---|---|
@@ -93,7 +161,7 @@ divergence.
 | Serialized batch proof binary round-trip preserves fields | `test_binary_round_trip` (batch/serialization) |
 | Malformed/tampered serialized proofs rejected | `test_binary_deserialization_rejects_*`, `test_json_deserialization_rejects_*`, `test_*_rejects_tampered_*` (batch/serialization) |
 
-## 7. Robustness (no panic on untrusted input)
+## 11. Robustness (no panic on untrusted input)
 
 The untrusted-input surfaces never panic — they return `Ok`/`Err`. Continuous
 fuzzing (libFuzzer, `fuzz/`) plus example-based rejection tests:
@@ -108,11 +176,12 @@ fuzzing (libFuzzer, `fuzz/`) plus example-based rejection tests:
 
 Run fuzzers with `cargo +nightly fuzz run <target>`.
 
-## 8. CI gates (every PR)
+## 12. CI gates (every PR)
 
 `fmt --check`, `clippy --all-features -D warnings`, `test --all-features`,
-`doc -D warnings`, `bench --no-run`, and `llvm-cov` coverage — see
-`.github/workflows/ci.yml`.
+`cargo audit`, `cargo +nightly miri test -p ves-stark-zig`, a 60s smoke run of
+every fuzz target, `doc -D warnings`, `check --benches`, and `llvm-cov`
+coverage — see `.github/workflows/ci.yml`.
 
 ---
 

@@ -18,12 +18,20 @@ Given:
 - Public inputs (event metadata, payload hashes, policy id/params/hash)
 - A public witness commitment `C`
 
-A valid proof attests that there exists a private witness `amount` (a u64) such that:
+A valid proof attests that there exists a private witness `(amount, salt)` — a u64 amount and a
+128-bit blinding salt carried as four u32 limbs — such that:
 - The policy inequality holds:
   - `aml.threshold`: `amount < threshold` (implemented as `amount <= threshold - 1`)
   - `order_total.cap`: `amount <= cap`
-- `C` is the Rescue commitment to the witness amount (first 4 elements of the constrained Rescue
-  state after permutation).
+- `C` is the Rescue commitment to the salted witness block
+  `C == Rescue([amount_lo, amount_hi, salt0..salt3, 0, 0])` (first 4 elements of the constrained
+  Rescue state after permutation). A zero salt reproduces the legacy unsalted commitment exactly,
+  so both schemes verify under the same circuit.
+
+The salt occupies trace positions `AMOUNT[2..6]`, which are deliberately not boundary-asserted;
+the comparison gadget reads only `AMOUNT[0..2]`. A uniformly random salt therefore makes `C`
+*hiding* as well as binding: it cannot confirm a guessed amount even over a low-entropy domain.
+See `docs/SOUNDNESS.md` for the full argument.
 - The provided public inputs are bound to the proof instance via boundary assertions into trace
   columns (row 0).
 
