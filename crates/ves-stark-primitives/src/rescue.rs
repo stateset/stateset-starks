@@ -716,6 +716,10 @@ fn to_felt_matrix(m: &[[u64; STATE_WIDTH]; STATE_WIDTH]) -> [[Felt; STATE_WIDTH]
 /// rounds per hash) is pure overhead, so we precompute the `Felt` forms once.
 static MDS_FELT: LazyLock<[[Felt; STATE_WIDTH]; STATE_WIDTH]> =
     LazyLock::new(|| to_felt_matrix(&MDS));
+/// Test-only: the permutation applies the forward MDS in both half-rounds
+/// (see `half_round_backward`), so the inverse matrix is needed only by the
+/// MDS x MDS_INV = I property tests.
+#[cfg(test)]
 static MDS_INV_FELT: LazyLock<[[Felt; STATE_WIDTH]; STATE_WIDTH]> =
     LazyLock::new(|| to_felt_matrix(&MDS_INV));
 static ROUND_CONSTANTS_FELT: LazyLock<[[Felt; STATE_WIDTH]; NUM_ROUNDS * 2]> =
@@ -742,7 +746,10 @@ fn mds_multiply(state: &RescueState) -> RescueState {
     result
 }
 
-/// Apply inverse MDS matrix multiplication
+/// Apply inverse MDS matrix multiplication.
+///
+/// Test-only: no half-round uses the inverse matrix (see `half_round_backward`).
+#[cfg(test)]
 fn mds_inv_multiply(state: &RescueState) -> RescueState {
     let mut result = [FELT_ZERO; STATE_WIDTH];
     for (i, row) in MDS_INV_FELT.iter().enumerate() {
@@ -779,10 +786,25 @@ fn half_round_forward(state: &mut RescueState, constants: &[Felt; STATE_WIDTH]) 
 /// NOTE: this applies the FORWARD MDS, not `MDS_INV`. Using `MDS_INV` here
 /// (as an earlier version did) makes the backward MDS cancel the forward
 /// half-round's MDS, collapsing the permutation into independent per-lane maps
-/// with zero diffusion — which broke commitment hiding. A standard
-/// Rescue-Prime round applies MDS in *both* half-rounds; the two steps differ
-/// only in the S-box direction. (`mds_inv_multiply` remains for the
+/// with zero diffusion — which broke commitment hiding. Both half-rounds
+/// therefore apply the forward MDS. (`mds_inv_multiply` remains for the
 /// MDS×MDS⁻¹=I property test.)
+///
+/// # Deviation from textbook Rescue-Prime
+///
+/// This is a Rescue *variant*, not the permutation exactly as published.
+/// Textbook Rescue-Prime applies the S-box **before** the MDS in both
+/// half-rounds; here the backward half-round applies MDS first
+/// (`MDS -> S-box⁻¹ -> +c`) while the forward one applies it after
+/// (`S-box -> MDS -> +c`).
+///
+/// The consequence is that the two MDS layers within a round are adjacent,
+/// separated only by a constant addition, so they compose: the matrix actually
+/// mixing lanes between the two S-box layers is `MDS²`, not `MDS`. That is
+/// sound here only because `MDS²` is itself MDS — asserted, not assumed, by
+/// `effective_linear_layer_between_sboxes_is_still_mds` in
+/// `tests/rescue_kat_test.rs`. Published Rescue-Prime cryptanalysis does not
+/// transfer to this construction unchanged; see `docs/SOUNDNESS.md`.
 fn half_round_backward(state: &mut RescueState, constants: &[Felt; STATE_WIDTH]) {
     // MDS (forward) — NOT inverse; see the note above.
     *state = mds_multiply(state);
@@ -1475,7 +1497,10 @@ mod diffusion_regression {
         let recovered = (0..200_000u64)
             .step_by(500)
             .find(|&g| amount_witness_commitment_salted(g, &[0, 0, 0, 0])[..2] == target[..2]);
-        assert!(recovered.is_none(), "amount must not be recoverable via amount lanes: {recovered:?}");
+        assert!(
+            recovered.is_none(),
+            "amount must not be recoverable via amount lanes: {recovered:?}"
+        );
     }
 
     /// The 2-to-1 Merkle compression (`rescue_hash_pair`) must bind BOTH
@@ -1485,8 +1510,18 @@ mod diffusion_regression {
     /// limb of both children is now bound.
     #[test]
     fn rescue_hash_pair_binds_both_children() {
-        let l = [felt_from_u64(1), felt_from_u64(2), felt_from_u64(3), felt_from_u64(4)];
-        let r = [felt_from_u64(5), felt_from_u64(6), felt_from_u64(7), felt_from_u64(8)];
+        let l = [
+            felt_from_u64(1),
+            felt_from_u64(2),
+            felt_from_u64(3),
+            felt_from_u64(4),
+        ];
+        let r = [
+            felt_from_u64(5),
+            felt_from_u64(6),
+            felt_from_u64(7),
+            felt_from_u64(8),
+        ];
         let base = rescue_hash_pair(&l, &r);
         for i in 0..4 {
             let mut l2 = l;
