@@ -14,6 +14,16 @@
 //! - `order_total.cap`: Proves amount <= cap (less-than-or-equal)
 //! - `agent.authorization.v1`: Proves amount <= maxTotal for a delegated intent hash
 
+// Crate-level lints.
+//
+// `forbid(unsafe_code)` is meaningful here rather than decorative: this crate
+// contains no `unsafe`, and the only crate in the workspace that does
+// (`ves-stark-zig`, the C FFI surface) is deliberately excluded. `forbid` — not
+// `deny` — so it cannot be locally overridden by an `allow` attribute.
+#![forbid(unsafe_code)]
+#![deny(missing_docs)]
+#![deny(rustdoc::broken_intra_doc_links)]
+
 use anyhow::{Context, Result};
 use base64::Engine;
 use clap::{Parser, Subcommand, ValueEnum};

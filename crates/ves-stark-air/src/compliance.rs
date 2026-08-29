@@ -168,6 +168,14 @@ use winter_math::{FieldElement, ToElements};
 /// Total: 157
 pub const NUM_CONSTRAINTS: usize = 157;
 
+/// Number of boundary assertions emitted by [`ComplianceAir::get_assertions`].
+///
+/// Single source of truth for this count: `test_air_assertions` ties it to the
+/// AIR's actual output, and `docs_consistency_test` ties `docs/SOUNDNESS.md` to
+/// it. The salted-commitment change moved this from 80 to 76 by freeing
+/// `AMOUNT` limbs 2-5 to carry the blinding salt.
+pub const NUM_BOUNDARY_ASSERTIONS: usize = 76;
+
 const RESCUE_HALF_ROUNDS: usize = ROUND_CONSTANTS.len();
 const RESCUE_OUTPUT_ROW: usize = RESCUE_HALF_ROUNDS;
 
@@ -194,7 +202,12 @@ pub struct PublicInputs {
 pub enum PublicInputsError {
     /// Public input element length mismatch
     #[error("public input element length mismatch: expected {expected}, got {actual}")]
-    LengthMismatch { expected: usize, actual: usize },
+    LengthMismatch {
+        /// Number of field elements the AIR requires.
+        expected: usize,
+        /// Number actually supplied.
+        actual: usize,
+    },
 }
 
 /// Errors that can occur when constructing the compliance AIR.
@@ -202,11 +215,21 @@ pub enum PublicInputsError {
 pub enum ComplianceAirError {
     /// Trace too short to bind the Rescue output row.
     #[error("trace length {actual} too short; must be > {min_required}")]
-    TraceTooShort { actual: usize, min_required: usize },
+    TraceTooShort {
+        /// Trace length that was requested.
+        actual: usize,
+        /// Shortest trace that can still bind the Rescue output row.
+        min_required: usize,
+    },
 
     /// Public input element length mismatch.
     #[error("public input element length mismatch: expected {expected}, got {actual}")]
-    PublicInputLengthMismatch { expected: usize, actual: usize },
+    PublicInputLengthMismatch {
+        /// Number of field elements the AIR requires.
+        expected: usize,
+        /// Number actually supplied.
+        actual: usize,
+    },
 }
 
 impl PublicInputs {
@@ -887,7 +910,7 @@ mod tests {
             .unwrap();
 
         let assertions = air.get_assertions();
-        assert_eq!(assertions.len(), 76);
+        assert_eq!(assertions.len(), NUM_BOUNDARY_ASSERTIONS);
     }
 
     #[test]

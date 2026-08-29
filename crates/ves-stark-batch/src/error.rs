@@ -7,7 +7,12 @@ use thiserror::Error;
 pub enum BatchError {
     /// An event in the batch does not comply with the policy
     #[error("Event {event_index} not compliant: {message}")]
-    EventNotCompliant { event_index: usize, message: String },
+    EventNotCompliant {
+        /// Zero-based position of the offending event within the batch.
+        event_index: usize,
+        /// Which compliance check failed, and why.
+        message: String,
+    },
 
     /// Batch is empty
     #[error("Batch cannot be empty")]
@@ -15,7 +20,12 @@ pub enum BatchError {
 
     /// Batch exceeds maximum size
     #[error("Batch size {size} exceeds maximum {max}")]
-    BatchTooLarge { size: usize, max: usize },
+    BatchTooLarge {
+        /// Number of events submitted.
+        size: usize,
+        /// Largest batch the AIR can accommodate.
+        max: usize,
+    },
 
     /// Invalid previous state root
     #[error("Invalid previous state root")]
@@ -35,7 +45,12 @@ pub enum BatchError {
 
     /// Proof verification failed for a specific batch
     #[error("Batch {batch_index} verification failed: {message}")]
-    VerificationFailed { batch_index: usize, message: String },
+    VerificationFailed {
+        /// Position of the failing batch within the verified chain.
+        batch_index: usize,
+        /// Reason verification was rejected.
+        message: String,
+    },
 
     /// Invalid state chain (new root doesn't match expected)
     #[error(
@@ -44,8 +59,11 @@ pub enum BatchError {
         actual
     )]
     InvalidStateChain {
+        /// Position within the chain where linkage broke.
         batch_index: usize,
+        /// `new_state_root` published by the preceding batch.
         expected: [u64; 4],
+        /// `prev_state_root` declared by this batch.
         actual: [u64; 4],
     },
 
@@ -75,7 +93,12 @@ pub enum BatchError {
 
     /// Proof is too large
     #[error("Proof too large: {size} bytes exceeds maximum of {max_size} bytes")]
-    ProofTooLarge { size: usize, max_size: usize },
+    ProofTooLarge {
+        /// Size of the submitted proof, in bytes.
+        size: usize,
+        /// Hard ceiling enforced before deserialization.
+        max_size: usize,
+    },
 }
 
 /// Result type for batch operations

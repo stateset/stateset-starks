@@ -22,12 +22,19 @@ pub enum PublicInputsError {
     /// Invalid hex string in a public input field
     #[error("Invalid hex in {field}: {source}")]
     InvalidHex {
+        /// Name of the public-input field holding the bad hex.
         field: &'static str,
+        /// Underlying decode failure.
         source: hex::FromHexError,
     },
     /// Invalid hex format (length or casing)
     #[error("Invalid hex format in {field}: {reason}")]
-    InvalidHexFormat { field: &'static str, reason: String },
+    InvalidHexFormat {
+        /// Name of the public-input field with the malformed encoding.
+        field: &'static str,
+        /// What was wrong — wrong length, or non-canonical (uppercase) casing.
+        reason: String,
+    },
     /// JSON serialization failed
     #[error("JSON serialization failed: {0}")]
     Serialization(#[from] serde_json::Error),

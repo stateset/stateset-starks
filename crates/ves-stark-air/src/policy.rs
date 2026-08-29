@@ -42,13 +42,27 @@ pub enum PolicyError {
 #[serde(tag = "type")]
 pub enum Policy {
     /// AML threshold policy (amount < threshold)
-    AmlThreshold { threshold: u64 },
+    AmlThreshold {
+        /// Exclusive upper bound the amount must stay under.
+        threshold: u64,
+    },
     /// Order total cap policy (amount <= cap)
-    OrderTotalCap { cap: u64 },
+    OrderTotalCap {
+        /// Inclusive upper bound on the order total.
+        cap: u64,
+    },
     /// Agent authorization policy (amount <= max_total, bound to an intent hash)
-    AgentAuthorization { max_total: u64, intent_hash: String },
+    AgentAuthorization {
+        /// Inclusive spend cap authorized by the intent.
+        max_total: u64,
+        /// Hex-encoded hash of the `CommerceIntent` this authorization binds to.
+        intent_hash: String,
+    },
     /// Agent budget policy (cumulative_spend <= budget_limit)
-    AgentBudget { budget_limit: u64 },
+    AgentBudget {
+        /// Inclusive cap on the agent's cumulative spend.
+        budget_limit: u64,
+    },
 }
 
 impl Policy {
