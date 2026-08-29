@@ -54,9 +54,20 @@
 //! - `AgentAuthorizationProofBundle` for delegated-commerce proofs bound to both the payload
 //!   amount artifact and the authorization receipt
 
+// Crate-level lints.
+//
+// `forbid(unsafe_code)` is meaningful here rather than decorative: this crate
+// contains no `unsafe`, and the only crate in the workspace that does
+// (`ves-stark-zig`, the C FFI surface) is deliberately excluded. `forbid` — not
+// `deny` — so it cannot be locally overridden by an `allow` attribute.
+#![forbid(unsafe_code)]
+#![deny(missing_docs)]
+#![deny(rustdoc::broken_intra_doc_links)]
+
 mod client;
 mod error;
 mod set_chain;
+mod transport_policy;
 mod types;
 
 #[cfg(feature = "batch")]

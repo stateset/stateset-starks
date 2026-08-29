@@ -7,8 +7,9 @@
 use crate::error::ProverError;
 use crate::policy::Policy;
 use ves_stark_air::range_check::validate_limbs;
+use ves_stark_primitives::payload_amount::{salted_amount_limbs, WitnessSalt};
 use ves_stark_primitives::public_inputs::CompliancePublicInputs;
-use ves_stark_primitives::{felt_from_u64, Felt, FELT_ZERO};
+use ves_stark_primitives::Felt;
 use zeroize::Zeroize;
 
 /// Witness for compliance proofs.
@@ -24,6 +25,15 @@ pub struct ComplianceWitness {
     /// The actual amount (private witness data)
     pub amount: u64,
 
+    /// 128-bit blinding salt for the witness commitment (private witness data).
+    ///
+    /// Zero for the legacy unsalted scheme (binding but only weakly hiding —
+    /// a published commitment can confirm a guessed amount). A random salt
+    /// makes the published commitment hiding even over low-entropy amounts.
+    /// Occupies Rescue input limbs 2..6, so a zero salt reproduces the legacy
+    /// commitment exactly.
+    pub salt: WitnessSalt,
+
     /// Public inputs for the proof
     pub public_inputs: CompliancePublicInputs,
 }
@@ -31,27 +41,61 @@ pub struct ComplianceWitness {
 impl Drop for ComplianceWitness {
     fn drop(&mut self) {
         self.amount.zeroize();
+        self.salt.zeroize();
     }
 }
 
 impl ComplianceWitness {
     /// Create a new compliance witness without panicking on malformed public-input bindings.
+    ///
+    /// Uses the legacy zero-salt commitment; prefer
+    /// [`ComplianceWitness::try_new_salted`] wherever the commitment is
+    /// published.
     pub fn try_new(
         amount: u64,
         public_inputs: CompliancePublicInputs,
     ) -> Result<Self, ProverError> {
+        Self::try_new_with_salt(amount, [0u32; 4], public_inputs)
+    }
+
+    /// Create a witness whose commitment is blinded by a fresh random 128-bit salt.
+    pub fn try_new_salted(
+        amount: u64,
+        public_inputs: CompliancePublicInputs,
+    ) -> Result<Self, ProverError> {
+        let mut salt = [0u32; 4];
+        for limb in salt.iter_mut() {
+            *limb = rand::random::<u32>();
+        }
+        Self::try_new_with_salt(amount, salt, public_inputs)
+    }
+
+    /// Create a witness with a caller-supplied salt (e.g. for deterministic
+    /// re-proving or tests). Binds the public inputs to the salted commitment.
+    pub fn try_new_with_salt(
+        amount: u64,
+        salt: WitnessSalt,
+        public_inputs: CompliancePublicInputs,
+    ) -> Result<Self, ProverError> {
         let public_inputs = public_inputs
-            .bind_amount(amount)
+            .bind_amount_salted(amount, &salt)
             .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?;
         Ok(Self {
             amount,
+            salt,
             public_inputs,
         })
     }
 
-    /// Create a new compliance witness
+    /// Create a new compliance witness (legacy zero-salt commitment)
     pub fn new(amount: u64, public_inputs: CompliancePublicInputs) -> Self {
         Self::try_new(amount, public_inputs).expect("invalid compliance witness public inputs")
+    }
+
+    /// Create a new salted compliance witness with a fresh random salt.
+    pub fn new_salted(amount: u64, public_inputs: CompliancePublicInputs) -> Self {
+        Self::try_new_salted(amount, public_inputs)
+            .expect("invalid compliance witness public inputs")
     }
 
     /// Validate the witness against the policy
@@ -90,7 +134,7 @@ impl ComplianceWitness {
 
         let expected_bound_inputs = self
             .public_inputs
-            .bind_amount(self.amount)
+            .bind_amount_salted(self.amount, &self.salt)
             .map_err(|e| ProverError::InvalidPublicInputs(format!("{e}")))?;
         if self.public_inputs.witness_commitment != expected_bound_inputs.witness_commitment {
             return Err(ProverError::InvalidPublicInputs(
@@ -116,12 +160,12 @@ impl ComplianceWitness {
         Ok(())
     }
 
-    /// Get amount as field element limbs (low to high, 8 x u32)
+    /// Get the Rescue input block as field element limbs:
+    /// `[amount_lo, amount_hi, salt0..salt3, 0, 0]` (each a u32 value).
+    /// This is exactly the block the in-circuit sponge absorbs and the
+    /// protocol-side commitment hashes.
     pub fn amount_limbs(&self) -> [Felt; 8] {
-        let mut limbs = [FELT_ZERO; 8];
-        limbs[0] = felt_from_u64(self.amount & 0xFFFFFFFF);
-        limbs[1] = felt_from_u64(self.amount >> 32);
-        limbs
+        salted_amount_limbs(self.amount, &self.salt)
     }
 
     /// Get amount as u128 for extended precision

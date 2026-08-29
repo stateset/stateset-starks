@@ -7,8 +7,8 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-ves-stark-primitives = { version = "0.3.4", path = "../ves-stark-primitives" }
-ves-stark-air = { version = "0.3.4", path = "../ves-stark-air" }
+ves-stark-primitives = { version = "0.4.0", path = "../ves-stark-primitives" }
+ves-stark-air = { version = "0.4.0", path = "../ves-stark-air" }
 winter-prover = { workspace = true }
 winter-air = { workspace = true }
 winter-math = { workspace = true }
@@ -21,10 +21,13 @@ uuid = { workspace = true }
 hex = { workspace = true }
 base64 = { workspace = true }
 zeroize = { workspace = true }
+rand = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
-rand = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3.91"
+# rand 0.8 → getrandom 0.2 needs the "js" feature to source entropy in
+# browsers/Node for salted witness commitments proven client-side.
+getrandom = { version = "0.2", features = ["js"] }

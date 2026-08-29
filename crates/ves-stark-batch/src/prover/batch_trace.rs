@@ -880,6 +880,11 @@ impl BatchTraceBuilder {
 
             let mut hash_state = [FELT_ZERO; RESCUE_STATE_WIDTH];
             hash_state[..8].copy_from_slice(&amount_limbs);
+            // Domain separator: rescue_hash sets state[RATE] = input length (8).
+            // The expected commitment (amount_commitment = rescue_hash(amount_limbs))
+            // uses the sponge, so the in-circuit hash must set it too. (Masked
+            // before the diffusion fix, when lane 8 did not reach the output.)
+            hash_state[8] = felt_from_u64(8);
             let trace_rows = rescue_permutation_trace(&hash_state);
 
             for (step, trace_row) in trace_rows.iter().enumerate().take(ROWS_PER_COMMITMENT_HASH) {
@@ -1011,6 +1016,10 @@ impl BatchTraceBuilder {
                 let mut hash_state = [FELT_ZERO; 12];
                 hash_state[..4].copy_from_slice(&left_child);
                 hash_state[4..8].copy_from_slice(&right_child);
+                // Domain separator: a Merkle pair hash absorbs 8 elements, so
+                // rescue_hash sets capacity lane 8 = 8. Match it (see the
+                // commitment-hash note; masked before the diffusion fix).
+                hash_state[8] = felt_from_u64(8);
                 let trace_rows = rescue_permutation_trace(&hash_state);
 
                 for (step, trace_row) in trace_rows.iter().enumerate() {

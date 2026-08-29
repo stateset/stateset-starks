@@ -8,7 +8,7 @@
 use crate::air::trace_layout::{batch_cols, AMOUNT_STREAM_LANE_TAGS, MERKLE_LINK_GAMMA};
 use ves_stark_primitives::{
     felt_from_u64,
-    rescue::{MDS, MDS_INV, STATE_WIDTH as RESCUE_STATE_WIDTH},
+    rescue::{MDS, STATE_WIDTH as RESCUE_STATE_WIDTH},
     Felt,
 };
 use winter_math::FieldElement;
@@ -110,7 +110,7 @@ fn evaluate_rescue_permutation_constraints<E: FieldElement<BaseField = Felt>>(
     }
 
     let forward_state = apply_mds(&sbox_state, &MDS);
-    let backward_state = apply_mds(&curr_state, &MDS_INV);
+    let backward_state = apply_mds(&curr_state, &MDS);
 
     let mut idx = 0;
     for i in 0..RESCUE_STATE_WIDTH {
@@ -395,6 +395,12 @@ pub fn evaluate_merkle_constraints<E: FieldElement<BaseField = Felt>>(
             current[batch_cols::merkle_left(i)]
         } else if i < 8 {
             current[batch_cols::merkle_right(i - 4)]
+        } else if i == 8 {
+            // Rescue sponge domain separator: commitment and Merkle pair hashes
+            // absorb 8 elements, so the capacity lane 8 = input length (8), as
+            // `rescue_hash` sets. (Finalize is a raw permutation and binds lane
+            // 8 to its real input via `finalize_input` below.)
+            felt_to_ext::<E>(8)
         } else {
             E::ZERO
         };

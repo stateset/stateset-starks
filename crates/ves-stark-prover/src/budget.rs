@@ -97,7 +97,12 @@ pub enum BudgetWitnessError {
     Overflow,
     /// New total exceeds budget limit
     #[error("new cumulative total {new_total} exceeds budget limit {budget_limit}")]
-    ExceedsBudget { new_total: u64, budget_limit: u64 },
+    ExceedsBudget {
+        /// Cumulative total this spend would produce.
+        new_total: u64,
+        /// Inclusive budget cap the agent is bound by.
+        budget_limit: u64,
+    },
     /// Policy hash computation failed
     #[error("policy hash error: {0}")]
     PolicyHash(String),

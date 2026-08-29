@@ -20,9 +20,9 @@ order-of-magnitude guidance, not a benchmarked guarantee — reproduce with
 | **Prove time** | ~tens of ms |
 | **Proof size** | ~tens of KB |
 | **Verify time** | single-digit ms |
-| **Security** | 82-bit `fast` / 100+-bit `secure` (configurable) |
+| **Security** | 104-bit default / 168-bit `secure` / 80-bit `fast` (dev only) |
 | **Field** | Goldilocks (p = 2^64 - 2^32 + 1) |
-| **Hash** | Rescue-Prime (7 rounds, alpha=7) |
+| **Hash** | Rescue variant (7 rounds, alpha=7) — see `docs/SOUNDNESS.md` |
 
 ## Supported Policies
 
@@ -147,25 +147,46 @@ The AIR proves a relationship about a private `amount` witness bound via a Rescu
 | Parameter | Value |
 |-----------|-------|
 | Field | Goldilocks (64-bit prime: p = 2^64 - 2^32 + 1) |
-| Hash | Rescue-Prime (7 rounds, state width 12, rate 8, capacity 4) |
+| Hash | Rescue variant (7 rounds, state width 12, rate 8, capacity 4) |
 | S-box | x^7 (forward), x^{alpha_inv} (backward) |
 | MDS | 12x12 circulant matrix |
 | Trace | 248 columns x 16 rows |
-| Constraints | 157 transition + 80 boundary |
-| FRI queries | 18 (4 bits/query) |
-| Grinding | 10-bit proof-of-work |
+| Constraints | 157 transition + 76 boundary |
+| Commitment | salted Rescue: `H(amount_lo, amount_hi, salt0..3, 0, 0)`, 128-bit blinding salt (zero salt = legacy) |
+| FRI queries | 24 (4 bits/query) |
+| Grinding | 16-bit proof-of-work |
 | Blowup | 16x |
-| Security | ~82 bits (default), ~128 bits (secure preset) |
+| Extension | Quadratic (default), Cubic (`secure`) — required: the bare 64-bit base field caps soundness near 40 bits |
+| Security | 104 bits (default), 168 bits (`secure`), 80 bits (`fast`, dev only) — `min(query bound, algebraic bound)`, see below |
 
 ## Proof Options
 
 ```rust
 use ves_stark_air::ProofOptions;
 
-let default = ProofOptions::default();  // ~82-bit security, ~17ms prove
-let fast    = ProofOptions::fast();     // Lower security, faster
-let secure  = ProofOptions::secure();   // ~128-bit security, larger proofs
+let default = ProofOptions::default();  // 104-bit, quadratic extension
+let fast    = ProofOptions::fast();     //  80-bit — development and testing only
+let secure  = ProofOptions::secure();   // 168-bit, cubic extension, larger proofs
+
+// Shorter traces are strictly sounder; pass the real length when you know it.
+let bits = default.conjectured_security_level(1 << 12).unwrap();
 ```
+
+### How the security number is computed
+
+Conjectured soundness is the **minimum** of two independent bounds, not their sum:
+
+| Bound | Formula | Default preset |
+|---|---|---|
+| Query | `num_queries × log2(blowup) + grinding` | 24 × 4 + 16 = **112** |
+| Algebraic | `log2(\|F_ext\|) − log2(max_degree × trace_len)` | 128 − 24 = **104** |
+| Reported | `min(...)` | **104** |
+
+The algebraic bound is why every preset uses a field extension. Goldilocks is a
+64-bit field, so over the bare base field that bound is roughly `64 − 24 = 40`
+bits for a 2^20 trace — and no number of FRI queries can raise it. An extension
+field is not a small additive bonus; it is what lifts that ceiling, by ~64 bits
+per degree.
 
 ## Building
 

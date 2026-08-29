@@ -55,76 +55,93 @@ pub const MIN_TRACE_LENGTH: usize = 16;
 
 /// Column indices for the trace
 pub mod cols {
-    // Rescue state columns (0-11)
+    /// Rescue state columns (0-11)
     pub const RESCUE_STATE_START: usize = 0;
+    /// Exclusive end of the `RESCUE_STATE` column range.
     pub const RESCUE_STATE_END: usize = 12;
 
-    // Witness amount columns (12-19) - 8 x u32 limbs
+    /// Witness amount columns (12-19) - 8 x u32 limbs
     pub const AMOUNT_START: usize = 12;
+    /// Exclusive end of the `AMOUNT` column range.
     pub const AMOUNT_END: usize = 20;
 
-    // Threshold columns (20-27) - 8 x u32 limbs
+    /// Threshold columns (20-27) - 8 x u32 limbs
     pub const THRESHOLD_START: usize = 20;
+    /// Exclusive end of the `THRESHOLD` column range.
     pub const THRESHOLD_END: usize = 28;
 
-    // Comparison intermediate values (28-35)
-    // These hold the limb-by-limb comparison results
+    /// Comparison intermediate values (28-35)
+    /// These hold the limb-by-limb comparison results
     pub const COMPARISON_START: usize = 28;
+    /// Exclusive end of the `COMPARISON` column range.
     pub const COMPARISON_END: usize = 36;
 
-    // Control flags (36-39)
+    /// Control flags (36-39)
     pub const FLAG_IS_FIRST: usize = 36;
+    /// Trace column index `FLAG_IS_LAST`.
     pub const FLAG_IS_LAST: usize = 37;
+    /// Trace column index `ROUND_COUNTER`.
     pub const ROUND_COUNTER: usize = 38;
+    /// Trace column index `PHASE`.
     pub const PHASE: usize = 39;
 
-    // Binary decomposition columns for range proofs
-    // Amount limb 0 bits (40-71) - 32 bits for low u32
+    /// Binary decomposition columns for range proofs
+    /// Amount limb 0 bits (40-71) - 32 bits for low u32
     pub const AMOUNT_BITS_LIMB0_START: usize = 40;
+    /// Exclusive end of the `AMOUNT_BITS_LIMB0` column range.
     pub const AMOUNT_BITS_LIMB0_END: usize = 72;
 
-    // Amount limb 1 bits (72-103) - 32 bits for high u32
+    /// Amount limb 1 bits (72-103) - 32 bits for high u32
     pub const AMOUNT_BITS_LIMB1_START: usize = 72;
+    /// Exclusive end of the `AMOUNT_BITS_LIMB1` column range.
     pub const AMOUNT_BITS_LIMB1_END: usize = 104;
 
-    // Rescue hash commitment flag (104)
+    /// Rescue hash commitment flag (104)
     pub const RESCUE_COMMIT_FLAG: usize = 104;
 
     // =========================================================================
     // Legacy Columns: Comparison Gadget (unused by current AIR)
     // =========================================================================
 
-    // diff[i] = threshold[i] - amount[i] - 1 when amount[i] < threshold[i] (105-112)
+    /// `diff[i] = threshold[i] - amount[i] - 1` when `amount[i] < threshold[i]` (columns 105-112).
     pub const DIFF_START: usize = 105;
+    /// Exclusive end of the `DIFF` column range.
     pub const DIFF_END: usize = 113;
 
-    // borrow[i] = 1 if amount[i] > threshold[i] at position i (113-120)
+    /// `borrow[i] = 1` if `amount[i] > threshold[i]` at position `i` (columns 113-120).
     pub const BORROW_START: usize = 113;
+    /// Exclusive end of the `BORROW` column range.
     pub const BORROW_END: usize = 121;
 
-    // is_less[i] = 1 if determined amount < threshold considering limbs [i..7] (121-128)
+    /// `is_less[i] = 1` if `amount < threshold` is settled by limbs `i..7` (columns 121-128).
     pub const IS_LESS_START: usize = 121;
+    /// Exclusive end of the `IS_LESS` column range.
     pub const IS_LESS_END: usize = 129;
 
-    // is_equal[i] = 1 if all limbs [i..7] are equal (129-136)
+    /// `is_equal[i] = 1` if all limbs `i..7` are equal (columns 129-136).
     pub const IS_EQUAL_START: usize = 129;
+    /// Exclusive end of the `IS_EQUAL` column range.
     pub const IS_EQUAL_END: usize = 137;
 
     // =========================================================================
     // Diff Bit Decomposition (u32 for limbs 0-1)
     // =========================================================================
 
-    // diff limb 0 bits (137-168)
+    /// diff limb 0 bits (137-168)
     pub const DIFF_BITS_LIMB0_START: usize = 137;
+    /// Exclusive end of the `DIFF_BITS_LIMB0` column range.
     pub const DIFF_BITS_LIMB0_END: usize = 169;
 
-    // diff limb 1 bits (169-200)
+    /// diff limb 1 bits (169-200)
     pub const DIFF_BITS_LIMB1_START: usize = 169;
+    /// Exclusive end of the `DIFF_BITS_LIMB1` column range.
     pub const DIFF_BITS_LIMB1_END: usize = 201;
 
-    // Public inputs binding columns (201-247)
+    /// Public inputs binding columns (201-247)
     pub const PUBLIC_INPUTS_START: usize = 201;
+    /// Exclusive end of the `PUBLIC_INPUTS` column range.
     pub const PUBLIC_INPUTS_END: usize = 248;
+    /// Number of columns in the `PUBLIC_INPUTS` range.
     pub const PUBLIC_INPUTS_LEN: usize = PUBLIC_INPUTS_END - PUBLIC_INPUTS_START;
 
     /// Number of bits per limb
@@ -136,6 +153,7 @@ pub mod cols {
     /// Get bit column start index for limbs 0-1 (only these have binary decomposition)
     /// Limbs 2-7 are boundary-asserted to zero and don't need binary decomposition
     #[inline]
+    /// Trace column index `fn`.
     pub const fn amount_limb_bits_start(limb_idx: usize) -> usize {
         if limb_idx == 0 {
             AMOUNT_BITS_LIMB0_START
@@ -264,6 +282,7 @@ impl TraceInfo {
 /// A row of the execution trace
 #[derive(Debug, Clone)]
 pub struct TraceRow {
+    /// One field element per trace column; index with `cols::*`.
     pub values: [Felt; TRACE_WIDTH],
 }
 
@@ -368,14 +387,17 @@ impl TraceRow {
         self.values[cols::FLAG_IS_FIRST]
     }
 
+    /// Row-framing flag: 1 on the final row, 0 elsewhere.
     pub fn is_last(&self) -> Felt {
         self.values[cols::FLAG_IS_LAST]
     }
 
+    /// Rescue round counter for this row.
     pub fn round_counter(&self) -> Felt {
         self.values[cols::ROUND_COUNTER]
     }
 
+    /// Phase selector distinguishing the gadget stages within the trace.
     pub fn phase(&self) -> Felt {
         self.values[cols::PHASE]
     }
@@ -385,14 +407,17 @@ impl TraceRow {
         self.values[cols::FLAG_IS_FIRST] = value;
     }
 
+    /// Set the last-row framing flag.
     pub fn set_is_last(&mut self, value: Felt) {
         self.values[cols::FLAG_IS_LAST] = value;
     }
 
+    /// Set the Rescue round counter.
     pub fn set_round_counter(&mut self, value: Felt) {
         self.values[cols::ROUND_COUNTER] = value;
     }
 
+    /// Set the phase selector.
     pub fn set_phase(&mut self, value: Felt) {
         self.values[cols::PHASE] = value;
     }

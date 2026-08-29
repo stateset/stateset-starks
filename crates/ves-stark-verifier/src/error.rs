@@ -33,7 +33,12 @@ pub enum VerifierError {
 
     /// Invalid policy hash
     #[error("Invalid policy hash: expected {expected}, got {actual}")]
-    InvalidPolicyHash { expected: String, actual: String },
+    InvalidPolicyHash {
+        /// Policy hash recomputed from the verifier's own policy.
+        expected: String,
+        /// Policy hash carried in the proof's public inputs.
+        actual: String,
+    },
 
     /// Proof verification failed
     #[error("Proof verification failed: {0}")]
@@ -44,19 +49,39 @@ pub enum VerifierError {
     #[error(
         "Policy mismatch: expected policy '{expected}', but proof was generated for '{actual}'"
     )]
-    PolicyMismatch { expected: String, actual: String },
+    PolicyMismatch {
+        /// Policy id the verifier was asked to enforce.
+        expected: String,
+        /// Policy id the proof was generated for.
+        actual: String,
+    },
 
     /// Limit value mismatch between proof and expected policy
     #[error("Limit mismatch: expected {expected}, but proof was generated for {actual}")]
-    LimitMismatch { expected: u64, actual: u64 },
+    LimitMismatch {
+        /// Effective limit derived from the verifier's policy.
+        expected: u64,
+        /// Effective limit the proof was generated against.
+        actual: u64,
+    },
 
     /// Invalid hex format in public inputs
     #[error("Invalid hex format in field '{field}': {reason}")]
-    InvalidHexFormat { field: String, reason: String },
+    InvalidHexFormat {
+        /// Public-input field containing the malformed hex.
+        field: String,
+        /// Why it was rejected — wrong length, or non-canonical casing.
+        reason: String,
+    },
 
     /// Unsupported proof version
     #[error("Unsupported proof version {version}: only version {supported} is supported")]
-    UnsupportedProofVersion { version: u32, supported: u32 },
+    UnsupportedProofVersion {
+        /// Version encoded in the submitted proof.
+        version: u32,
+        /// The only version this verifier accepts.
+        supported: u32,
+    },
 
     /// Witness commitment mismatch
     #[error(
@@ -70,7 +95,12 @@ pub enum VerifierError {
 
     /// Proof is too large
     #[error("Proof too large: {size} bytes exceeds maximum of {max_size} bytes")]
-    ProofTooLarge { size: usize, max_size: usize },
+    ProofTooLarge {
+        /// Size of the submitted proof, in bytes.
+        size: usize,
+        /// Hard ceiling enforced before deserialization.
+        max_size: usize,
+    },
 }
 
 impl VerifierError {

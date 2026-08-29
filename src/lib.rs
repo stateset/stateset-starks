@@ -28,6 +28,16 @@
 //! use ves_stark_verifier::verify_compliance_proof_auto;
 //! ```
 
+// Crate-level lints.
+//
+// `forbid(unsafe_code)` is meaningful here rather than decorative: this crate
+// contains no `unsafe`, and the only crate in the workspace that does
+// (`ves-stark-zig`, the C FFI surface) is deliberately excluded. `forbid` — not
+// `deny` — so it cannot be locally overridden by an `allow` attribute.
+#![forbid(unsafe_code)]
+#![deny(missing_docs)]
+#![deny(rustdoc::broken_intra_doc_links)]
+
 // Re-export sub-crates
 pub use ves_stark_air as air;
 pub use ves_stark_client as client;

@@ -271,6 +271,7 @@ pub struct BatchSubmissionBuilder {
 }
 
 impl BatchSubmissionBuilder {
+    /// Start an empty submission; every required field must then be set.
     pub fn new() -> Self {
         Self {
             batch_id: None,
@@ -289,6 +290,8 @@ impl BatchSubmissionBuilder {
         }
     }
 
+    /// Pre-fill from a proved batch: state roots, event count, proof bytes and
+    /// the compliance flag are taken from the proof itself.
     pub fn from_batch_proof(proof: &ves_stark_batch::prover::BatchProof) -> Result<Self> {
         let batch_id = validate_batch_proof_for_client(proof)?;
 
@@ -309,67 +312,80 @@ impl BatchSubmissionBuilder {
         })
     }
 
+    /// Set the batch identifier.
     pub fn batch_id(mut self, id: Uuid) -> Self {
         self.batch_id = Some(id);
         self
     }
 
+    /// Set the owning tenant.
     pub fn tenant_id(mut self, id: Uuid) -> Self {
         self.tenant_id = Some(id);
         self
     }
 
+    /// Set the owning store.
     pub fn store_id(mut self, id: Uuid) -> Self {
         self.store_id = Some(id);
         self
     }
 
+    /// Set the Merkle root over the batch's events.
     pub fn events_root(mut self, root: [u8; 32]) -> Self {
         self.events_root = Some(root);
         self
     }
 
+    /// Set the state root this batch transitions *from*.
     pub fn prev_state_root(mut self, root: [u8; 32]) -> Self {
         self.prev_state_root = Some(root);
         self
     }
 
+    /// Set the state root this batch transitions *to*.
     pub fn new_state_root(mut self, root: [u8; 32]) -> Self {
         self.new_state_root = Some(root);
         self
     }
 
+    /// Set the inclusive VES sequence range this batch covers.
     pub fn sequence_range(mut self, start: u64, end: u64) -> Self {
         self.sequence_start = Some(start);
         self.sequence_end = Some(end);
         self
     }
 
+    /// Set the number of events in the batch.
     pub fn event_count(mut self, count: u32) -> Self {
         self.event_count = Some(count);
         self
     }
 
+    /// Set the serialized STARK proof.
     pub fn proof_bytes(mut self, bytes: Vec<u8>) -> Self {
         self.proof_bytes = Some(bytes);
         self
     }
 
+    /// Set the hash of the policy every event was proved against.
     pub fn policy_hash(mut self, hash: [u8; 32]) -> Self {
         self.policy_hash = Some(hash);
         self
     }
 
+    /// Set the effective policy limit enforced by the proof.
     pub fn policy_limit(mut self, limit: u64) -> Self {
         self.policy_limit = Some(limit);
         self
     }
 
+    /// Set whether every event in the batch satisfied the policy.
     pub fn all_compliant(mut self, compliant: bool) -> Self {
         self.all_compliant = compliant;
         self
     }
 
+    /// Finish the submission, erroring if any required field is unset.
     pub fn build(self) -> Result<BatchProofSubmission> {
         let batch_id = self.batch_id.ok_or_else(|| ClientError::ApiError {
             status: 400,

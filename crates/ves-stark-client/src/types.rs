@@ -1,4 +1,16 @@
-//! Type definitions for the sequencer API
+//! Type definitions for the sequencer API.
+//!
+//! These are transport DTOs: each struct mirrors, field for field, a JSON
+//! request or response body of the sequencer REST API, with `serde(rename_all =
+//! "camelCase")` supplying the wire names. The authoritative description of each
+//! field is the API reference, not this crate.
+//!
+//! `missing_docs` is therefore allowed for this module alone — the rest of the
+//! crate keeps the lint. A per-field comment here could only restate the field
+//! name, and tautological documentation on 96 fields would obscure the handful
+//! of fields that carry real encoding semantics. Those are documented
+//! individually below.
+#![allow(missing_docs)]
 
 use crate::error::{ClientError, Result};
 use base64::Engine;

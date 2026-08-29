@@ -25,7 +25,12 @@ pub const DOMAIN_COMMERCE_AUTHORIZATION_RECEIPT_HASH: &[u8] =
 pub enum CommerceIntentError {
     /// A field failed validation.
     #[error("Invalid {field}: {reason}")]
-    InvalidField { field: &'static str, reason: String },
+    InvalidField {
+        /// Name of the offending field, as it appears in the canonical JSON.
+        field: &'static str,
+        /// Why the value was rejected.
+        reason: String,
+    },
     /// JSON serialization failed.
     #[error("JSON serialization failed: {0}")]
     Serialization(#[from] serde_json::Error),
@@ -34,28 +39,64 @@ pub enum CommerceIntentError {
     Canonicalization(String),
     /// The execution exceeded the authorized amount.
     #[error("Execution amount {amount} exceeds max_total {max_total}")]
-    AmountExceedsLimit { amount: u64, max_total: u64 },
+    AmountExceedsLimit {
+        /// Amount actually executed, in the intent's minor currency unit.
+        amount: u64,
+        /// Spend cap authorized by the intent, same unit.
+        max_total: u64,
+    },
     /// The execution happened after the intent expired.
     #[error("Execution time {executed_at} exceeds intent expiry {expires_at}")]
-    IntentExpired { executed_at: u64, expires_at: u64 },
+    IntentExpired {
+        /// Execution timestamp (Unix seconds).
+        executed_at: u64,
+        /// Intent expiry the execution passed (Unix seconds).
+        expires_at: u64,
+    },
     /// The execution currency does not match the intent currency.
     #[error("Currency mismatch: expected {expected}, got {actual}")]
-    CurrencyMismatch { expected: String, actual: String },
+    CurrencyMismatch {
+        /// Currency the intent authorized (ISO 4217).
+        expected: String,
+        /// Currency the execution used.
+        actual: String,
+    },
     /// The execution merchant does not match the authorized merchant.
     #[error("Merchant mismatch: expected {expected}, got {actual}")]
-    MerchantMismatch { expected: String, actual: String },
+    MerchantMismatch {
+        /// Merchant identifier the intent authorized.
+        expected: String,
+        /// Merchant the execution was addressed to.
+        actual: String,
+    },
     /// The execution payee does not match the authorized payee.
     #[error("Payee mismatch: expected {expected}, got {actual}")]
-    PayeeMismatch { expected: String, actual: String },
+    PayeeMismatch {
+        /// Payee the intent authorized.
+        expected: String,
+        /// Payee the execution actually paid.
+        actual: String,
+    },
     /// The execution shipping country does not match the authorized country.
     #[error("Shipping country mismatch: expected {expected}, got {actual}")]
-    ShippingCountryMismatch { expected: String, actual: String },
+    ShippingCountryMismatch {
+        /// Shipping country the intent authorized (ISO 3166-1 alpha-2).
+        expected: String,
+        /// Shipping country of the execution.
+        actual: String,
+    },
     /// An executed SKU is outside the authorized scope.
     #[error("SKU '{sku}' is not in the authorized allowlist")]
-    UnauthorizedSku { sku: String },
+    UnauthorizedSku {
+        /// The SKU that fell outside the intent's allowlist.
+        sku: String,
+    },
     /// An executed category is outside the authorized scope.
     #[error("Category '{category}' is not in the authorized allowlist")]
-    UnauthorizedCategory { category: String },
+    UnauthorizedCategory {
+        /// The category that fell outside the intent's allowlist.
+        category: String,
+    },
 }
 
 /// Canonical delegated commerce intent.

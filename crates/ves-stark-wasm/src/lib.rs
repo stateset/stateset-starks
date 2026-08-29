@@ -386,6 +386,58 @@ pub fn prove(
     proof_to_js(proof, witness_commitment_hex)
 }
 
+/// Prove with a SALTED witness commitment: a fresh random 128-bit salt blinds
+/// the published commitment, so it can neither reveal nor confirm a guessed
+/// amount (the unsalted `prove` commitment is binding but dictionary-checkable
+/// over low-entropy amounts). Same circuit, same verifier, same call shape —
+/// prefer this wherever the commitment leaves the device.
+#[wasm_bindgen(js_name = proveSalted)]
+pub fn prove_salted(
+    amount: u64,
+    public_inputs: JsValue,
+    policy_type: String,
+    policy_limit: u64,
+) -> Result<JsValue, JsValue> {
+    let public_inputs = parse_public_inputs(public_inputs)?;
+
+    if public_inputs.policy_id != policy_type {
+        return Err(js_error(format!(
+            "policyType {policy_type} does not match publicInputs.policyId {}",
+            public_inputs.policy_id
+        )));
+    }
+
+    let policy = Policy::from_public_inputs(&public_inputs.policy_id, &public_inputs.policy_params)
+        .map_err(|err| {
+            js_error(format!(
+                "invalid policy parameters for {policy_type}: {err}"
+            ))
+        })?;
+    if policy.limit() != policy_limit {
+        return Err(js_error(format!(
+            "policyLimit {policy_limit} does not match publicInputs policy limit {}",
+            policy.limit()
+        )));
+    }
+    if !policy.validate_amount(amount) {
+        return Err(js_error(format!(
+            "amount {amount} does not satisfy policy {policy_type} with limit {policy_limit}"
+        )));
+    }
+
+    let witness = ComplianceWitness::try_new_salted(amount, public_inputs)
+        .map_err(|err| js_error(format!("invalid witness: {err}")))?;
+    let proof = ComplianceProver::with_policy(policy)
+        .prove(&witness)
+        .map_err(|err| js_error(format!("proof generation failed: {err}")))?;
+    let witness_commitment_hex = proof
+        .witness_commitment_hex
+        .clone()
+        .ok_or_else(|| js_error("proof did not include witnessCommitmentHex"))?;
+
+    proof_to_js(proof, witness_commitment_hex)
+}
+
 #[wasm_bindgen(js_name = verifyHex)]
 pub fn verify_hex(
     proof_bytes: Vec<u8>,

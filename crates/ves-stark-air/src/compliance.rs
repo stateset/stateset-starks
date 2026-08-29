@@ -53,8 +53,11 @@
 //!    T[THRESHOLD_START+1][0] = limit_high
 //!    Purpose: Bind public threshold to trace
 //!
-//! 5. T[AMOUNT_START+i][0] = 0  for i in 2..8
-//!    Purpose: Upper limbs zero (amount fits in 64 bits)
+//! 5. T[AMOUNT_START+i][0] = 0  for i in 6..8
+//!    Purpose: Reserved limbs zero. Limbs 2..6 are NOT asserted: they carry
+//!    the private 128-bit blinding salt of the salted commitment scheme
+//!    (zero in the legacy unsalted scheme). The comparison gadget reads only
+//!    limbs 0-1, so the salt feeds nothing but the Rescue sponge.
 //!
 //! 6. T[THRESHOLD_START+i][0] = 0  for i in 2..8
 //!    Purpose: Upper limbs zero (limit fits in 64 bits)
@@ -165,6 +168,14 @@ use winter_math::{FieldElement, ToElements};
 /// Total: 157
 pub const NUM_CONSTRAINTS: usize = 157;
 
+/// Number of boundary assertions emitted by [`ComplianceAir::get_assertions`].
+///
+/// Single source of truth for this count: `test_air_assertions` ties it to the
+/// AIR's actual output, and `docs_consistency_test` ties `docs/SOUNDNESS.md` to
+/// it. The salted-commitment change moved this from 80 to 76 by freeing
+/// `AMOUNT` limbs 2-5 to carry the blinding salt.
+pub const NUM_BOUNDARY_ASSERTIONS: usize = 76;
+
 const RESCUE_HALF_ROUNDS: usize = ROUND_CONSTANTS.len();
 const RESCUE_OUTPUT_ROW: usize = RESCUE_HALF_ROUNDS;
 
@@ -191,7 +202,12 @@ pub struct PublicInputs {
 pub enum PublicInputsError {
     /// Public input element length mismatch
     #[error("public input element length mismatch: expected {expected}, got {actual}")]
-    LengthMismatch { expected: usize, actual: usize },
+    LengthMismatch {
+        /// Number of field elements the AIR requires.
+        expected: usize,
+        /// Number actually supplied.
+        actual: usize,
+    },
 }
 
 /// Errors that can occur when constructing the compliance AIR.
@@ -199,11 +215,21 @@ pub enum PublicInputsError {
 pub enum ComplianceAirError {
     /// Trace too short to bind the Rescue output row.
     #[error("trace length {actual} too short; must be > {min_required}")]
-    TraceTooShort { actual: usize, min_required: usize },
+    TraceTooShort {
+        /// Trace length that was requested.
+        actual: usize,
+        /// Shortest trace that can still bind the Rescue output row.
+        min_required: usize,
+    },
 
     /// Public input element length mismatch.
     #[error("public input element length mismatch: expected {expected}, got {actual}")]
-    PublicInputLengthMismatch { expected: usize, actual: usize },
+    PublicInputLengthMismatch {
+        /// Number of field elements the AIR requires.
+        expected: usize,
+        /// Number actually supplied.
+        actual: usize,
+    },
 }
 
 impl PublicInputs {
@@ -362,8 +388,8 @@ impl ComplianceAir {
             degrees.push(TransitionConstraintDegree::new(2));
         }
 
-        // Number of boundary assertions: 80 (see get_assertions)
-        let context = AirContext::new(trace_info, degrees, 80, options);
+        // Number of boundary assertions: 76 (see get_assertions)
+        let context = AirContext::new(trace_info, degrees, 76, options);
 
         Ok(Self {
             context,
@@ -421,8 +447,16 @@ impl Air for ComplianceAir {
             threshold_high,
         ));
 
-        // Boundary constraint: upper limbs (2-7) must be zero for u64 amounts
-        for i in 2..8 {
+        // Boundary constraint: reserved limbs (6-7) must be zero.
+        //
+        // Limbs 2..6 are deliberately NOT asserted: they carry the private
+        // 128-bit blinding salt of the salted commitment scheme (zero in the
+        // legacy unsalted scheme, which therefore remains fully compatible).
+        // The comparison gadget reads only limbs 0-1 (the u64 amount), so the
+        // salt limbs influence nothing but the Rescue sponge — which is the
+        // point: the public commitment binds (amount, salt) and a random salt
+        // makes it hiding over low-entropy amounts.
+        for i in 6..8 {
             assertions.push(Assertion::single(cols::AMOUNT_START + i, 0, FELT_ZERO));
         }
 
@@ -598,12 +632,16 @@ impl Air for ComplianceAir {
         }
 
         let mds_forward = apply_mds(&sbox_state, &MDS);
-        let mds_inv = apply_mds(&curr_state, &MDS_INV);
+        // Backward half-round uses the FORWARD MDS (matching the native
+        // permutation fix): next = sbox_inv(MDS(curr)) + const, i.e.
+        // pow7(next - const) = MDS(curr). Using MDS_INV here would let the
+        // backward MDS cancel the forward one, destroying diffusion.
+        let mds_backward = apply_mds(&curr_state, &MDS);
 
         for i in 0..RESCUE_STATE_WIDTH {
             let round_const = periodic_values[PERIODIC_RESCUE_CONST_START_IDX + i];
             let forward_constraint = next_state[i] - (mds_forward[i] + round_const);
-            let backward_constraint = pow7(next_state[i] - round_const) - mds_inv[i];
+            let backward_constraint = pow7(next_state[i] - round_const) - mds_backward[i];
             let step_constraint = rescue_is_forward * forward_constraint
                 + (E::ONE - rescue_is_forward) * backward_constraint;
 
@@ -872,7 +910,7 @@ mod tests {
             .unwrap();
 
         let assertions = air.get_assertions();
-        assert_eq!(assertions.len(), 80);
+        assert_eq!(assertions.len(), NUM_BOUNDARY_ASSERTIONS);
     }
 
     #[test]

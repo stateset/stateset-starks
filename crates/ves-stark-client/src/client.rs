@@ -6,6 +6,8 @@ use uuid::Uuid;
 use ves_stark_air::policy::Policy;
 use zeroize::Zeroizing;
 
+use crate::transport_policy::{sensitive_auth_header, validate_api_key, validate_base_url};
+
 use crate::error::{ClientError, Result};
 use crate::types::*;
 
@@ -52,27 +54,13 @@ impl SequencerClient {
     /// * `base_url` - The base URL of the sequencer (e.g., `http://localhost:8080`)
     /// * `api_key` - The API key for authentication
     pub fn new(base_url: &str, api_key: &str) -> Result<Self> {
-        let base_url = base_url.trim();
-        if base_url.is_empty() {
-            return Err(ClientError::InvalidBaseUrl(
-                "base_url must not be empty".to_string(),
-            ));
-        }
-        reqwest::Url::parse(base_url).map_err(|e| ClientError::InvalidBaseUrl(e.to_string()))?;
-
-        let api_key = api_key.trim();
-        if api_key.is_empty() {
-            return Err(ClientError::InvalidHeader(
-                "api_key must not be empty".to_string(),
-            ));
-        }
+        let base_url = validate_base_url(base_url)?;
+        let api_key = validate_api_key(api_key)?;
 
         let key = Zeroizing::new(format!("ApiKey {}", api_key));
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        let auth_value =
-            HeaderValue::from_str(&key).map_err(|e| ClientError::InvalidHeader(e.to_string()))?;
-        headers.insert(AUTHORIZATION, auth_value);
+        headers.insert(AUTHORIZATION, sensitive_auth_header(&key)?);
         // `key` is zeroed on drop here
 
         let client = reqwest::Client::builder()
@@ -80,10 +68,7 @@ impl SequencerClient {
             .timeout(std::time::Duration::from_secs(30))
             .build()?;
 
-        Ok(Self {
-            client,
-            base_url: base_url.trim_end_matches('/').to_string(),
-        })
+        Ok(Self { client, base_url })
     }
 
     /// Create a new sequencer client.

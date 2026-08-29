@@ -82,6 +82,7 @@ pub mod batch_cols {
     // Base compliance columns (0..BASE_TRACE_WIDTH)
     // These are inherited from the single-event compliance AIR
     // =========================================================================
+    /// Exclusive end of the `BASE_TRACE` range.
     pub const BASE_TRACE_END: usize = BASE_TRACE_WIDTH;
 
     // =========================================================================
@@ -99,6 +100,7 @@ pub mod batch_cols {
     // =========================================================================
     /// Merkle left child (4 elements)
     pub const MERKLE_LEFT_START: usize = NUM_EVENTS + 1;
+    /// Exclusive end of the `MERKLE_LEFT` range.
     pub const MERKLE_LEFT_END: usize = MERKLE_LEFT_START + 4;
 
     /// Event-phase subtraction witness aliases.
@@ -110,8 +112,11 @@ pub mod batch_cols {
     /// - borrow 0
     /// - borrow 1
     pub const EVENT_DIFF0: usize = MERKLE_LEFT_START;
+    /// Trace layout constant `EVENT_DIFF1`.
     pub const EVENT_DIFF1: usize = MERKLE_LEFT_START + 1;
+    /// Trace layout constant `EVENT_BORROW0`.
     pub const EVENT_BORROW0: usize = MERKLE_LEFT_START + 2;
+    /// Trace layout constant `EVENT_BORROW1`.
     pub const EVENT_BORROW1: usize = MERKLE_LEFT_START + 3;
 
     /// Merkle right child (4 elements)
@@ -119,10 +124,12 @@ pub mod batch_cols {
     /// Event rows and leaf rows reuse these columns as an event-side accumulator for the
     /// ordered leaf-hash stream before Merkle hashing begins.
     pub const MERKLE_RIGHT_START: usize = MERKLE_LEFT_END;
+    /// Exclusive end of the `MERKLE_RIGHT` range.
     pub const MERKLE_RIGHT_END: usize = MERKLE_RIGHT_START + 4;
 
     /// Merkle parent/output (4 elements)
     pub const MERKLE_OUTPUT_START: usize = MERKLE_RIGHT_END;
+    /// Exclusive end of the `MERKLE_OUTPUT` range.
     pub const MERKLE_OUTPUT_END: usize = MERKLE_OUTPUT_START + 4;
 
     /// Current Merkle tree level (0 = leaves)
@@ -148,6 +155,7 @@ pub mod batch_cols {
 
     /// Final event tree root (4 elements) - stored after Merkle phase
     pub const EVENT_TREE_ROOT_START: usize = IS_MERKLE_ROW + 1;
+    /// Exclusive end of the `EVENT_TREE_ROOT` range.
     pub const EVENT_TREE_ROOT_END: usize = EVENT_TREE_ROOT_START + 4;
 
     // =========================================================================
@@ -155,42 +163,52 @@ pub mod batch_cols {
     // =========================================================================
     /// Running accumulator for the event segment's claimed leaf amount commitments (4 lanes).
     pub const EVENT_COMMITMENT_ACC_START: usize = EVENT_TREE_ROOT_END;
+    /// Exclusive end of the `EVENT_COMMITMENT_ACC` range.
     pub const EVENT_COMMITMENT_ACC_END: usize = EVENT_COMMITMENT_ACC_START + 4;
 
     /// Running accumulator for the explicit leaf rows' amount commitments (4 lanes).
     pub const LEAF_COMMITMENT_ACC_START: usize = EVENT_COMMITMENT_ACC_END;
+    /// Exclusive end of the `LEAF_COMMITMENT_ACC` range.
     pub const LEAF_COMMITMENT_ACC_END: usize = LEAF_COMMITMENT_ACC_START + 4;
 
     /// Running accumulator for the event segment's claimed leaf event IDs (4 lanes).
     pub const EVENT_ID_ACC_START: usize = LEAF_COMMITMENT_ACC_END;
+    /// Exclusive end of the `EVENT_ID_ACC` range.
     pub const EVENT_ID_ACC_END: usize = EVENT_ID_ACC_START + 4;
 
     /// Running accumulator for the explicit leaf rows' event IDs (4 lanes).
     pub const LEAF_ID_ACC_START: usize = EVENT_ID_ACC_END;
+    /// Exclusive end of the `LEAF_ID_ACC` range.
     pub const LEAF_ID_ACC_END: usize = LEAF_ID_ACC_START + 4;
 
     /// Running accumulator for the event segment's claimed leaf policy hash lanes (8 lanes).
     pub const EVENT_POLICY_ACC_START: usize = LEAF_ID_ACC_END;
+    /// Exclusive end of the `EVENT_POLICY_ACC` range.
     pub const EVENT_POLICY_ACC_END: usize = EVENT_POLICY_ACC_START + 8;
 
     /// Running accumulator for the explicit leaf rows' policy hash lanes (8 lanes).
     pub const LEAF_POLICY_ACC_START: usize = EVENT_POLICY_ACC_END;
+    /// Exclusive end of the `LEAF_POLICY_ACC` range.
     pub const LEAF_POLICY_ACC_END: usize = LEAF_POLICY_ACC_START + 8;
 
     /// Running accumulator for the event segment's claimed canonical public-input hash lanes.
     pub const EVENT_PUBLIC_INPUTS_ACC_START: usize = LEAF_POLICY_ACC_END;
+    /// Exclusive end of the `EVENT_PUBLIC_INPUTS_ACC` range.
     pub const EVENT_PUBLIC_INPUTS_ACC_END: usize = EVENT_PUBLIC_INPUTS_ACC_START + 8;
 
     /// Running accumulator for the explicit leaf rows' canonical public-input hash lanes.
     pub const LEAF_PUBLIC_INPUTS_ACC_START: usize = EVENT_PUBLIC_INPUTS_ACC_END;
+    /// Exclusive end of the `LEAF_PUBLIC_INPUTS_ACC` range.
     pub const LEAF_PUBLIC_INPUTS_ACC_END: usize = LEAF_PUBLIC_INPUTS_ACC_START + 8;
 
     /// Running accumulator for the event segment's claimed amount limbs (2 lanes).
     pub const EVENT_AMOUNT_ACC_START: usize = LEAF_PUBLIC_INPUTS_ACC_END;
+    /// Exclusive end of the `EVENT_AMOUNT_ACC` range.
     pub const EVENT_AMOUNT_ACC_END: usize = EVENT_AMOUNT_ACC_START + 2;
 
     /// Running accumulator for the explicit leaf rows' amount limbs (2 lanes).
     pub const LEAF_AMOUNT_ACC_START: usize = EVENT_AMOUNT_ACC_END;
+    /// Exclusive end of the `LEAF_AMOUNT_ACC` range.
     pub const LEAF_AMOUNT_ACC_END: usize = LEAF_AMOUNT_ACC_START + 2;
 
     /// Running accumulator for the event segment's claimed compliance flags.
@@ -201,22 +219,27 @@ pub mod batch_cols {
 
     /// Running sequence accumulator for the previous level's outputs (4 lanes).
     pub const MERKLE_PREV_LEVEL_ACC_START: usize = LEAF_FLAG_ACC + 1;
+    /// Exclusive end of the `MERKLE_PREV_LEVEL_ACC` range.
     pub const MERKLE_PREV_LEVEL_ACC_END: usize = MERKLE_PREV_LEVEL_ACC_START + 4;
 
     /// Running sequence accumulator for the current level's consumed children (4 lanes).
     pub const MERKLE_CONSUMED_LEVEL_ACC_START: usize = MERKLE_PREV_LEVEL_ACC_END;
+    /// Exclusive end of the `MERKLE_CONSUMED_LEVEL_ACC` range.
     pub const MERKLE_CONSUMED_LEVEL_ACC_END: usize = MERKLE_CONSUMED_LEVEL_ACC_START + 4;
 
     /// Running sequence accumulator for the current level's produced outputs (4 lanes).
     pub const MERKLE_CURR_LEVEL_ACC_START: usize = MERKLE_CONSUMED_LEVEL_ACC_END;
+    /// Exclusive end of the `MERKLE_CURR_LEVEL_ACC` range.
     pub const MERKLE_CURR_LEVEL_ACC_END: usize = MERKLE_CURR_LEVEL_ACC_START + 4;
 
     /// Previous batch state root (4 elements)
     pub const PREV_STATE_ROOT_START: usize = MERKLE_CURR_LEVEL_ACC_END;
+    /// Exclusive end of the `PREV_STATE_ROOT` range.
     pub const PREV_STATE_ROOT_END: usize = PREV_STATE_ROOT_START + 4;
 
     /// New batch state root (4 elements)
     pub const NEW_STATE_ROOT_START: usize = PREV_STATE_ROOT_END;
+    /// Exclusive end of the `NEW_STATE_ROOT` range.
     pub const NEW_STATE_ROOT_END: usize = NEW_STATE_ROOT_START + 4;
 
     // =========================================================================
@@ -265,14 +288,17 @@ pub mod batch_cols {
     // =========================================================================
     /// Batch ID (4 elements)
     pub const BATCH_ID_START: usize = IS_LAST_BATCH_ROW + 1;
+    /// Exclusive end of the `BATCH_ID` range.
     pub const BATCH_ID_END: usize = BATCH_ID_START + 4;
 
     /// Tenant ID (4 elements)
     pub const TENANT_ID_START: usize = BATCH_ID_END;
+    /// Exclusive end of the `TENANT_ID` range.
     pub const TENANT_ID_END: usize = TENANT_ID_START + 4;
 
     /// Store ID (4 elements)
     pub const STORE_ID_START: usize = TENANT_ID_END;
+    /// Exclusive end of the `STORE_ID` range.
     pub const STORE_ID_END: usize = STORE_ID_START + 4;
 
     /// Sequence start
@@ -286,6 +312,7 @@ pub mod batch_cols {
 
     /// Metadata hash (4 elements)
     pub const METADATA_HASH_START: usize = TIMESTAMP + 1;
+    /// Exclusive end of the `METADATA_HASH` range.
     pub const METADATA_HASH_END: usize = METADATA_HASH_START + 4;
 
     // =========================================================================
@@ -293,6 +320,7 @@ pub mod batch_cols {
     // =========================================================================
     /// Policy hash (8 elements)
     pub const POLICY_HASH_START: usize = METADATA_HASH_END;
+    /// Exclusive end of the `POLICY_HASH` range.
     pub const POLICY_HASH_END: usize = POLICY_HASH_START + 8;
 
     /// Policy limit (threshold/cap, in the base field)
@@ -317,6 +345,7 @@ pub mod batch_cols {
     /// Rescue permutation state during amount-commitment hashing, Merkle hashing, and finalization.
     /// 12 columns tracking the full Rescue state through half-rounds.
     pub const MERKLE_RESCUE_STATE_START: usize = EVENTS_DONE + 1;
+    /// Exclusive end of the `MERKLE_RESCUE_STATE` range.
     pub const MERKLE_RESCUE_STATE_END: usize = MERKLE_RESCUE_STATE_START + 12;
 
     /// Step counter within a Rescue hash computation (0..14).

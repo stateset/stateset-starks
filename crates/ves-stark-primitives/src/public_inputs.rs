@@ -6,8 +6,6 @@
 use crate::commerce_intent::CommerceAuthorizationReceipt;
 use crate::field::{felt_from_u64, Felt, FeltArray8};
 use crate::hash::{hash_to_felts, u64_to_felt_pair, Hash256};
-use crate::rescue::rescue_hash;
-use crate::FELT_ZERO;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -24,12 +22,19 @@ pub enum PublicInputsError {
     /// Invalid hex string in a public input field
     #[error("Invalid hex in {field}: {source}")]
     InvalidHex {
+        /// Name of the public-input field holding the bad hex.
         field: &'static str,
+        /// Underlying decode failure.
         source: hex::FromHexError,
     },
     /// Invalid hex format (length or casing)
     #[error("Invalid hex format in {field}: {reason}")]
-    InvalidHexFormat { field: &'static str, reason: String },
+    InvalidHexFormat {
+        /// Name of the public-input field with the malformed encoding.
+        field: &'static str,
+        /// What was wrong — wrong length, or non-canonical (uppercase) casing.
+        reason: String,
+    },
     /// JSON serialization failed
     #[error("JSON serialization failed: {0}")]
     Serialization(#[from] serde_json::Error),
@@ -120,8 +125,28 @@ impl PolicyParams {
 
 /// Canonical payload-derived amount binding.
 ///
-/// This artifact is intended to be derived by the surrounding sequencer or parser layer after it
-/// has extracted an amount from the canonical event payload referenced by the public inputs.
+/// This artifact ties the `amount` proven by a compliance proof to the payload hashes committed
+/// in the public inputs (`payload_plain_hash`, `payload_cipher_hash`, `event_signing_hash`).
+///
+/// # Trust model
+///
+/// The STARK circuit does not parse the event payload: it proves a range predicate over a
+/// committed `amount`, and this binding only hashes that amount *next to* the payload hashes.
+/// A prover could therefore construct a self-consistent binding whose `amount` differs from the
+/// amount actually inside the payload whose hash is `payload_plain_hash`. Binding soundness is
+/// NOT provided by prover honesty; it is enforced by verifier-side re-extraction:
+///
+/// - Derive the amount with the canonical single-source-of-truth extractor
+///   [`crate::payload_amount::extract_payload_amount`] (use [`PayloadAmountBinding::from_payload`]
+///   rather than hand-picking an amount).
+/// - For plaintext payloads, the sequencer re-extracts the amount from the stored payload at
+///   proof submission and verification time, recomputes the witness commitment and binding hash,
+///   and rejects the proof on any mismatch (see
+///   `stateset-sequencer::api::handlers::ves::amount_binding`).
+/// - For encrypted payloads, the sequencer never sees the plaintext (the plain hash is salted),
+///   so it cannot re-extract. Such bindings are prover-attested: verifiers MUST NOT treat them
+///   as payload-sound unless they can decrypt the payload and re-run
+///   [`PayloadAmountBinding::verify_against_payload`] themselves.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PayloadAmountBinding {
@@ -141,7 +166,11 @@ pub struct PayloadAmountBinding {
     pub payload_cipher_hash: String,
     /// Event signing hash (hex64, lowercase).
     pub event_signing_hash: String,
-    /// Amount extracted from the payload by the surrounding protocol.
+    /// Amount extracted from the payload (integer minor units).
+    ///
+    /// Must equal the value produced by [`crate::payload_amount::extract_payload_amount`] for
+    /// the payload whose hash is `payload_plain_hash`; verifiers with access to the payload
+    /// enforce this equality and reject the binding otherwise.
     pub amount: u64,
     /// Domain-separated canonical hash of the binding payload.
     pub binding_hash: String,
@@ -167,6 +196,45 @@ impl PayloadAmountBinding {
         };
         binding.binding_hash = binding.compute_hash_hex()?;
         Ok(binding)
+    }
+
+    /// Construct a canonical binding by extracting the amount from the event payload.
+    ///
+    /// This is the preferred constructor for provers: the amount is derived with the canonical
+    /// extractor [`crate::payload_amount::extract_payload_amount`], so it will agree with the
+    /// value the verifying sequencer re-extracts from the same payload.
+    pub fn from_payload(
+        inputs: &CompliancePublicInputs,
+        event_type: &str,
+        payload: &serde_json::Value,
+    ) -> Result<Self, PublicInputsError> {
+        let amount = crate::payload_amount::extract_payload_amount(event_type, payload)
+            .map_err(|e| PublicInputsError::AmountBinding(e.to_string()))?;
+        Self::from_public_inputs(inputs, amount)
+    }
+
+    /// Verify this binding against the actual event payload.
+    ///
+    /// Re-extracts the amount from `payload` with the canonical extractor and rejects the
+    /// binding if the committed `amount` differs, in addition to validating the embedded
+    /// binding hash. Callers are responsible for separately checking that `payload` hashes to
+    /// `payload_plain_hash` under the surrounding protocol's payload-hash rules (the sequencer
+    /// does this with its own canonical payload hash, which is salted for encrypted payloads).
+    pub fn verify_against_payload(
+        &self,
+        event_type: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(), PublicInputsError> {
+        self.validate()?;
+        let extracted = crate::payload_amount::extract_payload_amount(event_type, payload)
+            .map_err(|e| PublicInputsError::AmountBinding(e.to_string()))?;
+        if extracted != self.amount {
+            return Err(PublicInputsError::AmountBinding(format!(
+                "committed amount {} does not match amount {} extracted from the event payload",
+                self.amount, extracted
+            )));
+        }
+        Ok(())
     }
 
     fn normalized_payload_value(&self) -> Result<serde_json::Value, PublicInputsError> {
@@ -260,17 +328,7 @@ impl PayloadAmountBinding {
 
     /// Compute the Rescue witness commitment for the bound amount.
     pub fn witness_commitment_u64(&self) -> [u64; 4] {
-        let mut amount_limbs = [FELT_ZERO; 8];
-        amount_limbs[0] = felt_from_u64(self.amount & 0xFFFF_FFFF);
-        amount_limbs[1] = felt_from_u64(self.amount >> 32);
-
-        let hash_output = rescue_hash(&amount_limbs);
-        [
-            hash_output[0].as_int(),
-            hash_output[1].as_int(),
-            hash_output[2].as_int(),
-            hash_output[3].as_int(),
-        ]
+        crate::payload_amount::amount_witness_commitment(self.amount)
     }
 }
 
@@ -468,10 +526,21 @@ impl CompliancePublicInputs {
         Ok(())
     }
 
-    /// Validate that this public-input object is consistent with a payload amount binding.
+    /// Validate that this public-input object is consistent with a payload amount binding
+    /// (legacy zero-salt commitment).
     pub fn validate_payload_amount_binding(
         &self,
         binding: &PayloadAmountBinding,
+    ) -> Result<(), PublicInputsError> {
+        self.validate_payload_amount_binding_salted(binding, &[0u32; 4])
+    }
+
+    /// Validate consistency with a payload amount binding whose published witness
+    /// commitment is blinded by `salt` (zero salt = the legacy unsalted scheme).
+    pub fn validate_payload_amount_binding_salted(
+        &self,
+        binding: &PayloadAmountBinding,
+        salt: &crate::payload_amount::WitnessSalt,
     ) -> Result<(), PublicInputsError> {
         let normalized = binding.normalized()?;
         normalized.validate()?;
@@ -525,7 +594,11 @@ impl CompliancePublicInputs {
         }
 
         if let Some(expected_commitment) = self.witness_commitment_u64()? {
-            let binding_commitment = normalized.witness_commitment_u64();
+            // The commitment the binding's amount implies. `salt` is the
+            // blinding salt of the salted commitment scheme; the legacy
+            // unsalted flow passes zero, which reproduces the old check.
+            let binding_commitment =
+                crate::payload_amount::amount_witness_commitment_salted(normalized.amount, salt);
             if expected_commitment != binding_commitment {
                 return Err(PublicInputsError::AmountBinding(
                     "payload amount binding amount does not match witnessCommitment".to_string(),
@@ -614,8 +687,49 @@ impl CompliancePublicInputs {
     }
 
     /// Return a copy of these public inputs canonically bound to a private amount.
+    ///
+    /// Uses the legacy zero-salt commitment. Prefer
+    /// [`CompliancePublicInputs::bind_amount_salted`] wherever the resulting
+    /// commitment will be published: the unsalted commitment is binding but
+    /// only weakly hiding over low-entropy amounts.
     pub fn bind_amount(&self, amount: u64) -> Result<Self, PublicInputsError> {
+        self.bind_amount_salted(amount, &[0u32; 4])
+    }
+
+    /// Return a copy of these public inputs canonically bound to a private amount
+    /// under a 128-bit blinding salt.
+    ///
+    /// The `amountBindingHash` is unchanged from the unsalted flow (the binding
+    /// object is amount-only and stays with parties entitled to the amount);
+    /// only the published `witnessCommitment` is salted. The salt never appears
+    /// in the public inputs — the prover discards or retains it privately.
+    pub fn bind_amount_salted(
+        &self,
+        amount: u64,
+        salt: &crate::payload_amount::WitnessSalt,
+    ) -> Result<Self, PublicInputsError> {
         let binding = self.payload_amount_binding(amount)?;
+        self.validate_payload_amount_binding_salted(&binding, salt)?;
+        let normalized = binding.normalized()?;
+        let mut bound = self.clone();
+        bound.witness_commitment = Some(witness_commitment_u64_to_hex(
+            &crate::payload_amount::amount_witness_commitment_salted(amount, salt),
+        ));
+        bound.amount_binding_hash = Some(normalized.binding_hash);
+        Ok(bound)
+    }
+
+    /// Return a copy of these public inputs bound to the amount canonically extracted from the
+    /// event payload.
+    ///
+    /// Prefer this over [`CompliancePublicInputs::bind_amount`] when the payload is available:
+    /// it guarantees the bound amount is the one a verifying sequencer will re-extract.
+    pub fn bind_amount_from_payload(
+        &self,
+        event_type: &str,
+        payload: &serde_json::Value,
+    ) -> Result<Self, PublicInputsError> {
+        let binding = PayloadAmountBinding::from_payload(self, event_type, payload)?;
         self.bind_payload_amount_binding(&binding)
     }
 
@@ -1394,6 +1508,130 @@ mod tests {
             bound.compute_bound_hash().unwrap(),
             bound.compute_full_hash().unwrap()
         );
+    }
+
+    #[test]
+    fn test_payload_amount_binding_from_payload_matches_extraction() {
+        let payload = serde_json::json!({ "orderId": "ORD-1", "amount": 5_000u64 });
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 0,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "1".repeat(64),
+            event_signing_hash: "2".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10_000),
+            policy_hash: compute_policy_hash("aml.threshold", &PolicyParams::threshold(10_000))
+                .unwrap()
+                .to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+            amount_binding_hash: None,
+        };
+
+        let binding =
+            PayloadAmountBinding::from_payload(&inputs, "payment.captured", &payload).unwrap();
+        assert_eq!(binding.amount, 5_000);
+        assert!(binding.validate().is_ok());
+
+        // A matching binding verifies against the payload it was derived from.
+        binding
+            .verify_against_payload("payment.captured", &payload)
+            .unwrap();
+
+        // Binding the inputs through the payload path matches bind_amount(extracted).
+        let bound = inputs
+            .bind_amount_from_payload("payment.captured", &payload)
+            .unwrap();
+        assert_eq!(
+            bound.amount_binding_hash,
+            Some(binding.binding_hash.clone())
+        );
+        assert_eq!(
+            bound.witness_commitment,
+            Some(witness_commitment_u64_to_hex(
+                &binding.witness_commitment_u64()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_payload_amount_binding_rejects_false_committed_amount() {
+        // A prover that commits a low amount over a payload whose real amount is
+        // higher produces a self-consistent binding hash — re-extraction must
+        // catch the lie.
+        let payload = serde_json::json!({ "orderId": "ORD-1", "amount": 50_000u64 });
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 0,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "1".repeat(64),
+            event_signing_hash: "2".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10_000),
+            policy_hash: compute_policy_hash("aml.threshold", &PolicyParams::threshold(10_000))
+                .unwrap()
+                .to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+            amount_binding_hash: None,
+        };
+
+        // Committed amount 5_000 passes the policy but is NOT the payload amount.
+        let lying_binding = inputs.payload_amount_binding(5_000).unwrap();
+        assert!(lying_binding.validate().is_ok(), "hash is self-consistent");
+
+        let err = lying_binding
+            .verify_against_payload("payment.captured", &payload)
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("committed amount 5000") && msg.contains("does not match amount 50000"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_payload_amount_binding_verify_rejects_unextractable_payload() {
+        let inputs = CompliancePublicInputs {
+            event_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            store_id: Uuid::new_v4(),
+            sequence_number: 1,
+            payload_kind: 0,
+            payload_plain_hash: "0".repeat(64),
+            payload_cipher_hash: "1".repeat(64),
+            event_signing_hash: "2".repeat(64),
+            policy_id: "aml.threshold".to_string(),
+            policy_params: PolicyParams::threshold(10_000),
+            policy_hash: compute_policy_hash("aml.threshold", &PolicyParams::threshold(10_000))
+                .unwrap()
+                .to_hex(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+            amount_binding_hash: None,
+        };
+        let binding = inputs.payload_amount_binding(5_000).unwrap();
+
+        // Float amounts are not canonically bindable.
+        let float_payload = serde_json::json!({ "amount": 1482.37 });
+        assert!(matches!(
+            binding.verify_against_payload("payment.captured", &float_payload),
+            Err(PublicInputsError::AmountBinding(_))
+        ));
+
+        // Missing amount fields are rejected too.
+        let no_amount = serde_json::json!({ "trackingNumber": "1Z" });
+        assert!(matches!(
+            binding.verify_against_payload("order.shipped", &no_amount),
+            Err(PublicInputsError::AmountBinding(_))
+        ));
     }
 
     #[test]

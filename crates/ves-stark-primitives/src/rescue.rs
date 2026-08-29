@@ -64,10 +64,13 @@
 //! Each round consists of two half-rounds:
 //!
 //! 1. **Forward half-round**: S-box → MDS → Add constants
-//! 2. **Backward half-round**: MDS⁻¹ → S-box⁻¹ → Add constants
+//! 2. **Backward half-round**: MDS → S-box⁻¹ → Add constants
 //!
-//! This symmetric structure provides better security margins than
-//! single-direction designs.
+//! Both half-rounds apply the (forward) MDS; they differ only in S-box
+//! direction. This is essential: an earlier version applied MDS⁻¹ in the
+//! backward half-round, which cancelled the forward MDS and collapsed the
+//! permutation into independent per-lane maps with no diffusion. See the
+//! `diffusion_regression` tests.
 //!
 //! ## References
 //!
@@ -713,6 +716,10 @@ fn to_felt_matrix(m: &[[u64; STATE_WIDTH]; STATE_WIDTH]) -> [[Felt; STATE_WIDTH]
 /// rounds per hash) is pure overhead, so we precompute the `Felt` forms once.
 static MDS_FELT: LazyLock<[[Felt; STATE_WIDTH]; STATE_WIDTH]> =
     LazyLock::new(|| to_felt_matrix(&MDS));
+/// Test-only: the permutation applies the forward MDS in both half-rounds
+/// (see `half_round_backward`), so the inverse matrix is needed only by the
+/// MDS x MDS_INV = I property tests.
+#[cfg(test)]
 static MDS_INV_FELT: LazyLock<[[Felt; STATE_WIDTH]; STATE_WIDTH]> =
     LazyLock::new(|| to_felt_matrix(&MDS_INV));
 static ROUND_CONSTANTS_FELT: LazyLock<[[Felt; STATE_WIDTH]; NUM_ROUNDS * 2]> =
@@ -739,7 +746,10 @@ fn mds_multiply(state: &RescueState) -> RescueState {
     result
 }
 
-/// Apply inverse MDS matrix multiplication
+/// Apply inverse MDS matrix multiplication.
+///
+/// Test-only: no half-round uses the inverse matrix (see `half_round_backward`).
+#[cfg(test)]
 fn mds_inv_multiply(state: &RescueState) -> RescueState {
     let mut result = [FELT_ZERO; STATE_WIDTH];
     for (i, row) in MDS_INV_FELT.iter().enumerate() {
@@ -771,10 +781,33 @@ fn half_round_forward(state: &mut RescueState, constants: &[Felt; STATE_WIDTH]) 
     add_constants_felt(state, constants);
 }
 
-/// Apply one backward half-round: MDS_inv -> S-box_inv -> Add constants
+/// Apply one backward half-round: MDS -> S-box_inv -> Add constants.
+///
+/// NOTE: this applies the FORWARD MDS, not `MDS_INV`. Using `MDS_INV` here
+/// (as an earlier version did) makes the backward MDS cancel the forward
+/// half-round's MDS, collapsing the permutation into independent per-lane maps
+/// with zero diffusion — which broke commitment hiding. Both half-rounds
+/// therefore apply the forward MDS. (`mds_inv_multiply` remains for the
+/// MDS×MDS⁻¹=I property test.)
+///
+/// # Deviation from textbook Rescue-Prime
+///
+/// This is a Rescue *variant*, not the permutation exactly as published.
+/// Textbook Rescue-Prime applies the S-box **before** the MDS in both
+/// half-rounds; here the backward half-round applies MDS first
+/// (`MDS -> S-box⁻¹ -> +c`) while the forward one applies it after
+/// (`S-box -> MDS -> +c`).
+///
+/// The consequence is that the two MDS layers within a round are adjacent,
+/// separated only by a constant addition, so they compose: the matrix actually
+/// mixing lanes between the two S-box layers is `MDS²`, not `MDS`. That is
+/// sound here only because `MDS²` is itself MDS — asserted, not assumed, by
+/// `effective_linear_layer_between_sboxes_is_still_mds` in
+/// `tests/rescue_kat_test.rs`. Published Rescue-Prime cryptanalysis does not
+/// transfer to this construction unchanged; see `docs/SOUNDNESS.md`.
 fn half_round_backward(state: &mut RescueState, constants: &[Felt; STATE_WIDTH]) {
-    // MDS inverse
-    *state = mds_inv_multiply(state);
+    // MDS (forward) — NOT inverse; see the note above.
+    *state = mds_multiply(state);
     // Apply inverse S-box
     for s in state.iter_mut() {
         *s = sbox_inv(*s);
@@ -1419,6 +1452,84 @@ mod proptests {
             for i in 0..4 {
                 prop_assert_eq!(felt_to_u64(hash1[i]), felt_to_u64(hash2[i]));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod diffusion_regression {
+    use super::*;
+
+    /// The permutation must diffuse: a change in any single input lane must
+    /// affect MORE than just its own output lane. (Regression for the
+    /// MDS/MDS_INV cancellation bug, which gave each lane→itself only.)
+    #[test]
+    fn permutation_diffuses_across_lanes() {
+        let base = [felt_from_u64(7); STATE_WIDTH];
+        let mut b0 = base;
+        rescue_permutation(&mut b0);
+        for pos in 0..STATE_WIDTH {
+            let mut v = base;
+            v[pos] = felt_from_u64(999);
+            rescue_permutation(&mut v);
+            let affected = (0..STATE_WIDTH).filter(|&o| v[o] != b0[o]).count();
+            assert!(
+                affected > 1,
+                "input lane {pos} affects only {affected} output lane(s); permutation does not diffuse"
+            );
+        }
+    }
+
+    /// The salt must actually hide the amount: the amount lanes of a salted
+    /// commitment must depend on the salt, so the amount is NOT recoverable by
+    /// matching amount lanes against unsalted guesses.
+    #[test]
+    fn salt_hides_the_amount() {
+        use crate::payload_amount::amount_witness_commitment_salted;
+        let amount = 62_000u64;
+        let c_a = amount_witness_commitment_salted(amount, &[111, 222, 333, 444]);
+        let c_b = amount_witness_commitment_salted(amount, &[999, 888, 777, 666]);
+        assert_ne!(c_a, c_b, "different salts must give different commitments");
+        // No prefix of the commitment may be salt-independent.
+        assert_ne!(c_a[..2], c_b[..2], "amount lanes must depend on the salt");
+        // The lane-only recovery attack must fail.
+        let target = amount_witness_commitment_salted(amount, &[123, 456, 789, 101]);
+        let recovered = (0..200_000u64)
+            .step_by(500)
+            .find(|&g| amount_witness_commitment_salted(g, &[0, 0, 0, 0])[..2] == target[..2]);
+        assert!(
+            recovered.is_none(),
+            "amount must not be recoverable via amount lanes: {recovered:?}"
+        );
+    }
+
+    /// The 2-to-1 Merkle compression (`rescue_hash_pair`) must bind BOTH
+    /// children. Before the diffusion fix, the right child (input lanes 4-7)
+    /// did not affect the digest, so a Rescue-Merkle tree — as the batch
+    /// prover uses — failed to bind right siblings. This locks in that every
+    /// limb of both children is now bound.
+    #[test]
+    fn rescue_hash_pair_binds_both_children() {
+        let l = [
+            felt_from_u64(1),
+            felt_from_u64(2),
+            felt_from_u64(3),
+            felt_from_u64(4),
+        ];
+        let r = [
+            felt_from_u64(5),
+            felt_from_u64(6),
+            felt_from_u64(7),
+            felt_from_u64(8),
+        ];
+        let base = rescue_hash_pair(&l, &r);
+        for i in 0..4 {
+            let mut l2 = l;
+            l2[i] = felt_from_u64(99);
+            assert_ne!(rescue_hash_pair(&l2, &r), base, "left limb {i} must bind");
+            let mut r2 = r;
+            r2[i] = felt_from_u64(99);
+            assert_ne!(rescue_hash_pair(&l, &r2), base, "right limb {i} must bind");
         }
     }
 }

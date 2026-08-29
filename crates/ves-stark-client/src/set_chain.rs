@@ -10,6 +10,8 @@ use uuid::Uuid;
 use ves_stark_primitives::Hash256;
 use zeroize::Zeroizing;
 
+use crate::transport_policy::{sensitive_auth_header, validate_api_key, validate_base_url};
+
 use crate::error::{ClientError, Result};
 
 const ZERO_REGISTRY_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
@@ -349,27 +351,13 @@ impl SetChainClient {
     pub fn new(base_url: &str, api_key: &str, config: SetChainConfig) -> Result<Self> {
         config.validate()?;
 
-        let base_url = base_url.trim();
-        if base_url.is_empty() {
-            return Err(ClientError::InvalidBaseUrl(
-                "base_url must not be empty".to_string(),
-            ));
-        }
-        reqwest::Url::parse(base_url).map_err(|e| ClientError::InvalidBaseUrl(e.to_string()))?;
-
-        let api_key = api_key.trim();
-        if api_key.is_empty() {
-            return Err(ClientError::InvalidHeader(
-                "api_key must not be empty".to_string(),
-            ));
-        }
+        let base_url = validate_base_url(base_url)?;
+        let api_key = validate_api_key(api_key)?;
 
         let key = Zeroizing::new(format!("Bearer {}", api_key));
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        let auth_value =
-            HeaderValue::from_str(&key).map_err(|e| ClientError::InvalidHeader(e.to_string()))?;
-        headers.insert(AUTHORIZATION, auth_value);
+        headers.insert(AUTHORIZATION, sensitive_auth_header(&key)?);
         // `key` is zeroed on drop here
 
         let client = reqwest::Client::builder()
@@ -379,7 +367,7 @@ impl SetChainClient {
 
         Ok(Self {
             client,
-            base_url: base_url.trim_end_matches('/').to_string(),
+            base_url,
             config,
         })
     }
