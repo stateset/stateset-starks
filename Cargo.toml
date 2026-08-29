@@ -89,7 +89,16 @@ criterion = "0.5"
 [profile.release]
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+# `panic = "abort"` is deliberately NOT set.
+#
+# The verifier parses attacker-supplied proof bytes and public inputs. Size and
+# hex validation run first (MAX_PROOF_SIZE, canonical-hex checks) and the fuzz
+# targets cover deserialization, but a reachable panic anywhere on that path
+# must stay recoverable: under `abort` it becomes process death, which turns a
+# single malformed proof into a denial of service for a verification service and
+# takes down every other in-flight request with it. Unwinding also keeps
+# `catch_unwind` available to embedders and to `tests/salted_commitment_test.rs`,
+# which relies on it to treat a prover panic as a sound refusal.
 
 # Benchmark compile time was dominated by optimizing the large batch-AIR
 # constraint functions at opt-level=3. Two changes make `cargo bench` tractable:

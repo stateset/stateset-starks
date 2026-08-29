@@ -135,9 +135,10 @@ fn a_salted_over_cap_amount_still_cannot_be_proven() {
         let witness = ComplianceWitness::new_salted(150_000, cap_inputs(cap));
         ComplianceProver::with_policy(Policy::order_total_cap(cap)).prove(&witness)
     });
-    match result {
-        Ok(Ok(_)) => panic!("an over-cap amount must not produce a proof, salted or not"),
-        Ok(Err(_)) | Err(_) => {} // prover refused (error or assert) — sound
+    // Sound outcomes are: the prover returned an error, or it panicked (caught
+    // here). Anything else means an over-cap amount produced a proof.
+    if let Ok(Ok(_)) = result {
+        panic!("an over-cap amount must not produce a proof, salted or not");
     }
 }
 
@@ -168,5 +169,8 @@ fn a_salted_proof_rejects_a_mismatched_commitment() {
         Ok(r) => !r.valid,
         Err(_) => true,
     };
-    assert!(rejected, "a proof must be bound to its own salted commitment");
+    assert!(
+        rejected,
+        "a proof must be bound to its own salted commitment"
+    );
 }

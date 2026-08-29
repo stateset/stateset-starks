@@ -93,6 +93,57 @@ jobs:
       - name: Security audit
         run: cargo audit
 
+      # The fuzz crate is deliberately outside the workspace and keeps its own
+      # lockfile, so the audit above does not see it. It went unscanned until
+      # now and had drifted onto a vulnerable `crossbeam-epoch`.
+      - name: Security audit (fuzz lockfile)
+        run: cargo audit -f fuzz/Cargo.lock
+
+  miri:
+    name: Miri (FFI memory safety)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # `ves-stark-zig` holds every `unsafe` block in the workspace; the other
+      # ten crates are `#![forbid(unsafe_code)]`. Miri interprets its FFI
+      # boundary tests to catch null derefs, use-after-free, and mismatched
+      # allocate/free pairs that ordinary test runs cannot see.
+      - name: Install nightly with Miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Run Miri on the FFI crate
+        run: cargo +nightly miri test -p ves-stark-zig --all-features
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+
+  fuzz:
+    name: Fuzz (smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The fuzz targets live outside the workspace, so nothing else builds
+      # them; without this job they bit-rot silently. This is a short smoke run
+      # to keep them compiling and catch shallow crashes, not a fuzzing campaign.
+      - name: Install nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@cargo-fuzz
+
+      - name: Smoke-run each fuzz target
+        run: |
+          set -euo pipefail
+          for target in fuzz_rescue_hash fuzz_witness_validation \
+                        fuzz_proof_deserialization fuzz_public_inputs fuzz_batch_proof; do
+            echo "::group::$target"
+            cargo +nightly fuzz run "$target" -- -max_total_time=60 -timeout=10
+            echo "::endgroup::"
+          done
+
   bench:
     name: Benchmarks (compile check)
     runs-on: ubuntu-latest
@@ -115,8 +166,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      # `cargo bench --no-run` spends >60 minutes here: the bench profile
+      # optimizes the batch AIR's very large constraint evaluators at
+      # opt-level=3 (see the profile comment in Cargo.toml). That cost buys
+      # codegen and link verification, but this job exists to stop the benchmark
+      # sources from bit-rotting — and `cargo check --benches` establishes that
+      # in seconds. Type errors, signature drift, and renamed APIs are all
+      # caught; only codegen/link-time failures are not, and the `check` job's
+      # `clippy --all-targets` already analyzes the same bench targets.
+      #
+      # Run the real thing locally (`cargo bench --bench stark_bench`) when
+      # measuring; CI does not produce meaningful timings on shared runners
+      # anyway.
       - name: Check benchmarks compile
-        run: cargo bench --locked --workspace --all-features --no-run
+        run: cargo check --locked --workspace --all-features --benches
 
   docs:
     name: Documentation
