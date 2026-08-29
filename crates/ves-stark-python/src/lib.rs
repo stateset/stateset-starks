@@ -20,7 +20,7 @@ use ves_stark_verifier::{
 };
 
 /// Policy type for compliance proofs
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct Policy {
     inner: RustPolicy,
@@ -97,7 +97,7 @@ impl Policy {
 }
 
 /// Public inputs for compliance proof generation/verification
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct CompliancePublicInputs {
     /// UUID of the event being proven
@@ -182,11 +182,7 @@ impl CompliancePublicInputs {
         amount_binding_hash: Option<String>,
     ) -> PyResult<Self> {
         // Convert PyDict to JSON string
-        let policy_params_json = Python::with_gil(|py| {
-            let json = py.import("json")?;
-            let dumps = json.getattr("dumps")?;
-            dumps.call1((policy_params,))?.extract::<String>()
-        })?;
+        let policy_params_json = py_dict_to_json(policy_params)?;
 
         Ok(Self {
             event_id,
@@ -208,21 +204,17 @@ impl CompliancePublicInputs {
 
     /// Get policy parameters as a dict
     #[getter]
-    pub fn policy_params(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn policy_params(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let json = py.import("json")?;
         let loads = json.getattr("loads")?;
         let result = loads.call1((&self.policy_params_json,))?;
-        Ok(result.into())
+        Ok(result.unbind())
     }
 
     /// Set policy parameters from a dict
     #[setter]
     pub fn set_policy_params(&mut self, value: &Bound<'_, PyDict>) -> PyResult<()> {
-        let policy_params_json = Python::with_gil(|py| {
-            let json = py.import("json")?;
-            let dumps = json.getattr("dumps")?;
-            dumps.call1((value,))?.extract::<String>()
-        })?;
+        let policy_params_json = py_dict_to_json(value)?;
         self.policy_params_json = policy_params_json;
         Ok(())
     }
@@ -296,12 +288,19 @@ fn bind_public_inputs_to_commitment(
         .map_err(|e| PyValueError::new_err(format!("Failed to bind witness commitment: {}", e)))
 }
 
+/// Serialize a Python dict to a JSON string via the stdlib `json` module.
+///
+/// The GIL token is taken from the dict itself (`value.py()`) rather than by
+/// re-attaching the current thread: every caller already holds a `Bound` value,
+/// which can only exist while the GIL is held.
+fn py_dict_to_json(value: &Bound<'_, PyDict>) -> PyResult<String> {
+    let json = value.py().import("json")?;
+    let dumps = json.getattr("dumps")?;
+    dumps.call1((value,))?.extract::<String>()
+}
+
 fn receipt_from_py_dict(value: &Bound<'_, PyDict>) -> PyResult<CommerceAuthorizationReceipt> {
-    let receipt_json = Python::with_gil(|py| {
-        let json = py.import("json")?;
-        let dumps = json.getattr("dumps")?;
-        dumps.call1((value,))?.extract::<String>()
-    })?;
+    let receipt_json = py_dict_to_json(value)?;
     serde_json::from_str(&receipt_json)
         .map_err(|e| PyValueError::new_err(format!("Invalid authorization receipt dict: {}", e)))
 }
@@ -309,11 +308,7 @@ fn receipt_from_py_dict(value: &Bound<'_, PyDict>) -> PyResult<CommerceAuthoriza
 fn payload_amount_binding_from_py_dict(
     value: &Bound<'_, PyDict>,
 ) -> PyResult<PayloadAmountBinding> {
-    let binding_json = Python::with_gil(|py| {
-        let json = py.import("json")?;
-        let dumps = json.getattr("dumps")?;
-        dumps.call1((value,))?.extract::<String>()
-    })?;
+    let binding_json = py_dict_to_json(value)?;
     serde_json::from_str(&binding_json)
         .map_err(|e| PyValueError::new_err(format!("Invalid payload amount binding dict: {}", e)))
 }
@@ -621,11 +616,7 @@ pub fn verify_agent_authorization_with_amount_binding(
 #[pyfunction]
 pub fn compute_policy_hash(policy_id: &str, policy_params: &Bound<'_, PyDict>) -> PyResult<String> {
     // Convert PyDict to JSON
-    let params_json = Python::with_gil(|py| {
-        let json = py.import("json")?;
-        let dumps = json.getattr("dumps")?;
-        dumps.call1((policy_params,))?.extract::<String>()
-    })?;
+    let params_json = py_dict_to_json(policy_params)?;
 
     let params: serde_json::Value = serde_json::from_str(&params_json)
         .map_err(|e| PyValueError::new_err(format!("Invalid policy_params JSON: {}", e)))?;
@@ -642,7 +633,7 @@ pub fn create_payload_amount_binding(
     py: Python<'_>,
     public_inputs: &CompliancePublicInputs,
     amount: u64,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let rust_inputs = public_inputs.to_rust()?;
 
     let binding = rust_inputs.payload_amount_binding(amount).map_err(|e| {
@@ -654,7 +645,7 @@ pub fn create_payload_amount_binding(
     })?;
     let json = py.import("json")?;
     let loads = json.getattr("loads")?;
-    Ok(loads.call1((binding_json,))?.into())
+    Ok(loads.call1((binding_json,))?.unbind())
 }
 
 /// VES STARK Python module
