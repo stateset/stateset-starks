@@ -44,3 +44,9 @@ zig-out/
 # Local autoresearch session artifacts (the committed REPORT.md is kept)
 .autoresearch/*
 !.autoresearch/REPORT.md
+
+# Fuzzing run output: crash artifacts and evolved corpora are local run
+# state, not source. Reproducers worth keeping are promoted into
+# tests/untrusted_input_test.rs instead.
+fuzz/artifacts/
+fuzz/corpus/

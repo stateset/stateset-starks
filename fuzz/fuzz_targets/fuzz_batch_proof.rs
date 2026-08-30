@@ -16,6 +16,10 @@ use ves_stark_batch::{
 };
 use ves_stark_primitives::felt_from_u64;
 
+#[path = "common.rs"]
+mod common;
+use common::assert_no_panic_escapes;
+
 #[derive(Debug, Arbitrary)]
 struct BatchInput {
     /// Raw bytes interpreted (lossily) as a JSON document for `from_json`.
@@ -42,7 +46,7 @@ struct BatchInput {
 fuzz_target!(|input: BatchInput| {
     // 1) JSON deserialization must never panic on arbitrary input.
     let json = String::from_utf8_lossy(&input.json_bytes);
-    let _ = SerializableBatchProof::from_json(&json);
+    let _ = assert_no_panic_escapes(|| SerializableBatchProof::from_json(&json));
 
     // 2) Verification must never panic on arbitrary proof bytes / public inputs.
     let proof_bytes: Vec<u8> = input.proof_bytes.into_iter().take(10_000).collect();
@@ -67,5 +71,6 @@ fuzz_target!(|input: BatchInput| {
         input.policy_limit,
         input.accumulator.map(felt_from_u64),
     );
-    let _ = verify_batch_proof(&proof_bytes, &public_inputs);
+    // Must return Ok/Err for any input — never unwind into the caller.
+    let _ = assert_no_panic_escapes(|| verify_batch_proof(&proof_bytes, &public_inputs));
 });

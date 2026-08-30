@@ -14,6 +14,10 @@ use ves_stark_air::policy::Policy;
 use ves_stark_primitives::public_inputs::{CompliancePublicInputs, PolicyParams, compute_policy_hash};
 use ves_stark_verifier::verify_compliance_proof;
 
+#[path = "common.rs"]
+mod common;
+use common::assert_no_panic_escapes;
+
 /// Arbitrary proof bytes and verification parameters
 #[derive(Debug, Arbitrary)]
 struct ProofInput {
@@ -55,13 +59,17 @@ fuzz_target!(|input: ProofInput| {
     let public_inputs = create_public_inputs(input.threshold);
     let policy = Policy::aml_threshold(input.threshold);
 
-    // Verification should NEVER panic, even with garbage input
-    let result = verify_compliance_proof(
-        &proof_bytes,
-        &public_inputs,
-        &policy,
-        &input.witness_commitment,
-    );
+    // Verification must return Ok/Err for any input — never unwind into the
+    // caller. `assert_no_panic_escapes` aborts if one does; a panic the library
+    // catches internally (see common.rs) correctly does not count as a crash.
+    let result = assert_no_panic_escapes(|| {
+        verify_compliance_proof(
+            &proof_bytes,
+            &public_inputs,
+            &policy,
+            &input.witness_commitment,
+        )
+    });
 
     // Result should be an error for random bytes (not a valid proof)
     // OR a verification failure (if bytes happen to parse but fail constraints)
