@@ -53,6 +53,79 @@ otherwise consistent with the payload hashes in the public inputs. This reposito
 canonical protocol-level binding artifact for that purpose, but the payload parser/derivation logic
 and any signatures or attestations around it remain part of the surrounding protocol.
 
+## Open Upstream Vulnerabilities (Winterfell deserialization)
+
+Both were found by `cargo +nightly fuzz run fuzz_proof_deserialization` and are
+reachable from the public verifier API with well under `MAX_PROOF_SIZE` bytes.
+Neither is a soundness break — a malformed proof is still never *accepted* — but
+both are availability defects on a surface that accepts input from anyone.
+
+### 1. Integer overflow on the trace-length byte — CONTAINED
+
+`winter-air-0.10.3`, `src/air/trace_info.rs:311`. The deserializer validates only
+the *lower* bound of the log2 trace-length byte:
+
+```rust
+let trace_length = source.read_u8()?;
+if trace_length < TraceInfo::MIN_TRACE_LENGTH.ilog2() as u8 { return Err(..) }
+let trace_length = 2_usize.pow(trace_length as u32);   // n up to 255
+```
+
+There is no `MAX_TRACE_LENGTH` constant in the crate, so any byte >= 64
+overflows. Eleven bytes are enough to reach it.
+
+*Impact.* Under `overflow-checks = true` (the default for debug and test builds,
+and a common hardening choice for release builds of security-critical services)
+this panics. With `panic = "abort"` it would kill the process.
+
+*Mitigation, in place.* Both verifiers wrap deserialization in
+`ves_stark_primitives::panic_guard::guard_untrusted`, converting the panic into a
+`DeserializationError`. This is why this workspace's release profile
+deliberately does not set `panic = "abort"` — the guard needs unwinding.
+Regression tests: `tests/untrusted_input_test.rs`.
+
+### 2. Unbounded allocation from a length prefix — NOT CONTAINED
+
+`winter-utils-0.10.2`, `src/serde/byte_reader.rs:194`:
+
+```rust
+fn read_many<D>(&mut self, num_elements: usize) -> Result<Vec<D>, DeserializationError> {
+    let mut result = Vec::with_capacity(num_elements);   // never bounded by bytes remaining
+```
+
+`num_elements` is a length prefix read straight from the input. A 39-byte proof
+can declare 2^56 elements; the measured request is 72,057,607,577,400,833 bytes
+(~72 PB).
+
+*Impact.* Rust calls `handle_alloc_error` on allocation failure, which
+**aborts** rather than unwinding. Confirmed to abort with SIGABRT in both debug
+and release. No `catch_unwind` can contain it, so the guard above does not help.
+A single 39-byte request kills a verification process and every other request
+in flight in it.
+
+*No in-repo fix is available.* Winterfell constructs the `ByteReader` inside
+`Proof::from_bytes`, so there is no injection point to bound the reader, and the
+offending field sits after variable-length data so it cannot be pre-checked at a
+fixed offset. Both defects are still present in the latest release
+(`winter-air 0.13.1`, verified).
+
+*Mitigations available today:*
+
+- **Deployment (recommended).** Verify proofs in a process with an address-space
+  limit (`RLIMIT_AS`) or a container memory cap, so an abort takes down only a
+  sacrificial worker rather than a shared service. Do not verify untrusted proofs
+  in-process alongside unrelated work.
+- **Vendor a patched Winterfell** via `[patch.crates-io]`, adding
+  `num_elements <= source.remaining()` to `read_many` and an upper bound to the
+  trace-length check. This is the real fix; it costs a maintained fork of a
+  cryptographic dependency and has not been taken here without a decision from
+  the maintainers.
+- **Report upstream.** Both are straightforward: one missing upper bound and one
+  missing length-vs-remaining check.
+
+Reproduce with
+`cargo test --test untrusted_input_test -- --ignored --exact oversized_declared_allocation_is_rejected_not_attempted`.
+
 ## Adversary Model
 
 ### Threat Actors

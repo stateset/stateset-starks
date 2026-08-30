@@ -163,8 +163,19 @@ This crate holds every `unsafe` block in the workspace; the other ten are
 
 ## 11. Robustness (no panic on untrusted input)
 
-The untrusted-input surfaces never panic — they return `Ok`/`Err`. Continuous
-fuzzing (libFuzzer, `fuzz/`) plus example-based rejection tests:
+The untrusted-input surfaces return `Ok`/`Err` rather than unwinding into the
+caller. Two caveats, both upstream in Winterfell and both found by the fuzz
+targets below — see `docs/THREAT_MODEL.md` for the full write-up:
+
+- **Contained.** `winter-air` overflows on a malformed log2 trace-length byte.
+  The verifiers wrap deserialization in `guard_untrusted`, so this surfaces as a
+  `DeserializationError`. Locked in by `tests/untrusted_input_test.rs`.
+- **NOT contained.** `winter-utils` sizes a `Vec` from an unchecked length
+  prefix, so a 39-byte proof can request a ~72 PB allocation. Rust aborts on
+  allocation failure, which no guard can catch. Mitigate at deployment with an
+  address-space or container memory limit.
+
+Continuous fuzzing (libFuzzer, `fuzz/`) plus example-based rejection tests:
 
 | Surface | Fuzz target / tests |
 |---|---|
@@ -173,6 +184,8 @@ fuzzing (libFuzzer, `fuzz/`) plus example-based rejection tests:
 | Single-proof deserialization + verify | `fuzz_proof_deserialization`; `test_empty_proof_bytes_rejected`, `test_garbage_proof_bytes_rejected`, `test_truncated_proof_rejected`, `test_bit_flipped_proof_rejected` |
 | Witness validation | `fuzz_witness_validation` |
 | Batch proof JSON deserialization + verify | `fuzz_batch_proof` |
+| No panic escapes the library boundary | `fuzzer_crash_input_is_rejected_not_panicked_on`, `malformed_headers_are_rejected_not_panicked_on`, `no_short_input_of_any_length_panics`, `extreme_thresholds_do_not_panic` (it/untrusted_input_test) |
+| Unbounded-allocation abort (upstream, open) | `oversized_declared_allocation_is_rejected_not_attempted` — `#[ignore]`, aborts the process |
 
 Run fuzzers with `cargo +nightly fuzz run <target>`.
 
