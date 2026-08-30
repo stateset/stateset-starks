@@ -5,12 +5,10 @@
 //! "camelCase")` supplying the wire names. The authoritative description of each
 //! field is the API reference, not this crate.
 //!
-//! `missing_docs` is therefore allowed for this module alone — the rest of the
-//! crate keeps the lint. A per-field comment here could only restate the field
-//! name, and tautological documentation on 96 fields would obscure the handful
-//! of fields that carry real encoding semantics. Those are documented
-//! individually below.
-#![allow(missing_docs)]
+//! Fields are documented with what the wire contract actually requires —
+//! encodings (base64, hex), which hash is reported versus recomputed, and where
+//! a `u64` form is unsafe for JavaScript consumers — rather than restating the
+//! field name.
 
 use crate::error::{ClientError, Result};
 use base64::Engine;
@@ -28,8 +26,10 @@ use ves_stark_verifier::VerificationResult;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublicInputsRequest {
+    /// Policy identifier, e.g. `aml.threshold`.
     pub policy_id: String,
     #[serde(default)]
+    /// Policy parameters as canonical JSON; the shape depends on `policy_id`.
     pub policy_params: serde_json::Value,
 }
 
@@ -37,8 +37,11 @@ pub struct PublicInputsRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublicInputsResponse {
+    /// VES event the proof attests to.
     pub event_id: Uuid,
+    /// Canonical public inputs, when the sequencer stored them.
     pub public_inputs: serde_json::Value,
+    /// Hash the sequencer reports for the returned public inputs.
     pub public_inputs_hash: String,
 }
 
@@ -87,7 +90,9 @@ impl PublicInputsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum WitnessCommitment {
+    /// Hex-encoded commitment (64 characters). Preferred on JSON APIs.
     Hex(String),
+    /// Four raw field elements. Loses precision through JavaScript JSON parsers.
     U64([u64; 4]),
 }
 
@@ -95,13 +100,20 @@ pub enum WitnessCommitment {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubmitProofRequest {
+    /// Statement kind, e.g. `compliance` or `agent.authorization.v1`.
     pub proof_type: String,
+    /// Proof format version; the verifier accepts only `PROOF_VERSION`.
     pub proof_version: u32,
+    /// Policy identifier, e.g. `aml.threshold`.
     pub policy_id: String,
+    /// Policy parameters as canonical JSON; the shape depends on `policy_id`.
     pub policy_params: serde_json::Value,
+    /// Base64-encoded serialized STARK proof.
     pub proof_b64: String,
+    /// Rescue commitment to the salted witness, as four field elements.
     pub witness_commitment: WitnessCommitment,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Canonical public inputs, when the sequencer stored them.
     pub public_inputs: Option<serde_json::Value>,
 }
 
@@ -109,20 +121,35 @@ pub struct SubmitProofRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubmitProofResponse {
+    /// Sequencer-assigned identifier for this stored proof.
     pub proof_id: Uuid,
+    /// VES event the proof attests to.
     pub event_id: Uuid,
+    /// Owning tenant.
     pub tenant_id: Uuid,
+    /// Owning store.
     pub store_id: Uuid,
+    /// Statement kind, e.g. `compliance` or `agent.authorization.v1`.
     pub proof_type: String,
+    /// Proof format version; the verifier accepts only `PROOF_VERSION`.
     pub proof_version: u32,
+    /// Policy identifier, e.g. `aml.threshold`.
     pub policy_id: String,
+    /// Policy parameters as canonical JSON; the shape depends on `policy_id`.
     pub policy_params: serde_json::Value,
+    /// Hex digest binding `policy_id` to `policy_params`.
     pub policy_hash: String,
+    /// Hex digest of the serialized proof bytes.
     pub proof_hash: String,
+    /// Rescue commitment to the salted witness, as four field elements.
     pub witness_commitment: Option<[u64; 4]>,
     #[serde(default)]
+    /// The same commitment, hex-encoded. Prefer this form on JSON APIs:
+    /// JavaScript numbers cannot represent a `u64` exactly.
     pub witness_commitment_hex: Option<String>,
+    /// Canonical public inputs, when the sequencer stored them.
     pub public_inputs: Option<serde_json::Value>,
+    /// RFC 3339 timestamp of submission.
     pub submitted_at: String,
 }
 
@@ -130,20 +157,35 @@ pub struct SubmitProofResponse {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProofSummary {
+    /// Sequencer-assigned identifier for this stored proof.
     pub proof_id: Uuid,
+    /// VES event the proof attests to.
     pub event_id: Uuid,
+    /// Owning tenant.
     pub tenant_id: Uuid,
+    /// Owning store.
     pub store_id: Uuid,
+    /// Statement kind, e.g. `compliance` or `agent.authorization.v1`.
     pub proof_type: String,
+    /// Proof format version; the verifier accepts only `PROOF_VERSION`.
     pub proof_version: u32,
+    /// Policy identifier, e.g. `aml.threshold`.
     pub policy_id: String,
+    /// Policy parameters as canonical JSON; the shape depends on `policy_id`.
     pub policy_params: serde_json::Value,
+    /// Hex digest binding `policy_id` to `policy_params`.
     pub policy_hash: String,
+    /// Hex digest of the serialized proof bytes.
     pub proof_hash: String,
+    /// Rescue commitment to the salted witness, as four field elements.
     pub witness_commitment: Option<[u64; 4]>,
     #[serde(default)]
+    /// The same commitment, hex-encoded. Prefer this form on JSON APIs:
+    /// JavaScript numbers cannot represent a `u64` exactly.
     pub witness_commitment_hex: Option<String>,
+    /// Canonical public inputs, when the sequencer stored them.
     pub public_inputs: Option<serde_json::Value>,
+    /// RFC 3339 timestamp of submission.
     pub submitted_at: String,
 }
 
@@ -151,8 +193,11 @@ pub struct ProofSummary {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListProofsResponse {
+    /// VES event the proof attests to.
     pub event_id: Uuid,
+    /// Proofs recorded for the event.
     pub proofs: Vec<ProofSummary>,
+    /// Number of entries in `proofs`.
     pub count: usize,
 }
 
@@ -160,21 +205,37 @@ pub struct ListProofsResponse {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProofDetails {
+    /// Sequencer-assigned identifier for this stored proof.
     pub proof_id: Uuid,
+    /// VES event the proof attests to.
     pub event_id: Uuid,
+    /// Owning tenant.
     pub tenant_id: Uuid,
+    /// Owning store.
     pub store_id: Uuid,
+    /// Statement kind, e.g. `compliance` or `agent.authorization.v1`.
     pub proof_type: String,
+    /// Proof format version; the verifier accepts only `PROOF_VERSION`.
     pub proof_version: u32,
+    /// Policy identifier, e.g. `aml.threshold`.
     pub policy_id: String,
+    /// Policy parameters as canonical JSON; the shape depends on `policy_id`.
     pub policy_params: serde_json::Value,
+    /// Hex digest binding `policy_id` to `policy_params`.
     pub policy_hash: String,
+    /// Hex digest of the serialized proof bytes.
     pub proof_hash: String,
+    /// Base64-encoded serialized STARK proof.
     pub proof_b64: String,
+    /// Rescue commitment to the salted witness, as four field elements.
     pub witness_commitment: Option<[u64; 4]>,
     #[serde(default)]
+    /// The same commitment, hex-encoded. Prefer this form on JSON APIs:
+    /// JavaScript numbers cannot represent a `u64` exactly.
     pub witness_commitment_hex: Option<String>,
+    /// Canonical public inputs, when the sequencer stored them.
     pub public_inputs: Option<serde_json::Value>,
+    /// RFC 3339 timestamp of submission.
     pub submitted_at: String,
 }
 
@@ -304,43 +365,66 @@ impl ProofDetails {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerifyResponse {
+    /// Sequencer-assigned identifier for this stored proof.
     pub proof_id: Uuid,
+    /// VES event the proof attests to.
     pub event_id: Uuid,
+    /// Owning tenant.
     pub tenant_id: Uuid,
+    /// Owning store.
     pub store_id: Uuid,
+    /// Statement kind, e.g. `compliance` or `agent.authorization.v1`.
     pub proof_type: String,
+    /// Proof format version; the verifier accepts only `PROOF_VERSION`.
     pub proof_version: u32,
+    /// Policy identifier, e.g. `aml.threshold`.
     pub policy_id: String,
+    /// Hex digest binding `policy_id` to `policy_params`.
     pub policy_hash: String,
+    /// Hex digest of the serialized proof bytes.
     pub proof_hash: String,
+    /// Hash the sequencer reports for the returned public inputs.
     pub public_inputs_hash: Option<String>,
+    /// Hash the verifier recomputed from the canonical inputs.
     pub canonical_public_inputs_hash: String,
+    /// Whether the reported and recomputed public-input hashes agree.
     pub public_inputs_match: bool,
     #[serde(default)]
+    /// Rescue commitment to the salted witness, as four field elements.
     pub witness_commitment: Option<[u64; 4]>,
     #[serde(default)]
+    /// The same commitment, hex-encoded. Prefer this form on JSON APIs:
+    /// JavaScript numbers cannot represent a `u64` exactly.
     pub witness_commitment_hex: Option<String>,
     #[serde(default)]
+    /// Whether the STARK itself verified, when verification ran.
     pub stark_valid: Option<bool>,
     #[serde(default)]
+    /// Verifier error message, when verification failed.
     pub stark_error: Option<String>,
     #[serde(default)]
+    /// Wall-clock verification time, in milliseconds.
     pub stark_verification_time_ms: Option<u64>,
+    /// Overall verdict: the STARK verified and every binding check passed.
     pub valid: bool,
+    /// Why `valid` is false.
     pub reason: Option<String>,
 }
 
 /// Parameters for AML threshold policy
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AmlThresholdParams {
+    /// Exclusive upper bound the amount must stay under.
     pub threshold: u64,
 }
 
 impl AmlThresholdParams {
+    /// Build AML-threshold parameters for the given exclusive bound.
     pub fn new(threshold: u64) -> Self {
         Self { threshold }
     }
 
+    /// Serialize to the canonical JSON shape the sequencer expects for `policyParams`.
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({ "threshold": self.threshold })
     }
@@ -349,14 +433,17 @@ impl AmlThresholdParams {
 /// Parameters for order total cap policy
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderTotalCapParams {
+    /// Inclusive upper bound on the order total.
     pub cap: u64,
 }
 
 impl OrderTotalCapParams {
+    /// Build order-total-cap parameters for the given inclusive bound.
     pub fn new(cap: u64) -> Self {
         Self { cap }
     }
 
+    /// Serialize to the canonical JSON shape the sequencer expects for `policyParams`.
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({ "cap": self.cap })
     }
@@ -365,11 +452,14 @@ impl OrderTotalCapParams {
 /// Parameters for agent.authorization.v1 policy
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentAuthorizationParams {
+    /// Inclusive spend cap authorized by the intent.
     pub max_total: u64,
+    /// Hex hash of the `CommerceIntent` this authorization binds to.
     pub intent_hash: String,
 }
 
 impl AgentAuthorizationParams {
+    /// Build agent-authorization parameters, validating `intent_hash` as 64 hex characters.
     pub fn new(max_total: u64, intent_hash: &str) -> Result<Self> {
         let params = PolicyParams::agent_authorization(max_total, intent_hash)
             .map_err(|e| ClientError::InvalidPublicInputs(format!("{e}")))?;
@@ -384,10 +474,12 @@ impl AgentAuthorizationParams {
         })
     }
 
+    /// Build agent-authorization parameters from a signed authorization receipt.
     pub fn from_receipt(max_total: u64, receipt: &CommerceAuthorizationReceipt) -> Result<Self> {
         Self::new(max_total, &receipt.intent_hash)
     }
 
+    /// Serialize to the canonical JSON shape the sequencer expects for `policyParams`.
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "maxTotal": self.max_total,
@@ -425,6 +517,8 @@ pub struct ComplianceProofBundle {
     pub witness_commitment: [u64; 4],
     /// Hex form of the witness commitment for JSON-safe transport.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The same commitment, hex-encoded. Prefer this form on JSON APIs:
+    /// JavaScript numbers cannot represent a `u64` exactly.
     pub witness_commitment_hex: Option<String>,
     /// Canonical amount-bound public inputs.
     pub public_inputs: CompliancePublicInputs,
@@ -917,6 +1011,8 @@ pub struct AgentAuthorizationProofBundle {
     pub witness_commitment: [u64; 4],
     /// Hex form of the witness commitment for JSON-safe transport.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The same commitment, hex-encoded. Prefer this form on JSON APIs:
+    /// JavaScript numbers cannot represent a `u64` exactly.
     pub witness_commitment_hex: Option<String>,
     /// Canonical payload amount and receipt-bound public inputs.
     pub public_inputs: CompliancePublicInputs,
@@ -1430,11 +1526,17 @@ impl AgentAuthorizationProofBundle {
 /// Proof submission helper
 #[derive(Debug, Clone)]
 pub struct ProofSubmission {
+    /// VES event the proof attests to.
     pub event_id: Uuid,
+    /// Policy identifier, e.g. `aml.threshold`.
     pub policy_id: String,
+    /// Policy parameters as canonical JSON; the shape depends on `policy_id`.
     pub policy_params: serde_json::Value,
+    /// Serialized STARK proof.
     pub proof_bytes: Vec<u8>,
+    /// Rescue commitment to the salted witness, as four field elements.
     pub witness_commitment: [u64; 4],
+    /// Canonical public inputs, when the sequencer stored them.
     pub public_inputs: Option<CompliancePublicInputs>,
 }
 
