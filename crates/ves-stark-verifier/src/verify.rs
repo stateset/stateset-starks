@@ -6,6 +6,7 @@ use crate::error::{validate_hex_string, VerifierError, MAX_PROOF_SIZE};
 use serde::{Deserialize, Serialize};
 use ves_stark_air::compliance::{ComplianceAir, PublicInputs};
 use ves_stark_air::policy::Policy;
+use ves_stark_primitives::panic_guard::guard_untrusted;
 use ves_stark_primitives::public_inputs::CompliancePublicInputs;
 use ves_stark_primitives::{
     felt_from_u64, CommerceAuthorizationReceipt, Felt, Hash256, PayloadAmountBinding,
@@ -189,9 +190,18 @@ fn verify_compliance_proof_with_options(
         .effective_limit()
         .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?;
 
-    // Deserialize proof
-    let proof = winter_verifier::Proof::from_bytes(proof_bytes)
-        .map_err(|e| VerifierError::DeserializationError(format!("{:?}", e)))?;
+    // Deserialize proof.
+    //
+    // Guarded: `Proof::from_bytes` reads length and width fields straight from
+    // attacker-supplied bytes and combines them with unchecked arithmetic, so it
+    // can panic rather than return `Err` (found by `fuzz_proof_deserialization`;
+    // see `tests/untrusted_input_test.rs`). A panic here would be a denial of
+    // service for any process verifying proofs on behalf of others.
+    let proof = guard_untrusted("proof deserialization", || {
+        winter_verifier::Proof::from_bytes(proof_bytes)
+    })
+    .map_err(VerifierError::DeserializationError)?
+    .map_err(|e| VerifierError::DeserializationError(format!("{:?}", e)))?;
 
     // Convert witness commitment to field elements
     let commitment_felts: [Felt; 4] = [

@@ -19,6 +19,7 @@
 pub mod commerce_intent;
 pub mod field;
 pub mod hash;
+pub mod panic_guard;
 pub mod payload_amount;
 pub mod public_inputs;
 pub mod rescue;
