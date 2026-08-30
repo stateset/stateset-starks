@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Contained a reachable panic on the verification path.** `cargo +nightly fuzz run
+  fuzz_proof_deserialization` — the CI job added in 0.4.0, run for the first time — reaches
+  `attempt to multiply with overflow` inside `winter-air-0.10.3`
+  (`src/air/trace_info.rs:311`) with eleven bytes of proof input. The deserializer validates only
+  the *lower* bound of the log2 trace-length byte and then evaluates `2_usize.pow(n)` for an `n`
+  read straight from the input; there is no `MAX_TRACE_LENGTH` in the crate. Under
+  `overflow-checks = true` this panics, which on a verification service is a denial of service.
+  Both verifiers now wrap deserialization in `panic_guard::guard_untrusted`, returning a
+  `DeserializationError` instead. Regression tests in `tests/untrusted_input_test.rs` run under
+  both `overflow-checks` settings.
+- **Disclosed an uncontainable upstream allocation DoS.** The same fuzz target reaches
+  `Vec::with_capacity(num_elements)` in `winter-utils-0.10.2`
+  (`src/serde/byte_reader.rs:194`), where `num_elements` is a length prefix never checked against
+  the bytes remaining. A 39-byte proof requests ~72 PB. Rust aborts on allocation failure rather
+  than unwinding, so no guard can catch it — confirmed to SIGABRT in both debug and release. Both
+  defects are still present in the latest upstream release (`winter-air 0.13.1`). Documented in
+  `docs/THREAT_MODEL.md` with a repro and the deployment mitigation (verify under `RLIMIT_AS` or a
+  container memory cap); the fix belongs upstream or in a vendored patch.
+
+### Fixed
+
+- `docs/VERIFICATION.md` §11 claimed the untrusted-input surfaces "never panic". They did. The
+  section now states what is contained, what is not, and how to mitigate the remainder.
+
+### Changed
+
+- All five fuzz targets have now actually been run (previously none had been). `fuzz_rescue_hash`
+  111k executions, `fuzz_public_inputs` 255k, `fuzz_witness_validation` 96k and `fuzz_batch_proof`
+  985k are clean; `fuzz_proof_deserialization` reproduces the upstream allocation defect above.
+- Fuzz targets that exercise a guarded boundary now assert the property that matters — *no panic
+  escapes the library to its caller* — instead of tripping on a panic the library deliberately
+  catches. `libfuzzer-sys` aborts before unwinding, which otherwise hides a working guard.
+- The CI fuzz job is `continue-on-error` while the upstream allocation defect is open, so it keeps
+  reporting without gating unrelated work.
+- `ves-stark-client::types` no longer carries a blanket `allow(missing_docs)`: all 91 transport
+  fields are documented with what the wire contract requires — base64 vs hex encodings, which hash
+  is reported versus recomputed, and where the `u64` commitment form is unsafe for JavaScript
+  consumers.
+- Node and Python packages moved from 0.2.3 to 0.4.0, ending the drift from the Rust crates. Both
+  binding test suites verified against the bump.
+
 ## [0.4.0] - 2026-08-29
 
 ### Security
