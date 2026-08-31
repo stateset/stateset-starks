@@ -96,6 +96,39 @@ For `payload_kind == 2`:
 deprecation; `ComplianceVerification::amount_binding` gains a kind-2 path that
 needs no artifact.
 
+## Sequencer integration — what it actually requires (verified against the code)
+
+The verifier side of V2 is implemented. Making it *live* needs the sequencer to
+emit `payload_kind == 2` events, and reading `stateset-sequencer/src/crypto/hash.rs`
+shows that is **not** a bounded addition — it is a design-and-migration effort
+with product decisions:
+
+- The sequencer today computes `payload_plain_hash = SHA-256(DOMAIN ‖ canonical_json(payload))`
+  (and a salted variant that salts the *whole* payload for the encrypted path).
+  It has no concept of "the amount", no Rescue commitment, and no dependency on
+  `ves-stark-primitives`.
+- V2 requires it to instead form `SHA-256(DOMAIN_V2 ‖ C ‖ restHash)`, which means:
+  1. **Product decision:** which field of an arbitrary event payload *is* the
+     amount, and its canonical u64 encoding. Not all payloads have one.
+  2. **Salt lifecycle:** who generates the 128-bit salt, how it reaches the
+     prover so the prover's `C` matches (the salt is a private witness), and how
+     it is stored.
+  3. **New dependency:** the sequencer must compute Rescue over the amount limbs
+     — either depend on `ves-stark-primitives` or reimplement it with a shared
+     KAT (`payload_v2::kat_payload_plain_hash_v2`).
+  4. **Migration / blast radius:** `payload_plain_hash` is consumed everywhere
+     and checked at ingest (`api/handlers/ves/amount_binding.rs` compares
+     `payload_plain_hash(payload)` to the event's stored hash). Changing its
+     formation touches every event and stored record, so V2 must be a *new*
+     `payload_kind`, with V1 hashing untouched and both supported through the
+     transition — as the migration section above already specifies.
+
+None of this is verifier-side and none of it can be inferred safely; it needs an
+owner decision on payload schema and salt handling before implementation. The
+`ves-stark` side is ready and tested against a locally computed V2 hash, so the
+sequencer can be built and verified against `payload_v2::payload_plain_hash_v2`
+independently.
+
 ## Sequencer contract (`stateset-sequencer`)
 
 - Accept a 128-bit `salt` in the event payload (authored by the event producer,
