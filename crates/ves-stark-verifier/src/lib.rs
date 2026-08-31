@@ -6,6 +6,21 @@
 //!
 //! # Choosing an entry point
 //!
+//! Prefer the builder — it is the same set of checks as the free functions,
+//! expressed as one call a reviewer can read:
+//!
+//! ```ignore
+//! ComplianceVerification::new(&proof_bytes, &public_inputs)
+//!     .amount_binding(&binding)
+//!     .strict()
+//!     .run()?;
+//! ```
+//!
+//! It keeps the free functions' tripwire: `run()` refuses unless you chose
+//! either `.amount_binding(..)` or explicitly `.witness_only()`.
+//!
+//! The free functions remain for callers that already use them.
+//!
 //! This crate exposes many verification functions. They are not variations on
 //! taste: each name spells out, in full, which checks it performs. The
 //! alternative — one function with four booleans — makes a call site whose
@@ -62,9 +77,11 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+mod builder;
 mod error;
 mod verify;
 
+pub use builder::ComplianceVerification;
 pub use error::{validate_hex_string, VerifierError, MAX_PROOF_SIZE, PROOF_VERSION};
 pub use verify::{
     verify_agent_authorization_proof, verify_agent_authorization_proof_auto,
