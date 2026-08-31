@@ -19,30 +19,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Both verifiers now wrap deserialization in `panic_guard::guard_untrusted`, returning a
   `DeserializationError` instead. Regression tests in `tests/untrusted_input_test.rs` run under
   both `overflow-checks` settings.
-- **Disclosed an uncontainable upstream allocation DoS.** The same fuzz target reaches
+- **Closed an upstream allocation DoS on the verifier.** The same fuzz target reaches
   `Vec::with_capacity(num_elements)` in `winter-utils-0.10.2`
   (`src/serde/byte_reader.rs:194`), where `num_elements` is a length prefix never checked against
-  the bytes remaining. A 39-byte proof requests ~72 PB. Rust aborts on allocation failure rather
-  than unwinding, so no guard can catch it — confirmed to SIGABRT in both debug and release. Both
-  defects are still present in the latest upstream release (`winter-air 0.13.1`). Documented in
-  `docs/THREAT_MODEL.md` with a repro and the deployment mitigation (verify under `RLIMIT_AS` or a
-  container memory cap); the fix belongs upstream or in a vendored patch.
+  the bytes remaining. A 39-byte proof requested ~72 PB; Rust aborts on allocation failure rather
+  than unwinding, so this SIGABRTed in both debug and release and no `catch_unwind` could reach it.
+  Still present in the latest upstream release (`winter-air 0.13.1`). Fixed in-repo without
+  vendoring: `read_many` is a *provided* `ByteReader` method, so
+  `ves_stark_primitives::bounded_reader::BoundedReader` overrides it to reject any declared count
+  larger than the bytes remaining, before allocating. Both verifiers now parse via
+  `deserialize_bounded` instead of `Proof::from_bytes`; the upstream deserializers are otherwise
+  untouched. The regression test that had to be `#[ignore]`d because it killed the test binary is
+  now live and passing, and the CI fuzz job is blocking again.
 
 ### Fixed
 
+- `Cargo.toml` `repository` pointed at `stateset/stateset-stark`; the remote is `stateset-starks`.
 - `docs/VERIFICATION.md` §11 claimed the untrusted-input surfaces "never panic". They did. The
   section now states what is contained, what is not, and how to mitigate the remainder.
 
+### Added
+
+- `ves_stark_verifier::ComplianceVerification`, a builder that expresses the same checks as the
+  26 free verification functions as one readable call, and keeps their tripwire: `run()` refuses
+  unless the caller chose `.amount_binding(..)` or explicitly `.witness_only()`. The free functions
+  remain.
+- `docs/AMOUNT_BINDING_DESIGN.md`: the design for binding the proved amount to the event payload
+  *inside the circuit* — the one open gap that changes what a verifier may conclude. Recommends
+  making the amount its own Rescue leaf of `payload_plain_hash` (one extra permutation, +14
+  constraints) over hashing the payload in-circuit; the sequencer-side contract is specified and
+  must land first.
+- `docs/upstream/`: ready-to-file issue text for both Winterfell deserialization defects.
+- Nightly workflow: 40-minute fuzz campaign per target with a persisted corpus, Miri over a real
+  prove/verify cycle through the C ABI, and `cargo-deny` (licenses, bans, sources) with `deny.toml`.
+- Property tests proving `BoundedReader` is observationally identical to upstream `SliceReader`
+  except in the over-allocation region, where it must — and does — refuse instead.
+
 ### Changed
 
+- The three monoliths are split. `ves-stark-zig` (1.7k lines, every `unsafe` block in the
+  workspace) is now a module per section of the C API with helpers, error codes and handle types
+  in `lib.rs`. `ves-stark-client::types` (2.9k) keeps the DTOs and moves bundles, submission and
+  validation into `types/`. `ves-stark-cli` (2.3k) keeps the CLI definition, `main` and shared
+  helpers and moves each command into `commands/`. No public path changed; the largest file in the
+  workspace is now 1.3k lines, most of it tests.
+- Release-build time investigated: `codegen-units = 4` was tried and measured *not* to help — with
+  `lto = "fat"` the serial link dominates. Left at 1 with the finding recorded in the profile
+  comment; `lto = "thin"` is the real lever and needs a prove-time benchmark before adoption.
 - All five fuzz targets have now actually been run (previously none had been). `fuzz_rescue_hash`
   111k executions, `fuzz_public_inputs` 255k, `fuzz_witness_validation` 96k and `fuzz_batch_proof`
   985k are clean; `fuzz_proof_deserialization` reproduces the upstream allocation defect above.
 - Fuzz targets that exercise a guarded boundary now assert the property that matters — *no panic
   escapes the library to its caller* — instead of tripping on a panic the library deliberately
   catches. `libfuzzer-sys` aborts before unwinding, which otherwise hides a working guard.
-- The CI fuzz job is `continue-on-error` while the upstream allocation defect is open, so it keeps
-  reporting without gating unrelated work.
 - `ves-stark-client::types` no longer carries a blanket `allow(missing_docs)`: all 91 transport
   fields are documented with what the wire contract requires — base64 vs hex encodings, which hash
   is reported versus recomputed, and where the `u64` commitment form is unsafe for JavaScript
