@@ -8,6 +8,7 @@ use winter_crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree};
 use winter_verifier::{verify, AcceptableOptions};
 
 use ves_stark_air::options::ProofOptions;
+use ves_stark_primitives::bounded_reader::deserialize_bounded;
 use ves_stark_primitives::panic_guard::guard_untrusted;
 use ves_stark_primitives::{felt_from_u64, Felt, Hash256, BATCH_PROOF_HASH_DOMAIN};
 
@@ -107,7 +108,7 @@ fn verify_batch_proof_with_options(
     // Guarded for the same reason as the single-event verifier: the upstream
     // deserializer can panic on malformed bytes instead of returning `Err`.
     let proof = guard_untrusted("batch proof deserialization", || {
-        winter_verifier::Proof::from_bytes(proof_bytes)
+        deserialize_bounded::<winter_verifier::Proof>(proof_bytes)
     })
     .map_err(BatchError::DeserializationFailed)?
     .map_err(|e| BatchError::DeserializationFailed(format!("{e}")))?;

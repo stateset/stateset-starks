@@ -17,13 +17,12 @@
 //!    `ves_stark_primitives::panic_guard::guard_untrusted`, turning the panic
 //!    into a `DeserializationError`. These tests lock that in.
 //!
-//! 2. **Unbounded allocation (NOT contained).** `winter-utils-0.10.2`
+//! 2. **Unbounded allocation (contained).** `winter-utils-0.10.2`
 //!    `src/serde/byte_reader.rs:194` does `Vec::with_capacity(num_elements)`
-//!    where `num_elements` is a length prefix read straight from the input and
-//!    never checked against the bytes remaining. A 39-byte proof can declare
-//!    2^56 elements. Rust aborts on allocation failure rather than unwinding,
-//!    so `catch_unwind` cannot contain this one — see the ignored test at the
-//!    bottom of this file.
+//!    where `num_elements` is a length prefix never checked against the bytes
+//!    remaining, so a 39-byte proof could request ~72 PB and abort the process.
+//!    Both verifiers now parse through `bounded_reader::deserialize_bounded`,
+//!    whose `read_many` rejects such a count before allocating.
 //!
 //! These are regression tests: they must keep passing under both
 //! `overflow-checks` settings, so run them in debug (where the check is on) as
@@ -138,33 +137,14 @@ fn extreme_thresholds_do_not_panic() {
 
 /// Second finding: a 39-byte proof drives an unbounded allocation.
 ///
-/// `winter-utils`'s `ByteReader::read_many` calls
-/// `Vec::with_capacity(num_elements)` with a length prefix taken straight from
-/// the input and never compared against the bytes remaining, so the declared
-/// element count can be arbitrarily large. Measured here: a request for
-/// 72,057,607,577,400,833 bytes (~72 PB), which aborts the process with SIGABRT
-/// in **both** debug and release.
+/// `winter-utils`'s `read_many` calls `Vec::with_capacity(num_elements)` with a
+/// length prefix taken straight from the input. Measured here: a request for
+/// 72,057,607,577,400,833 bytes, which aborted the process with SIGABRT in both
+/// debug and release — an abort that no `catch_unwind` can contain.
 ///
-/// # Why this test is ignored
-///
-/// It does not fail — it *aborts the test binary*, taking every other test in
-/// the process with it. Rust calls `handle_alloc_error` on allocation failure,
-/// which aborts rather than unwinding, so neither `catch_unwind` nor
-/// `#[should_panic]` can observe it.
-///
-/// It is kept, and kept runnable, so the finding is reproducible on demand:
-///
-/// ```text
-/// cargo test --test untrusted_input_test -- --ignored --exact \
-///     oversized_declared_allocation_is_rejected_not_attempted
-/// ```
-///
-/// Un-ignore this test when the upstream bound lands. Until then the mitigation
-/// is deployment-level: verify proofs in a process with an address-space limit
-/// (`RLIMIT_AS`) or a container memory cap, so an abort takes down only a
-/// sacrificial worker.
-#[ignore = "aborts the process: unbounded allocation in winter-utils read_many; \
-            see docs/THREAT_MODEL.md"]
+/// Fixed by `ves_stark_primitives::bounded_reader`, which overrides `read_many`
+/// to reject any declared count larger than the bytes remaining. This test
+/// once had to be `#[ignore]`d because it took the whole test binary down.
 #[test]
 fn oversized_declared_allocation_is_rejected_not_attempted() {
     let bytes = [

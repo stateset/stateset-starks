@@ -19,21 +19,23 @@ name = "ves-stark"
 version = "0.4.0"
 edition = "2021"
 rust-version = "1.90"
+license = "MIT"
 publish = false
 
 [dependencies]
-ves-stark-primitives = { path = "crates/ves-stark-primitives" }
-ves-stark-air = { path = "crates/ves-stark-air" }
-ves-stark-prover = { path = "crates/ves-stark-prover" }
-ves-stark-verifier = { path = "crates/ves-stark-verifier" }
-ves-stark-client = { path = "crates/ves-stark-client" }
+ves-stark-primitives = { version = "0.4.0", path = "crates/ves-stark-primitives" }
+ves-stark-air = { version = "0.4.0", path = "crates/ves-stark-air" }
+ves-stark-prover = { version = "0.4.0", path = "crates/ves-stark-prover" }
+ves-stark-verifier = { version = "0.4.0", path = "crates/ves-stark-verifier" }
+ves-stark-client = { version = "0.4.0", path = "crates/ves-stark-client" }
 
 [dev-dependencies]
 uuid = { workspace = true }
 serde_json = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
-ves-stark-batch = { path = "crates/ves-stark-batch" }
+winter-utils = { workspace = true }
+ves-stark-batch = { version = "0.4.0", path = "crates/ves-stark-batch" }
 
 [[bench]]
 name = "stark_bench"
@@ -45,7 +47,7 @@ edition = "2021"
 rust-version = "1.90"
 license = "MIT"
 authors = ["StateSet Engineering"]
-repository = "https://github.com/stateset/stateset-stark"
+repository = "https://github.com/stateset/stateset-starks"
 
 [workspace.dependencies]
 # Winterfell STARK framework
@@ -88,6 +90,11 @@ criterion = "0.5"
 
 [profile.release]
 lto = "fat"
+# Release builds of this workspace take 50+ minutes from clean. Measured on
+# 2026-08-31: raising codegen-units to 4 did NOT help — with fat LTO the
+# serial link step dominates and parallel codegen units barely move it. The
+# lever that would is `lto = "thin"`, which is a prove-time trade-off that
+# should be measured with `cargo bench` before it is taken; it has not been.
 codegen-units = 1
 # `panic = "abort"` is deliberately NOT set.
 #

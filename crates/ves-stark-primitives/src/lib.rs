@@ -16,6 +16,7 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+pub mod bounded_reader;
 pub mod commerce_intent;
 pub mod field;
 pub mod hash;

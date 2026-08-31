@@ -2016,6 +2016,7 @@ dependencies = [
  "ves-stark-primitives",
  "ves-stark-prover",
  "ves-stark-verifier",
+ "winter-utils",
 ]
 
 [[package]]

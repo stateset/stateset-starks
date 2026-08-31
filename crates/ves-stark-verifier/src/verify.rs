@@ -6,6 +6,7 @@ use crate::error::{validate_hex_string, VerifierError, MAX_PROOF_SIZE};
 use serde::{Deserialize, Serialize};
 use ves_stark_air::compliance::{ComplianceAir, PublicInputs};
 use ves_stark_air::policy::Policy;
+use ves_stark_primitives::bounded_reader::deserialize_bounded;
 use ves_stark_primitives::panic_guard::guard_untrusted;
 use ves_stark_primitives::public_inputs::CompliancePublicInputs;
 use ves_stark_primitives::{
@@ -197,8 +198,11 @@ fn verify_compliance_proof_with_options(
     // can panic rather than return `Err` (found by `fuzz_proof_deserialization`;
     // see `tests/untrusted_input_test.rs`). A panic here would be a denial of
     // service for any process verifying proofs on behalf of others.
+    // `deserialize_bounded` rather than `Proof::from_bytes`: the upstream reader
+    // sizes allocations from an unchecked length prefix, which aborts the process
+    // on absurd input — and an abort cannot be caught by the guard around it.
     let proof = guard_untrusted("proof deserialization", || {
-        winter_verifier::Proof::from_bytes(proof_bytes)
+        deserialize_bounded::<winter_verifier::Proof>(proof_bytes)
     })
     .map_err(VerifierError::DeserializationError)?
     .map_err(|e| VerifierError::DeserializationError(format!("{:?}", e)))?;
