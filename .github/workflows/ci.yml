@@ -144,7 +144,10 @@ jobs:
           for target in fuzz_rescue_hash fuzz_witness_validation \
                         fuzz_proof_deserialization fuzz_public_inputs fuzz_batch_proof; do
             echo "::group::$target"
-            cargo +nightly fuzz run "$target" -- -max_total_time=60 -timeout=10
+            # Force the gnu triple: taiki-e ships a musl-built cargo-fuzz that
+            # otherwise targets musl, whose static libc is incompatible with the
+            # sanitizer (and is not installed on the runner).
+            cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$target" -- -max_total_time=60 -timeout=10
             echo "::endgroup::"
           done
 
