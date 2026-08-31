@@ -32,7 +32,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
-      - uses: taiki-e/install-action@cargo-fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
 
       # The corpus is what makes a campaign cumulative: each night starts from
       # the coverage the previous night reached instead of from scratch. The
