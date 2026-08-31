@@ -35,7 +35,20 @@ commitment even though the AIR does not derive the amount itself.
 For `aml.threshold`, the verifier uses `L = threshold - 1` (and requires `threshold > 0`), so
 `amount <= L` is equivalent to `amount < threshold`.
 
-Non-statement: the AIR does **not** prove that `amount` is derived from or consistent with the
+**V2 events (`payload_kind == 2`).** The sequencer forms
+`payload_plain_hash = SHA-256(domain ‖ C ‖ restHash)`, and the verifier recomputes it natively for
+the `C` the proof was verified against (`ves_stark_primitives::payload_v2`). Since the AIR proves
+`C = Rescue(amount ‖ salt)`, the statement for a V2 event is that **the proved amount is the
+amount on the event**, up to Rescue collision resistance — with no circuit change. This closes
+the non-statement below for V2 **per-event** proofs; see `docs/AMOUNT_BINDING_DESIGN.md`.
+
+> **Batch proofs do not yet apply this check.** `BatchVerifier` verifies the aggregate STARK and
+> binds each event's public inputs, but does not recompute `SHA-256(domain ‖ C ‖ restHash)` per
+> event, so a batched `payload_kind == 2` event currently carries only the V1-equivalent
+> guarantee. Closing this needs the batch verifier to check the native hash against each event's
+> bound `witnessCommitment`; tracked in `docs/AMOUNT_BINDING_DESIGN.md`.
+
+Non-statement (V1 events): the AIR does **not** prove that `amount` is derived from or consistent with the
 payload hashes contained in `P`. This repository now supports a canonical protocol-level binding
 artifact for that purpose, but the binding still lives outside the AIR unless the proof statement
 is extended.

@@ -528,6 +528,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         }
     }
 
@@ -635,6 +636,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         }
     }
 

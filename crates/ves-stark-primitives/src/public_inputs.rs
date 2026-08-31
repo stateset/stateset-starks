@@ -45,6 +45,12 @@ pub enum PublicInputsError {
     #[error("Invalid authorization receipt binding: {0}")]
     AuthorizationReceiptBinding(String),
     /// Payload amount binding failed
+    /// `payload_kind == 2` binding failed: the recomputed
+    /// `SHA-256(domain ‖ C ‖ restHash)` does not equal `payload_plain_hash`, or
+    /// `restHash` is missing.
+    #[error("Invalid V2 payload binding: {0}")]
+    PayloadV2Binding(String),
+    /// The protocol-level `PayloadAmountBinding` artifact did not validate.
     #[error("Invalid payload amount binding: {0}")]
     AmountBinding(String),
     /// Witness commitment binding failed
@@ -392,6 +398,14 @@ pub struct CompliancePublicInputs {
     /// binding artifact derived by the surrounding protocol.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount_binding_hash: Option<String>,
+
+    /// V2 payload binding (`payload_kind == 2`): SHA-256 of the payload with the
+    /// amount and salt removed, hex32. With it the verifier recomputes
+    /// `payload_plain_hash = SHA-256(domain ‖ C ‖ restHash)` natively, which binds
+    /// the proved witness commitment `C` to the event with no circuit change and
+    /// no signed artifact. See `docs/AMOUNT_BINDING_DESIGN.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest_hash: Option<String>,
 }
 
 impl CompliancePublicInputs {
@@ -832,6 +846,9 @@ impl CompliancePublicInputsFelts {
         if let Some(amount_binding_hash) = inputs.amount_binding_hash.as_deref() {
             validate_hex_string("amountBindingHash", amount_binding_hash, 64)?;
         }
+        if let Some(rest_hash) = inputs.rest_hash.as_deref() {
+            validate_hex_string("restHash", rest_hash, 64)?;
+        }
 
         Ok(Self {
             event_id: uuid_to_felts(&inputs.event_id),
@@ -1119,6 +1136,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         }
     }
 
@@ -1217,6 +1235,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
 
         let felts = inputs.to_field_elements().unwrap();
@@ -1249,6 +1268,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
 
         assert!(inputs.validate_policy_hash().unwrap());
@@ -1271,6 +1291,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
 
         let result = inputs.to_field_elements();
@@ -1297,6 +1318,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
         let mut inputs_with_commitment = inputs_without_commitment.clone();
         inputs_with_commitment.witness_commitment = Some(witness_commitment);
@@ -1336,6 +1358,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: Some("a".repeat(64)),
             amount_binding_hash: Some("b".repeat(64)),
+            rest_hash: Some("5".repeat(64)),
         };
         let base_hash = base.compute_hash().unwrap();
 
@@ -1376,6 +1399,7 @@ mod tests {
         check("amount_binding_hash", &|i| {
             i.amount_binding_hash = Some("8".repeat(64))
         });
+        check("rest_hash", &|i| i.rest_hash = Some("4".repeat(64)));
 
         // witnessCommitment is intentionally excluded from the canonical hash.
         let mut with_commitment = base.clone();
@@ -1407,6 +1431,7 @@ mod tests {
             witness_commitment: Some(commitment_hex),
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
 
         let recovered = inputs.witness_commitment_u64().unwrap().unwrap();
@@ -1430,6 +1455,7 @@ mod tests {
             witness_commitment: Some("A".repeat(64)),
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
 
         let err = inputs.witness_commitment_u64().unwrap_err();
@@ -1461,6 +1487,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
 
         let err = inputs.compute_bound_hash().unwrap_err();
@@ -1489,6 +1516,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
 
         let bound = inputs.bind_witness_commitment(&[1, 2, 3, 4]).unwrap();
@@ -1530,6 +1558,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
 
         let binding =
@@ -1581,6 +1610,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
 
         // Committed amount 5_000 passes the policy but is NOT the payload amount.
@@ -1616,6 +1646,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
         let binding = inputs.payload_amount_binding(5_000).unwrap();
 
@@ -1653,6 +1684,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
         let binding = sample_payload_amount_binding(&inputs, 5_000);
 
@@ -1753,6 +1785,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
 
         let binding = PayloadAmountBinding::from_public_inputs(&inputs, 5_000).unwrap();
@@ -1779,6 +1812,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
         let binding = sample_payload_amount_binding(&inputs, 5_000);
 
@@ -1819,6 +1853,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
 
         let bound = inputs.bind_amount(5_000).unwrap();
@@ -1851,6 +1886,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
         let mut binding = sample_payload_amount_binding(&inputs, 5_000);
         binding.binding_hash = "f".repeat(64);
@@ -1885,6 +1921,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
         // Binding built from the unmodified inputs, so it matches `base` exactly.
         let binding = sample_payload_amount_binding(&base, 5_000);

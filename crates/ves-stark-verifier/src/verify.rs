@@ -8,6 +8,7 @@ use ves_stark_air::compliance::{ComplianceAir, PublicInputs};
 use ves_stark_air::policy::Policy;
 use ves_stark_primitives::bounded_reader::deserialize_bounded;
 use ves_stark_primitives::panic_guard::guard_untrusted;
+use ves_stark_primitives::payload_v2::validate_payload_v2_binding;
 use ves_stark_primitives::public_inputs::CompliancePublicInputs;
 use ves_stark_primitives::{
     felt_from_u64, CommerceAuthorizationReceipt, Felt, Hash256, PayloadAmountBinding,
@@ -234,13 +235,22 @@ fn verify_compliance_proof_with_options(
     );
 
     match result {
-        Ok(_) => Ok(VerificationResult {
-            valid: true,
-            verification_time_ms: elapsed_ms(start),
-            error: None,
-            policy_id: public_inputs.policy_id.clone(),
-            policy_limit: policy.limit(),
-        }),
+        Ok(_) => {
+            // V2 payload binding: for payload_kind == 2, the commitment the proof
+            // was just verified against must be a component of
+            // payload_plain_hash. This is what makes the proved amount the amount
+            // on the event; a no-op for other kinds.
+            if let Err(e) = validate_payload_v2_binding(public_inputs, witness_commitment) {
+                return Err(VerifierError::PayloadV2BindingMismatch(e.to_string()));
+            }
+            Ok(VerificationResult {
+                valid: true,
+                verification_time_ms: elapsed_ms(start),
+                error: None,
+                policy_id: public_inputs.policy_id.clone(),
+                policy_limit: policy.limit(),
+            })
+        }
         Err(e) => Ok(VerificationResult {
             valid: false,
             verification_time_ms: elapsed_ms(start),
@@ -914,6 +924,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         }
     }
 
@@ -968,6 +979,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
 
         (receipt, inputs, policy)
@@ -1411,6 +1423,7 @@ mod tests {
                 witness_commitment: None,
                 authorization_receipt_hash: None,
                 amount_binding_hash: None,
+                rest_hash: None,
             };
             assert!(inputs.validate_policy_hash().unwrap());
         }

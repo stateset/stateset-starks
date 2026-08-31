@@ -75,6 +75,7 @@ fn verifier_error_to_napi(err: VerifierError) -> Error {
         VerifierError::InvalidProofStructure(_)
         | VerifierError::FriVerificationFailed(_)
         | VerifierError::ConstraintCheckFailed(_)
+        | VerifierError::PayloadV2BindingMismatch(_)
         | VerifierError::VerificationFailed(_) => Status::GenericFailure,
     };
 
@@ -145,6 +146,8 @@ pub struct JsCompliancePublicInputs {
     pub authorization_receipt_hash: Option<String>,
     /// Optional payload amount binding hash (hex64, lowercase) committed into canonical public inputs.
     pub amount_binding_hash: Option<String>,
+    /// V2 payload binding hash (hex64); required when payloadKind == 2.
+    pub rest_hash: Option<String>,
 }
 
 /// Result of proof generation
@@ -203,6 +206,7 @@ fn convert_public_inputs(js: &JsCompliancePublicInputs) -> Result<CompliancePubl
         witness_commitment: js.witness_commitment.clone(),
         authorization_receipt_hash: js.authorization_receipt_hash.clone(),
         amount_binding_hash: js.amount_binding_hash.clone(),
+        rest_hash: js.rest_hash.clone(),
     })
 }
 

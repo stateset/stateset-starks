@@ -1416,6 +1416,7 @@ mod tests {
             witness_commitment: Some(witness_commitment_u64_to_hex(&commitment_u64)),
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         }
     }
 

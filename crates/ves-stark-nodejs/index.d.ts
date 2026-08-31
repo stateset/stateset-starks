@@ -33,6 +33,8 @@ export interface JsCompliancePublicInputs {
   authorizationReceiptHash?: string
   /** Optional payload amount binding hash (hex64, lowercase) committed into canonical public inputs. */
   amountBindingHash?: string
+  /** V2 payload binding hash (hex64); required when payloadKind == 2. */
+  restHash?: string
 }
 /** Result of proof generation */
 export interface JsComplianceProof {

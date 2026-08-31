@@ -93,6 +93,11 @@ pub enum VerifierError {
     #[error("Payload amount binding required: {0}")]
     PayloadAmountBindingRequired(String),
 
+    /// `payload_kind == 2` and `payload_plain_hash` is not `SHA-256(domain ‖ C ‖ restHash)`
+    /// for the verified commitment: the proof's amount is not the amount on this event.
+    #[error("V2 payload binding failed: {0}")]
+    PayloadV2BindingMismatch(String),
+
     /// Proof is too large
     #[error("Proof too large: {size} bytes exceeds maximum of {max_size} bytes")]
     ProofTooLarge {

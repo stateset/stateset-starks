@@ -169,6 +169,10 @@ fn parse_public_inputs_json(json: &str) -> Result<CompliancePublicInputs, i32> {
         .get("amount_binding_hash")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let rest_hash = obj
+        .get("rest_hash")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
     Ok(CompliancePublicInputs {
         event_id,
@@ -185,6 +189,7 @@ fn parse_public_inputs_json(json: &str) -> Result<CompliancePublicInputs, i32> {
         witness_commitment,
         authorization_receipt_hash,
         amount_binding_hash,
+        rest_hash,
     })
 }
 

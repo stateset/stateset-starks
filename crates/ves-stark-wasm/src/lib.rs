@@ -192,6 +192,7 @@ fn parse_public_inputs(value: JsValue) -> Result<CompliancePublicInputs, JsValue
         witness_commitment: optional_string(&object, "witnessCommitment")?,
         authorization_receipt_hash: optional_string(&object, "authorizationReceiptHash")?,
         amount_binding_hash: optional_string(&object, "amountBindingHash")?,
+        rest_hash: optional_string(&object, "restHash")?,
     })
 }
 

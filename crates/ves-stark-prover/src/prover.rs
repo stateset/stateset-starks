@@ -386,6 +386,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
 
         let witness = ComplianceWitness::new(amount, inputs);
@@ -442,6 +443,7 @@ mod tests {
             witness_commitment: None,
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         };
         // Force a mismatch: this commitment does not correspond to the amount below.
         inputs.witness_commitment = Some(witness_commitment_u64_to_hex(&[0u64; 4]));

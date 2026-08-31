@@ -22,6 +22,7 @@ pub mod field;
 pub mod hash;
 pub mod panic_guard;
 pub mod payload_amount;
+pub mod payload_v2;
 pub mod public_inputs;
 pub mod rescue;
 

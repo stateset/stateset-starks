@@ -330,6 +330,7 @@ pub(crate) fn generate_batch_public_inputs(
         witness_commitment: None,
         authorization_receipt_hash: None,
         amount_binding_hash: None,
+        rest_hash: None,
     })
 }
 

@@ -38,7 +38,8 @@ the public witness commitment." See `docs/SOUNDNESS.md` for the argument.
 | 2 | Subtraction gadget manipulation | limb subtraction + borrow binary + final-borrow=0 boundary | `test_amount_exceeds_threshold_rejected`, `prop_invalid_amount_never_proves_lt` |
 | 3 | Commitment forgery | Rescue constraints + output-row boundary assertion | `test_tampered_witness_commitment_rejected`, `test_commitment_from_different_amount_rejected`, `test_zero_witness_commitment_rejected`, `prop_commitment_is_binding` |
 | 4 | Policy mismatch | verifier rechecks `policy_hash` + id/params; AIR binds limit | `test_policy_id_mismatch_rejected`, `test_threshold_mismatch_rejected`, `test_higher_threshold_proof_fails_lower_verification` |
-| 5 | Public-input substitution | inputs bound into trace via boundary assertions | `test_proof_with_different_event_id_rejected`, `test_payload_hash_mismatch_rejected`, `test_public_inputs_canonical_hash_commits_to_every_field` (prim) |
+| 5 | V2 amount-to-payload binding: commitment not in payload hash rejected | verifier recomputes `SHA-256(domain ‖ C ‖ restHash)` | `test_commitment_not_in_payload_rejected`, `test_payload_hash_mismatch_rejected_v2`, `test_v2_requires_rest_hash`, `test_builder_witness_only_still_binds_v2`, `test_v2_honest_event_verifies`, `test_v1_events_unaffected` (it/payload_v2_binding_test); `kat_payload_plain_hash_v2` (prim/payload_v2) |
+| Public-input substitution | inputs bound into trace via boundary assertions | `test_proof_with_different_event_id_rejected`, `test_payload_hash_mismatch_rejected`, `test_public_inputs_canonical_hash_commits_to_every_field` (prim) |
 | 6 | Batch public-input substitution | batch AIR binds `BatchPublicInputs` | `test_batch_verifier_rejects_tampered_public_inputs`, `test_batch_verifier_rejects_bit_flipped_proof` (batch) |
 | 7 | Batch chain stitching | `verify_chain` enforces tenant/store + sequence continuity + state-root linkage | `test_verify_chain_rejects_broken_state_root_linkage`, `test_chain_continuity_rejects_tenant_mismatch`, `test_chain_continuity_rejects_store_mismatch`, `test_sequence_continuity_check_with_gap` |
 | 8 | Oversized-proof resource exhaustion | `MAX_BATCH_PROOF_SIZE` at verify; `MAX_SUBMISSION_PROOF_SIZE` at submit (const-asserted equal) | `test_verify_batch_proof_over_max_size_is_rejected`, `test_batch_proof_submission_validate_rejects_oversized_proof` (client) |
@@ -51,7 +52,7 @@ the hash. This catches the "silently dropped field → forgeable binding" class.
 
 | Binding | Fields | Test |
 |---|---|---|
-| `CompliancePublicInputs` canonical hash (per-event) | 13 | `test_public_inputs_canonical_hash_commits_to_every_field` (prim) |
+| `CompliancePublicInputs` canonical hash (per-event) | 14 | `test_public_inputs_canonical_hash_commits_to_every_field` (prim) |
 | `PayloadAmountBinding` hash (amount↔event) | 9 | `test_payload_amount_binding_hash_commits_to_every_field` (prim) |
 | `CommerceAuthorizationReceipt` hash (execution) | 18 | `test_authorization_receipt_hash_commits_to_every_field` (prim) |
 | `CommerceIntent` hash (authorization constraints) | 14 | `test_commerce_intent_hash_commits_to_every_field` (prim) |

@@ -141,6 +141,9 @@ pub struct CompliancePublicInputs {
     /// Optional payload amount binding hash (hex64, lowercase) committed into canonical public inputs.
     #[pyo3(get, set)]
     pub amount_binding_hash: Option<String>,
+    /// V2 payload binding hash (`restHash`, hex64), required when payload_kind == 2.
+    #[pyo3(get, set)]
+    pub rest_hash: Option<String>,
 }
 
 #[pymethods]
@@ -162,9 +165,10 @@ impl CompliancePublicInputs {
     ///     witness_commitment: Optional witness commitment (hex64, lowercase)
     ///     authorization_receipt_hash: Optional authorization receipt hash (hex64, lowercase)
     ///     amount_binding_hash: Optional payload amount binding hash (hex64, lowercase)
+    ///     rest_hash: V2 payload binding hash (hex64, lowercase); required when payload_kind == 2
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (event_id, tenant_id, store_id, sequence_number, payload_kind, payload_plain_hash, payload_cipher_hash, event_signing_hash, policy_id, policy_params, policy_hash, witness_commitment=None, authorization_receipt_hash=None, amount_binding_hash=None))]
+    #[pyo3(signature = (event_id, tenant_id, store_id, sequence_number, payload_kind, payload_plain_hash, payload_cipher_hash, event_signing_hash, policy_id, policy_params, policy_hash, witness_commitment=None, authorization_receipt_hash=None, amount_binding_hash=None, rest_hash=None))]
     pub fn new(
         event_id: String,
         tenant_id: String,
@@ -180,6 +184,7 @@ impl CompliancePublicInputs {
         witness_commitment: Option<String>,
         authorization_receipt_hash: Option<String>,
         amount_binding_hash: Option<String>,
+        rest_hash: Option<String>,
     ) -> PyResult<Self> {
         // Convert PyDict to JSON string
         let policy_params_json = py_dict_to_json(policy_params)?;
@@ -199,6 +204,7 @@ impl CompliancePublicInputs {
             witness_commitment,
             authorization_receipt_hash,
             amount_binding_hash,
+            rest_hash,
         })
     }
 
@@ -243,6 +249,7 @@ fn verifier_error_to_py(err: VerifierError) -> PyErr {
         VerifierError::InvalidProofStructure(_)
         | VerifierError::FriVerificationFailed(_)
         | VerifierError::ConstraintCheckFailed(_)
+        | VerifierError::PayloadV2BindingMismatch(_)
         | VerifierError::VerificationFailed(_) => PyRuntimeError::new_err(message),
     }
 }
@@ -274,6 +281,7 @@ impl CompliancePublicInputs {
             witness_commitment: self.witness_commitment.clone(),
             authorization_receipt_hash: self.authorization_receipt_hash.clone(),
             amount_binding_hash: self.amount_binding_hash.clone(),
+            rest_hash: self.rest_hash.clone(),
         })
     }
 }

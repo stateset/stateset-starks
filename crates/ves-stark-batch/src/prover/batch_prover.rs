@@ -440,6 +440,7 @@ mod tests {
             ])),
             authorization_receipt_hash: None,
             amount_binding_hash: None,
+            rest_hash: None,
         }
     }
 

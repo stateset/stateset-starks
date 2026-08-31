@@ -38,6 +38,7 @@ fn sample_aml_public_inputs(threshold: u64) -> CompliancePublicInputs {
         witness_commitment: None,
         authorization_receipt_hash: None,
         amount_binding_hash: None,
+        rest_hash: None,
     }
 }
 
@@ -62,6 +63,7 @@ fn sample_cap_public_inputs(cap: u64) -> CompliancePublicInputs {
         witness_commitment: None,
         authorization_receipt_hash: None,
         amount_binding_hash: None,
+        rest_hash: None,
     }
 }
 
@@ -89,6 +91,7 @@ fn sample_agent_authorization_public_inputs(
         witness_commitment: None,
         authorization_receipt_hash: None,
         amount_binding_hash: None,
+        rest_hash: None,
     }
 }
 
