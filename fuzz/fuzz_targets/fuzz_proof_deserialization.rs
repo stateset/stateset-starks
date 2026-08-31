@@ -49,6 +49,7 @@ fn create_public_inputs(threshold: u64) -> CompliancePublicInputs {
         witness_commitment: None,
         authorization_receipt_hash: None,
         amount_binding_hash: None,
+        rest_hash: None,
     }
 }
 

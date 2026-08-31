@@ -54,6 +54,7 @@ fuzz_target!(|input: PublicInputsData| {
         witness_commitment: None,
         authorization_receipt_hash: None,
         amount_binding_hash: None,
+        rest_hash: None,
     };
 
     // Validation should succeed for matching policy hash

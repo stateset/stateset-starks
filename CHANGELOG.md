@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-31
+
+### Fixed
+
+- CI fuzz smoke job installed nothing: `taiki-e/install-action@cargo-fuzz` (shortcut-tag form,
+  pinned to an old release) was a silent no-op, so `cargo fuzz` was absent and the job failed with
+  `no such command: fuzz` — not a fuzzing crash. Switched all `install-action` uses to the
+  canonical `@v2` + `tool:` form. This is why the v0.5.0 CI run showed the fuzz job red despite
+  both defects being contained.
+
+### Added
+
+- **The proved amount is now bound to the event for `payload_kind == 2`.** This was the one open
+  gap that changed what a verifier may conclude: a proof showed *some* compliant amount existed
+  behind the commitment, not that it was the amount on the order. For V2 events the sequencer
+  forms `payload_plain_hash = SHA-256(domain ‖ C ‖ restHash)` with `C` the salted witness
+  commitment the circuit already proves, and the verifier recomputes it. No circuit change, no
+  proving cost, no signed artifact, and 0.5.0 proofs are not invalidated; the `restHash` field
+  applies to **per-event** proofs; batch proofs still carry the V1 guarantee for V2 events (an
+  open item tracked in the design doc). The `restHash` field joins the canonical public inputs.
+  Contract for the sequencer in
+  `docs/AMOUNT_BINDING_DESIGN.md`; `ves_stark_primitives::payload_v2` is the reference
+  implementation with a KAT from an independent Python computation. An earlier draft of the
+  design used an unsalted leaf as a public input, which would have been brute-forceable — caught
+  in review and replaced by reusing `C`.
+
 ## [0.5.0] - 2026-08-31
 
 ### Security

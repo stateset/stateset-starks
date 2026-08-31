@@ -46,6 +46,7 @@ fn create_public_inputs(threshold: u64, sequence_number: u64, payload_kind: u8) 
         witness_commitment: None,
         authorization_receipt_hash: None,
         amount_binding_hash: None,
+        rest_hash: None,
     }
 }
 
