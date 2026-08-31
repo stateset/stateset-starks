@@ -1,0 +1,83 @@
+name: Nightly
+
+# Work that is too slow or too noisy for every PR but too valuable to skip:
+# a real fuzzing campaign with a persisted corpus, Miri over an actual
+# prove/verify cycle through the C FFI, and dependency policy.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz-campaign:
+    name: Fuzz campaign (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_rescue_hash
+          - fuzz_witness_validation
+          - fuzz_proof_deserialization
+          - fuzz_public_inputs
+          - fuzz_batch_proof
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@cargo-fuzz
+
+      # The corpus is what makes a campaign cumulative: each night starts from
+      # the coverage the previous night reached instead of from scratch. The
+      # PR smoke job (ci.yml) deliberately does not use it, so it stays a fast
+      # bit-rot check rather than a slow regression.
+      - name: Restore corpus
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+
+      - name: Run for 40 minutes
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=2400 -timeout=30
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+
+  miri-proof-path:
+    name: Miri over a full FFI prove/verify cycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      # ci.yml runs the FFI handle-lifecycle tests under Miri. This runs the
+      # one test that actually generates and verifies a STARK through the C
+      # boundary, which is far too slow to interpret on every PR.
+      - name: Miri, full cycle
+        run: cargo +nightly miri test -p ves-stark-zig --all-features -- --ignored miri_full_prove_verify_cycle
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+
+  deny:
+    name: cargo-deny (licenses, bans, sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
