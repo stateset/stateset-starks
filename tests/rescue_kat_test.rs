@@ -95,14 +95,14 @@ mod reference {
         }
     }
 
-    /// The permutation, as specified in `rescue.rs`:
+    /// Canonical Rescue-Prime (Rescue-XLIX), as specified in `rescue.rs`:
     ///
-    /// * forward half-round:  S-box -> MDS -> add constants
-    /// * backward half-round: MDS -> inverse S-box -> add constants
+    /// * forward half-round:  S-box     -> MDS -> add constants
+    /// * backward half-round: S-box_inv -> MDS -> add constants
     ///
-    /// Note the backward half-round applies the **forward** MDS. Applying
-    /// `MDS_INV` here is precisely the historical defect described at the top of
-    /// this file: it cancels the forward MDS and destroys all diffusion.
+    /// Both half-rounds apply the MDS after the S-box, differing only in the
+    /// S-box direction. (A previous revision applied the MDS before the inverse
+    /// S-box in the backward half — a non-standard variant; see git history.)
     pub fn permutation(state: &mut [u64; STATE_WIDTH]) {
         for round in 0..NUM_ROUNDS {
             // Forward half-round.
@@ -113,10 +113,10 @@ mod reference {
             add_constants(state, &ROUND_CONSTANTS[round * 2]);
 
             // Backward half-round.
-            *state = mds(state);
             for s in state.iter_mut() {
                 *s = sbox_inv(*s);
             }
+            *state = mds(state);
             add_constants(state, &ROUND_CONSTANTS[round * 2 + 1]);
         }
     }
@@ -218,18 +218,18 @@ fn kat_permutation_of_zero_state() {
     assert_eq!(
         out,
         [
-            15691095162440443531,
-            11696517312817358869,
-            16589403534838266721,
-            7818620398376714657,
-            5858251014388559533,
-            10593572620696613148,
-            10935987167480697690,
-            18416146214891307694,
-            16021463253537430205,
-            1663223200304625487,
-            16974486608359342651,
-            6063232593086177394,
+            7302086185172163127,
+            324119935465390126,
+            9408200979193655089,
+            12756153108341236813,
+            11524840374123953959,
+            9260672491682336923,
+            10628638363629002351,
+            16420726786778080814,
+            9528334870624610684,
+            14704162118618677651,
+            12810540684803692553,
+            5207264791674842092,
         ],
         "Rescue permutation of the zero state changed"
     );
@@ -245,10 +245,10 @@ fn kat_hash_pair() {
     assert_eq!(
         out,
         [
-            6050666348225663397,
-            15122080935361975838,
-            14866887522145733026,
-            17772681253107559530
+            12831364978266134225,
+            16241203603470026125,
+            10230682936923694459,
+            11302295235110243981
         ],
         "rescue_hash_pair KAT changed"
     );
@@ -262,31 +262,31 @@ fn kat_hash_across_input_lengths() {
     let expected: [[u64; 4]; 4] = [
         // len 0 — empty input still permutes once, for domain separation.
         [
-            15691095162440443531,
-            11696517312817358869,
-            16589403534838266721,
-            7818620398376714657,
+            7302086185172163127,
+            324119935465390126,
+            9408200979193655089,
+            12756153108341236813,
         ],
         // len 1
         [
-            6086219427820333800,
-            10131663354037557569,
-            9909117481061545051,
-            9218093228081488245,
+            15941290208263087085,
+            190741665808472941,
+            15167401857387304042,
+            6178951341861175305,
         ],
         // len 8 — exactly one full rate block.
         [
-            601725881615837329,
-            6475117230276662949,
-            1592973480011305081,
-            4795680691571265276,
+            13785543260249572362,
+            4316480048539002392,
+            2185924351882292215,
+            18269957007639383427,
         ],
         // len 9 — straddles the rate boundary into a second absorption.
         [
-            4238461255610980358,
-            5635194165348497145,
-            12947016137719865402,
-            4403262437302108570,
+            10898281362911132113,
+            503695227604256536,
+            4287510919172478109,
+            7701387656612714439,
         ],
     ];
     for (i, len) in [0usize, 1, 8, 9].iter().enumerate() {
@@ -296,40 +296,22 @@ fn kat_hash_across_input_lengths() {
     }
 }
 
-/// The two MDS layers inside one round are separated only by a constant
-/// addition (`... -> MDS -> +c -> MDS -> ...`). Because MDS is linear, they
-/// collapse: `MDS * (MDS * y + c) = MDS^2 * y + MDS * c`. The matrix that
-/// actually mixes lanes between the two S-box layers is therefore `MDS^2`, not
-/// `MDS`, and diffusion depends on `MDS^2` retaining the MDS property.
-///
-/// This is a real consequence of the round ordering used here (see the note on
-/// `half_round_backward`), so it is asserted rather than assumed. Every square
-/// submatrix of an MDS matrix must be non-singular; 1x1 and 2x2 are checked
-/// exhaustively, which is what a degraded or sparse `MDS^2` would fail first.
+/// Canonical Rescue-Prime applies the MDS directly between each S-box layer
+/// (`sbox -> MDS -> +c -> sbox_inv -> MDS -> +c`), so the lane-mixing layer is
+/// `MDS` itself — no longer `MDS^2` as in the previous variant where the two MDS
+/// layers were adjacent. Diffusion therefore depends on `MDS` being MDS. Every
+/// square submatrix must be non-singular; 1x1 and 2x2 are checked exhaustively.
 #[test]
-fn effective_linear_layer_between_sboxes_is_still_mds() {
+#[allow(clippy::needless_range_loop)] // 2x2 minors need explicit row/col index pairs
+fn mds_matrix_is_mds() {
     const P: u128 = (1u128 << 64) - (1u128 << 32) + 1;
     let mul = |a: u64, b: u64| ((a as u128 * b as u128) % P) as u64;
     let sub = |a: u64, b: u64| ((a as u128 + P - b as u128) % P) as u64;
 
-    // MDS^2 over the Goldilocks field.
-    let mut sq = [[0u64; STATE_WIDTH]; STATE_WIDTH];
-    for (i, row) in sq.iter_mut().enumerate() {
-        for (j, cell) in row.iter_mut().enumerate() {
-            // sum_k MDS[i][k] * MDS[k][j]: zip row i's entries with the rows
-            // they select, taking column j from each.
-            let mut acc = 0u128;
-            for (&a, row) in MDS[i].iter().zip(MDS.iter()) {
-                acc = (acc + mul(a, row[j]) as u128) % P;
-            }
-            *cell = acc as u64;
-        }
-    }
-
-    // 1x1: a zero entry means some output lane ignores some input lane.
-    for (i, row) in sq.iter().enumerate() {
+    // 1x1: no zero entry — every output lane depends on every input lane.
+    for (i, row) in MDS.iter().enumerate() {
         for (j, &v) in row.iter().enumerate() {
-            assert_ne!(v, 0, "MDS^2 has a zero entry at ({i}, {j})");
+            assert_ne!(v, 0, "MDS has a zero entry at ({i}, {j})");
         }
     }
 
@@ -338,10 +320,10 @@ fn effective_linear_layer_between_sboxes_is_still_mds() {
         for r1 in (r0 + 1)..STATE_WIDTH {
             for c0 in 0..STATE_WIDTH {
                 for c1 in (c0 + 1)..STATE_WIDTH {
-                    let d = sub(mul(sq[r0][c0], sq[r1][c1]), mul(sq[r0][c1], sq[r1][c0]));
+                    let d = sub(mul(MDS[r0][c0], MDS[r1][c1]), mul(MDS[r0][c1], MDS[r1][c0]));
                     assert_ne!(
                         d, 0,
-                        "MDS^2 has a singular 2x2 minor at rows ({r0},{r1}) cols ({c0},{c1})"
+                        "MDS has a singular 2x2 minor at rows ({r0},{r1}) cols ({c0},{c1})"
                     );
                 }
             }

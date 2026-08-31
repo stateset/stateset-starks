@@ -22,7 +22,7 @@ order-of-magnitude guidance, not a benchmarked guarantee — reproduce with
 | **Verify time** | single-digit ms |
 | **Security** | 104-bit default / 168-bit `secure` / 80-bit `fast` (dev only) |
 | **Field** | Goldilocks (p = 2^64 - 2^32 + 1) |
-| **Hash** | Rescue variant (7 rounds, alpha=7) — see `docs/SOUNDNESS.md` |
+| **Hash** | Rescue-Prime (Rescue-XLIX; 7 rounds, alpha=7) |
 
 ## Supported Policies
 
@@ -147,7 +147,7 @@ The AIR proves a relationship about a private `amount` witness bound via a Rescu
 | Parameter | Value |
 |-----------|-------|
 | Field | Goldilocks (64-bit prime: p = 2^64 - 2^32 + 1) |
-| Hash | Rescue variant (7 rounds, state width 12, rate 8, capacity 4) |
+| Hash | Rescue-Prime (Rescue-XLIX; 7 rounds, state width 12, rate 8, capacity 4) |
 | S-box | x^7 (forward), x^{alpha_inv} (backward) |
 | MDS | 12x12 circulant matrix |
 | Trace | 248 columns x 16 rows |

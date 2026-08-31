@@ -781,38 +781,24 @@ fn half_round_forward(state: &mut RescueState, constants: &[Felt; STATE_WIDTH]) 
     add_constants_felt(state, constants);
 }
 
-/// Apply one backward half-round: MDS -> S-box_inv -> Add constants.
+/// Apply one backward half-round of canonical Rescue-Prime:
+/// inverse S-box -> MDS -> add constants.
 ///
-/// NOTE: this applies the FORWARD MDS, not `MDS_INV`. Using `MDS_INV` here
-/// (as an earlier version did) makes the backward MDS cancel the forward
-/// half-round's MDS, collapsing the permutation into independent per-lane maps
-/// with zero diffusion — which broke commitment hiding. Both half-rounds
-/// therefore apply the forward MDS. (`mds_inv_multiply` remains for the
-/// MDS×MDS⁻¹=I property test.)
-///
-/// # Deviation from textbook Rescue-Prime
-///
-/// This is a Rescue *variant*, not the permutation exactly as published.
-/// Textbook Rescue-Prime applies the S-box **before** the MDS in both
-/// half-rounds; here the backward half-round applies MDS first
-/// (`MDS -> S-box⁻¹ -> +c`) while the forward one applies it after
-/// (`S-box -> MDS -> +c`).
-///
-/// The consequence is that the two MDS layers within a round are adjacent,
-/// separated only by a constant addition, so they compose: the matrix actually
-/// mixing lanes between the two S-box layers is `MDS²`, not `MDS`. That is
-/// sound here only because `MDS²` is itself MDS — asserted, not assumed, by
-/// `effective_linear_layer_between_sboxes_is_still_mds` in
-/// `tests/rescue_kat_test.rs`. Published Rescue-Prime cryptanalysis does not
-/// transfer to this construction unchanged; see `docs/SOUNDNESS.md`.
+/// This is the same layer order as [`half_round_forward`], differing only in the
+/// S-box direction (inverse here, forward there) — the textbook Rescue-Prime
+/// (Rescue-XLIX) round. A previous revision applied the MDS *before* the inverse
+/// S-box (`MDS -> S-box⁻¹ -> +c`), which made the two MDS layers within a round
+/// adjacent (composing to `MDS²`) and turned the permutation into a non-standard
+/// variant that published cryptanalysis did not cover. Restoring the canonical
+/// order removes that caveat; see `docs/SOUNDNESS.md` and git history.
 fn half_round_backward(state: &mut RescueState, constants: &[Felt; STATE_WIDTH]) {
-    // MDS (forward) — NOT inverse; see the note above.
-    *state = mds_multiply(state);
-    // Apply inverse S-box
+    // Inverse S-box.
     for s in state.iter_mut() {
         *s = sbox_inv(*s);
     }
-    // Add constants
+    // MDS.
+    *state = mds_multiply(state);
+    // Add constants.
     add_constants_felt(state, constants);
 }
 

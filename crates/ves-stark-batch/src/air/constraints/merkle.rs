@@ -8,7 +8,7 @@
 use crate::air::trace_layout::{batch_cols, AMOUNT_STREAM_LANE_TAGS, MERKLE_LINK_GAMMA};
 use ves_stark_primitives::{
     felt_from_u64,
-    rescue::{MDS, STATE_WIDTH as RESCUE_STATE_WIDTH},
+    rescue::{MDS, MDS_INV, STATE_WIDTH as RESCUE_STATE_WIDTH},
     Felt,
 };
 use winter_math::FieldElement;
@@ -71,9 +71,12 @@ fn felt_to_ext<E: FieldElement<BaseField = Felt>>(val: u64) -> E {
 /// profile's `codegen-units > 1`) instead of serializing one giant function. All
 /// inputs are recomputed from `current`/`next`/`periodic_values`, so the helper is
 /// self-contained; it writes exactly `RESCUE_STATE_WIDTH` constraints and returns
-/// that count. Forward half-round:  `next = MDS * sbox(curr) + constants`.
-/// Backward half-round: rewritten as `sbox(next - constants) = MDS_inv * curr`
-/// (degree 7) to avoid a degree-`alpha_inv` (~10^19) constraint.
+/// that count. Canonical Rescue-Prime (Rescue-XLIX):
+/// forward half-round `next = MDS * sbox(curr) + constants`; backward half-round
+/// `next = MDS * sbox_inv(curr) + constants`, rewritten as
+/// `sbox(MDS_inv * (next - constants)) = curr`, i.e.
+/// `pow7(MDS_inv * (next - constants)) = curr` (degree 7) to avoid a
+/// degree-`alpha_inv` (~10^19) constraint.
 #[inline(never)]
 fn evaluate_rescue_permutation_constraints<E: FieldElement<BaseField = Felt>>(
     current: &[E],
@@ -110,12 +113,19 @@ fn evaluate_rescue_permutation_constraints<E: FieldElement<BaseField = Felt>>(
     }
 
     let forward_state = apply_mds(&sbox_state, &MDS);
-    let backward_state = apply_mds(&curr_state, &MDS);
+
+    // Canonical backward half-round `next = MDS * sbox_inv(curr) + c` rearranged
+    // to degree 7: `pow7(MDS_inv * (next - c)) = curr`.
+    let mut next_minus_c = [E::ZERO; RESCUE_STATE_WIDTH];
+    for i in 0..RESCUE_STATE_WIDTH {
+        next_minus_c[i] = next_state[i] - round_const[i];
+    }
+    let backward_pre = apply_mds(&next_minus_c, &MDS_INV);
 
     let mut idx = 0;
     for i in 0..RESCUE_STATE_WIDTH {
         let forward_constraint = next_state[i] - (forward_state[i] + round_const[i]);
-        let backward_constraint = pow7(next_state[i] - round_const[i]) - backward_state[i];
+        let backward_constraint = pow7(backward_pre[i]) - curr_state[i];
         let transition = rescue_is_forward * forward_constraint
             + (E::ONE - rescue_is_forward) * backward_constraint;
         result[idx] = is_hash_row_active * transition;

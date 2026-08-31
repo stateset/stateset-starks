@@ -136,19 +136,19 @@ fn default_preset_clears_the_documented_security_floor() {
     );
 }
 
-/// The docs must disclose that this is a Rescue *variant*, since published
-/// Rescue-Prime cryptanalysis does not transfer to it unchanged.
+/// The permutation is canonical Rescue-Prime (Rescue-XLIX). The docs must say so
+/// and must not describe the retired non-standard variant, so that a regression
+/// to the old round ordering (or stale wording) is caught here.
 #[test]
-fn docs_disclose_the_rescue_variant() {
+fn docs_describe_canonical_rescue_prime() {
     let soundness = read_doc("docs/SOUNDNESS.md");
     assert!(
-        soundness.contains("Rescue variant"),
-        "docs/SOUNDNESS.md must state that the permutation is a Rescue variant, \
-         not textbook Rescue-Prime"
+        soundness.contains("canonical Rescue-Prime"),
+        "docs/SOUNDNESS.md must state the permutation is canonical Rescue-Prime"
     );
     assert!(
-        soundness.contains("effective_linear_layer_between_sboxes_is_still_mds"),
-        "docs/SOUNDNESS.md must point at the test verifying MDS^2 is still MDS"
+        !soundness.contains("Rescue variant"),
+        "docs/SOUNDNESS.md still calls the permutation a variant; it is now canonical"
     );
 }
 

@@ -214,6 +214,15 @@ legacy zero-salt form remains verifiable but should not be published; see
 > both children bind (regression: `rescue_hash_pair_binds_both_children`).
 > Existing proofs generated under the old permutation no longer verify
 > (expected).
+>
+> **Follow-up (v0.7.0).** That earlier fix restored diffusion but left a
+> non-standard round ordering — the backward half-round applied `MDS` *before*
+> the inverse S-box, so the two MDS layers were adjacent and the effective linear
+> layer was `MDS²`. v0.7.0 makes the backward half-round canonical
+> (`S-box⁻¹ -> MDS -> +c`), so the permutation is now textbook Rescue-Prime
+> (Rescue-XLIX) and published cryptanalysis applies. Native and both in-circuit
+> AIR constraints were changed together and re-verified by the full prove/verify
+> suite; proofs from before v0.7.0 no longer verify (expected).
 
 ### 4. Policy Mismatch
 

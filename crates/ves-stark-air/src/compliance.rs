@@ -632,16 +632,20 @@ impl Air for ComplianceAir {
         }
 
         let mds_forward = apply_mds(&sbox_state, &MDS);
-        // Backward half-round uses the FORWARD MDS (matching the native
-        // permutation fix): next = sbox_inv(MDS(curr)) + const, i.e.
-        // pow7(next - const) = MDS(curr). Using MDS_INV here would let the
-        // backward MDS cancel the forward one, destroying diffusion.
-        let mds_backward = apply_mds(&curr_state, &MDS);
+        // Canonical Rescue-Prime backward half-round `next = MDS * sbox_inv(curr) + c`,
+        // rearranged to degree 7 as `pow7(MDS_inv * (next - c)) = curr`. The inverse
+        // MDS mixes lanes, so it is applied to the whole `next - c` vector before the
+        // per-lane pow7.
+        let mut next_minus_c = [E::ZERO; RESCUE_STATE_WIDTH];
+        for i in 0..RESCUE_STATE_WIDTH {
+            next_minus_c[i] = next_state[i] - periodic_values[PERIODIC_RESCUE_CONST_START_IDX + i];
+        }
+        let backward_pre = apply_mds(&next_minus_c, &MDS_INV);
 
         for i in 0..RESCUE_STATE_WIDTH {
             let round_const = periodic_values[PERIODIC_RESCUE_CONST_START_IDX + i];
             let forward_constraint = next_state[i] - (mds_forward[i] + round_const);
-            let backward_constraint = pow7(next_state[i] - round_const) - mds_backward[i];
+            let backward_constraint = pow7(backward_pre[i]) - curr_state[i];
             let step_constraint = rescue_is_forward * forward_constraint
                 + (E::ONE - rescue_is_forward) * backward_constraint;
 
