@@ -138,7 +138,17 @@ support it, verified by reading the batch AIR:
   public input; `BatchPublicInputs` exposes only `public_inputs_accumulator`,
   which folds the native bound-hash — i.e. the free public field.
 
-So a malicious prover could prove compliance for a compliant in-circuit amount
+**Scope of the gap — important.** The *reference* prover's `BatchWitness::validate`
+rejects any event whose public `witnessCommitment` does not equal the commitment
+of its private amount, so every batch this prover produces is honest and the
+shipped code binds correctly in practice. The gap is a **soundness** gap, not a
+correctness bug: soundness must hold against *any* prover, and a custom prover
+that skips `validate` is not constrained by the AIR. Operationally this means the
+batch V2 limitation only matters where batch proofs may come from an untrusted
+prover; for first-party proving it is latent. This is exactly the distinction the
+non-batch path does not have to make, because there the AIR itself enforces it.
+
+So a custom malicious prover could prove compliance for a compliant in-circuit amount
 A while setting the public `witnessCommitment` (and thus the V2 payload binding)
 to the real, non-compliant amount B. The batch verifier re-hashing the public
 field would "bind" B and accept — exactly the forgery V2 is meant to stop.
