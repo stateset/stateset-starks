@@ -330,3 +330,64 @@ fn mds_matrix_is_mds() {
         }
     }
 }
+
+/// Interop: our permutation's cryptographic components are the audited Rp64_256
+/// ones. After the v0.7.0 canonicalization the round *structure* matches
+/// Winterfell's `Rp64_256` (sbox -> MDS -> +c ; sbox_inv -> MDS -> +c), and the
+/// security-critical constants — MDS, its inverse, and the S-box exponents — are
+/// byte-for-byte identical to that audited implementation. Only the round
+/// constants differ (ours are pi-based nothing-up-my-sleeve values; Rp64_256
+/// uses its own ARK1/ARK2) and the sponge rate/capacity split differs (which
+/// affects hashing layout, not the permutation).
+///
+/// This ties the diffusion layer and S-box to a reviewed reference; a drift in
+/// either side breaks the test.
+mod rp64_256_interop {
+    use ves_stark_primitives::rescue::{ALPHA, ALPHA_INV, MDS, MDS_INV, NUM_ROUNDS, STATE_WIDTH};
+    use winter_crypto::hashers::Rp64_256;
+    use winter_math::fields::f64::BaseElement;
+
+    #[test]
+    fn structural_params_match_rp64_256() {
+        assert_eq!(STATE_WIDTH, Rp64_256::STATE_WIDTH);
+        assert_eq!(NUM_ROUNDS, Rp64_256::NUM_ROUNDS);
+        // Goldilocks S-box exponent and its inverse (Rp64_256's are private, so
+        // pin the known values; `test_sbox_inv_addition_chain` checks ALPHA_INV
+        // really inverts ALPHA in the field).
+        assert_eq!(ALPHA, 7);
+        assert_eq!(ALPHA_INV, 10540996611094048183);
+    }
+
+    #[test]
+    fn mds_matrix_is_the_audited_rp64_256_mds() {
+        for i in 0..STATE_WIDTH {
+            for j in 0..STATE_WIDTH {
+                assert_eq!(
+                    BaseElement::new(MDS[i][j]),
+                    Rp64_256::MDS[i][j],
+                    "MDS[{i}][{j}] differs from audited Rp64_256"
+                );
+                assert_eq!(
+                    BaseElement::new(MDS_INV[i][j]),
+                    Rp64_256::INV_MDS[i][j],
+                    "MDS_INV[{i}][{j}] differs from audited Rp64_256"
+                );
+            }
+        }
+    }
+
+    /// Records the one deliberate divergence so it stays a conscious choice: our
+    /// round constants are NOT Rp64_256's (ours are pi-based nothing-up-my-sleeve).
+    #[test]
+    fn round_constants_are_our_own_not_rp64_256() {
+        use ves_stark_primitives::rescue::ROUND_CONSTANTS;
+        // Rp64_256's first ARK1 entry, for contrast.
+        assert_ne!(
+            BaseElement::new(ROUND_CONSTANTS[0][0]),
+            Rp64_256::ARK1[0][0],
+            "round constants unexpectedly equal Rp64_256's — update the docs if adopting them"
+        );
+        // Ours is the pi nothing-up-my-sleeve constant.
+        assert_eq!(ROUND_CONSTANTS[0][0], 0x243f_6a88_85a3_08d3);
+    }
+}

@@ -35,6 +35,8 @@ serde_json = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
 winter-utils = { workspace = true }
+winter-crypto = { workspace = true }
+winter-math = { workspace = true }
 ves-stark-batch = { version = "0.7.0", path = "crates/ves-stark-batch" }
 
 [[bench]]

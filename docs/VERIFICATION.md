@@ -109,6 +109,9 @@ once passed the entire workspace. These tests close that class.
 | Sponge output pinned across the rate boundary (len 0/1/8/9) | `kat_hash_across_input_lengths` |
 | Lane-mixing layer `MDS` is MDS (canonical Rescue-Prime) | `mds_matrix_is_mds` |
 | Permutation is canonical Rescue-Prime, docs say so | `docs_describe_canonical_rescue_prime` (it/docs_consistency_test) |
+| MDS + inverse MDS are the audited Rp64_256 matrices | `mds_matrix_is_the_audited_rp64_256_mds` (it/rescue_kat_test) |
+| State width, round count, S-box exponents match Rp64_256 | `structural_params_match_rp64_256` |
+| Round constants are our own (documented divergence) | `round_constants_are_our_own_not_rp64_256` |
 | Permutation diffuses across lanes | `diffusion_regression` tests (prim/rescue) |
 
 ## 7. Proof parameter soundness

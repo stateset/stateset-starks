@@ -2016,6 +2016,8 @@ dependencies = [
  "ves-stark-primitives",
  "ves-stark-prover",
  "ves-stark-verifier",
+ "winter-crypto",
+ "winter-math",
  "winter-utils",
 ]
 
