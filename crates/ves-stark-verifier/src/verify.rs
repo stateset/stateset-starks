@@ -228,6 +228,10 @@ fn verify_compliance_proof_with_options(
     .map_err(|e| VerifierError::PublicInputMismatch(format!("{e}")))?;
 
     // Verify the proof
+    // The workspace's only `verify::<ComplianceAir>` call site. The V2 payload
+    // binding is applied on its Ok path below, so every compliance verification —
+    // including agent-authorization, which delegates here — runs it. Do not add
+    // another ComplianceAir verify elsewhere without the same hook.
     let result = verify::<ComplianceAir, Hasher, RandCoin, VectorCommit>(
         proof,
         pub_inputs,
@@ -333,6 +337,10 @@ fn verify_agent_authorization_proof_with_options(
         witness_commitment,
         receipt,
     )?;
+    // Delegate to the compliance verifier, which applies the V2 payload binding.
+    // Inlining a ComplianceAir verify here instead would silently skip V2 for
+    // agent-authorization proofs; a regression test in payload_v2_binding_test
+    // guards this.
     verify_compliance_proof_with_options(
         proof_bytes,
         public_inputs,

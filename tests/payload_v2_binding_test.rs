@@ -159,3 +159,106 @@ fn test_builder_witness_only_still_binds_v2() {
         "{err}"
     );
 }
+
+/// Regression guard for "every per-event verify path applies the V2 binding".
+/// The agent-authorization verifier is a separate entry point that delegates to
+/// the compliance verifier; if a refactor inlined its own ComplianceAir verify
+/// it would skip V2 silently. This proves V2 fires through the agent-auth path.
+///
+/// The receipt is honest (receipt binding passes) but the payload hash is formed
+/// from a different commitment, so only the V2 check can reject it.
+#[test]
+fn test_agent_auth_path_applies_v2_binding() {
+    use ves_stark_primitives::commerce_intent::{CommerceExecution, CommerceIntent};
+    use ves_stark_verifier::verify_agent_authorization_proof;
+
+    let max_total = 25_000u64;
+    let amount = 12_500u64;
+    let intent = CommerceIntent {
+        intent_id: uuid::Uuid::new_v4(),
+        tenant_id: uuid::Uuid::new_v4(),
+        store_id: uuid::Uuid::new_v4(),
+        agent_id: uuid::Uuid::new_v4(),
+        delegation_id: uuid::Uuid::new_v4(),
+        currency: "USD".to_string(),
+        max_total,
+        merchant: Some("Acme".to_string()),
+        payee: Some("settle@stateset.app".to_string()),
+        allowed_skus: vec!["sku-a".to_string()],
+        allowed_categories: vec!["grocery".to_string()],
+        shipping_country: Some("US".to_string()),
+        expires_at: 1_900_000_000,
+        nonce: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+    };
+    let execution = CommerceExecution {
+        event_id: uuid::Uuid::new_v4(),
+        sequence_number: 42,
+        currency: "USD".to_string(),
+        amount,
+        merchant: "Acme".to_string(),
+        payee: "settle@stateset.app".to_string(),
+        sku_ids: vec!["sku-a".to_string()],
+        category_ids: vec!["grocery".to_string()],
+        shipping_country: Some("US".to_string()),
+        executed_at: 1_800_000_000,
+    };
+    let receipt = intent.authorize_execution(&execution).unwrap();
+
+    let params = PolicyParams::agent_authorization(max_total, &receipt.intent_hash).unwrap();
+    let policy_hash = compute_policy_hash("agent.authorization.v1", &params)
+        .unwrap()
+        .to_hex();
+    let c = commitment(amount, &[0, 0, 0, 0]);
+    let rest = [0x11u8; 32];
+
+    let build = |plain_from: &[u64; 4]| -> CompliancePublicInputs {
+        let pi = CompliancePublicInputs {
+            event_id: receipt.event_id,
+            tenant_id: receipt.tenant_id,
+            store_id: receipt.store_id,
+            sequence_number: receipt.sequence_number,
+            payload_kind: PAYLOAD_KIND_V2,
+            payload_plain_hash: payload_plain_hash_v2(plain_from, &rest).to_hex(),
+            payload_cipher_hash: "0".repeat(64),
+            event_signing_hash: "0".repeat(64),
+            policy_id: "agent.authorization.v1".into(),
+            policy_params: params.clone(),
+            policy_hash: policy_hash.clone(),
+            witness_commitment: None,
+            authorization_receipt_hash: None,
+            amount_binding_hash: None,
+            rest_hash: Some(Hash256::from_bytes(rest).to_hex()),
+        };
+        pi.bind_authorization_receipt(&receipt).unwrap()
+    };
+
+    let policy = Policy::agent_authorization(max_total, receipt.intent_hash.clone()).unwrap();
+
+    // Honest: payload hash formed from the real commitment -> verifies.
+    let honest = build(&c);
+    let witness =
+        ComplianceWitness::try_new_with_salt(amount, [0, 0, 0, 0], honest.clone()).unwrap();
+    let proof = ComplianceProver::with_policy(policy.clone())
+        .prove(&witness)
+        .unwrap();
+    assert_eq!(proof.witness_commitment, c);
+    let r = verify_agent_authorization_proof(&proof.proof_bytes, &honest, &policy, &c, &receipt)
+        .unwrap();
+    assert!(r.valid, "honest agent-auth V2 proof must verify");
+
+    // Forged: payload hash formed from a different amount's commitment. Proof and
+    // receipt are otherwise valid, so only V2 can reject it.
+    let c_other = commitment(999_999, &[0, 0, 0, 0]);
+    let forged = build(&c_other);
+    let witness2 =
+        ComplianceWitness::try_new_with_salt(amount, [0, 0, 0, 0], forged.clone()).unwrap();
+    let proof2 = ComplianceProver::with_policy(policy.clone())
+        .prove(&witness2)
+        .unwrap();
+    let err = verify_agent_authorization_proof(&proof2.proof_bytes, &forged, &policy, &c, &receipt)
+        .unwrap_err();
+    assert!(
+        matches!(err, VerifierError::PayloadV2BindingMismatch(_)),
+        "agent-auth path must apply the V2 binding, got {err}"
+    );
+}
