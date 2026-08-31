@@ -117,18 +117,44 @@ needs no artifact.
 
 Zero proving-time impact. One extra native SHA-256 per verification.
 
-## Batch proofs — still open
+## Batch proofs — needs an AIR change (corrected)
 
-The per-event verifier applies the V2 check; `BatchVerifier` does not. A batch
-proof binds each event's `witnessCommitment` into the trace and its public-input
-accumulator, so the check is feasible without a circuit change: for each event
-with `payload_kind == 2`, the batch verifier recomputes
-`SHA-256(domain ‖ witnessCommitment ‖ restHash)` and requires it equals that
-event's `payload_plain_hash`. This reuses `payload_v2::payload_plain_hash_v2`
-over the *public* per-event commitment (no private witness needed, since the AIR
-already proves the trace commitment equals the public one). Until this lands,
-batched V2 events carry only the V1-equivalent guarantee, and `docs/SOUNDNESS.md`
-says so.
+An earlier version of this section claimed batch V2 was "feasible without a
+circuit change" by having `BatchVerifier` recompute
+`SHA-256(domain ‖ witnessCommitment ‖ restHash)` per event against each event's
+bound `witnessCommitment`. **That is unsound.** The constraint chain does not
+support it, verified by reading the batch AIR:
+
+- Each event's leaf carries two independent values: `amount_commitment`
+  (`= rescue_hash(amount_limbs)`, the in-circuit commitment the compliance
+  constraints prove is over a policy-compliant amount) and `public_inputs_hash`
+  (`compute_bound_hash`, a **native SHA-256** — opaque to the circuit — that
+  contains the *public* `witnessCommitment` field).
+- Nothing in-circuit proves `amount_commitment` equals the `witnessCommitment`
+  inside `public_inputs_hash`. Only a prover-side check
+  (`prover/witness.rs`, "witness_commitment != expected") enforces it, and a
+  malicious prover skips prover-side checks.
+- The per-event `amount_commitment` accumulator (`batch_trace.rs`) is **not** a
+  public input; `BatchPublicInputs` exposes only `public_inputs_accumulator`,
+  which folds the native bound-hash — i.e. the free public field.
+
+So a malicious prover could prove compliance for a compliant in-circuit amount
+A while setting the public `witnessCommitment` (and thus the V2 payload binding)
+to the real, non-compliant amount B. The batch verifier re-hashing the public
+field would "bind" B and accept — exactly the forgery V2 is meant to stop.
+
+Why the **non-batch** verifier is sound by contrast: `verify_compliance_proof`
+takes the `witnessCommitment` and the AIR boundary-asserts the trace commitment
+equals it, so the value V2 re-hashes is provably the compliant amount's
+commitment. Batch has no equivalent per-event boundary assertion.
+
+**What batch V2 actually requires:** an AIR change — expose the in-circuit
+`amount_commitment` accumulator as a public input and constrain it, then have
+the verifier recompute it from a caller-supplied list of per-event commitments
+(authenticating the real in-circuit values) and re-hash *those* for V2. This
+invalidates existing batch proofs, so it is a 0.7.0-class change, not a verifier
+patch. Until then, `SOUNDNESS.md` states that batched V2 events carry only the
+V1-equivalent guarantee.
 
 ## Tests that must exist before this ships
 

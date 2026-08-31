@@ -45,8 +45,10 @@ the non-statement below for V2 **per-event** proofs; see `docs/AMOUNT_BINDING_DE
 > **Batch proofs do not yet apply this check.** `BatchVerifier` verifies the aggregate STARK and
 > binds each event's public inputs, but does not recompute `SHA-256(domain ‖ C ‖ restHash)` per
 > event, so a batched `payload_kind == 2` event currently carries only the V1-equivalent
-> guarantee. Closing this needs the batch verifier to check the native hash against each event's
-> bound `witnessCommitment`; tracked in `docs/AMOUNT_BINDING_DESIGN.md`.
+> guarantee. Closing this needs an **AIR change**, not a verifier patch: the public
+> `witnessCommitment` folded into the batch accumulator is never proven equal to the in-circuit
+> compliant-amount commitment, so a verifier-only re-hash would be forgeable.
+> `docs/AMOUNT_BINDING_DESIGN.md` has the analysis and the required change.
 
 Non-statement (V1 events): the AIR does **not** prove that `amount` is derived from or consistent with the
 payload hashes contained in `P`. This repository now supports a canonical protocol-level binding
