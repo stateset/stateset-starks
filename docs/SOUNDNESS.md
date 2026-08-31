@@ -193,6 +193,12 @@ explicitly for a reviewer:
   1. **Round constants.** Ours are pi-based nothing-up-my-sleeve values, not `Rp64_256`'s ARK1/ARK2.
      Round constants are the least security-sensitive component (they must be structure-free, which
      a nothing-up-my-sleeve choice satisfies); this specific set has not had a dedicated review.
+     *Optional future step:* adopting `Rp64_256`'s ARK1/ARK2 (mapping `ROUND_CONSTANTS[2r] = ARK1[r]`,
+     `[2r+1] = ARK2[r]`) would make the permutation byte-for-byte identical to the audited
+     implementation, allowing a direct `our_permutation == Rp64_256::apply_permutation` equality
+     test. This has been verified mechanically feasible; it is deferred because it is a second
+     proof-invalidating change for a marginal gain over the pi-based set, and is a release decision
+     rather than a fix.
   2. **Sponge layout.** We use rate = state[0..8], capacity = state[8..12]; `Rp64_256` puts capacity
      first. This affects the hash/sponge domain, not the permutation.
 
