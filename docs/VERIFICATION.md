@@ -170,10 +170,10 @@ targets below — see `docs/THREAT_MODEL.md` for the full write-up:
 - **Contained.** `winter-air` overflows on a malformed log2 trace-length byte.
   The verifiers wrap deserialization in `guard_untrusted`, so this surfaces as a
   `DeserializationError`. Locked in by `tests/untrusted_input_test.rs`.
-- **NOT contained.** `winter-utils` sizes a `Vec` from an unchecked length
-  prefix, so a 39-byte proof can request a ~72 PB allocation. Rust aborts on
-  allocation failure, which no guard can catch. Mitigate at deployment with an
-  address-space or container memory limit.
+- **Contained.** `winter-utils` sizes a `Vec` from an unchecked length prefix,
+  so a 39-byte proof could request a ~72 PB allocation and abort the process.
+  The verifiers parse through `bounded_reader::deserialize_bounded`, whose
+  `read_many` rejects a count the input cannot hold before allocating.
 
 Continuous fuzzing (libFuzzer, `fuzz/`) plus example-based rejection tests:
 
@@ -185,7 +185,10 @@ Continuous fuzzing (libFuzzer, `fuzz/`) plus example-based rejection tests:
 | Witness validation | `fuzz_witness_validation` |
 | Batch proof JSON deserialization + verify | `fuzz_batch_proof` |
 | No panic escapes the library boundary | `fuzzer_crash_input_is_rejected_not_panicked_on`, `malformed_headers_are_rejected_not_panicked_on`, `no_short_input_of_any_length_panics`, `extreme_thresholds_do_not_panic` (it/untrusted_input_test) |
-| Unbounded-allocation abort (upstream, open) | `oversized_declared_allocation_is_rejected_not_attempted` — `#[ignore]`, aborts the process |
+| Unbounded allocation rejected before allocating | `oversized_declared_allocation_is_rejected_not_attempted` (it/untrusted_input_test), `declared_length_beyond_input_is_rejected_before_allocating` (prim/bounded_reader) |
+| `BoundedReader` identical to upstream `SliceReader` except the over-allocation region | `agrees_with_slice_reader_except_where_upstream_would_over_allocate`, `never_panics_and_bounds_allocation`, `huge_declared_counts_are_invalid_value` (it/bounded_reader_prop_test) |
+| Verifier builder refuses to pick the weaker statement silently | `run_without_a_binding_choice_is_refused`, `strict_alone_is_still_refused`, `witness_only_requires_the_field` (verifier/builder) |
+| Full FFI prove/verify cycle under Miri (nightly) | `miri_full_prove_verify_cycle` (zig) — `#[ignore]` natively, run by `.github/workflows/nightly.yml` |
 
 Run fuzzers with `cargo +nightly fuzz run <target>`.
 
@@ -194,7 +197,9 @@ Run fuzzers with `cargo +nightly fuzz run <target>`.
 `fmt --check`, `clippy --all-features -D warnings`, `test --all-features`,
 `cargo audit`, `cargo +nightly miri test -p ves-stark-zig`, a 60s smoke run of
 every fuzz target, `doc -D warnings`, `check --benches`, and `llvm-cov`
-coverage — see `.github/workflows/ci.yml`.
+coverage — see `.github/workflows/ci.yml`. Nightly (`nightly.yml`): a 40-minute
+fuzz campaign per target with a persisted corpus, Miri over a full FFI prove/verify
+cycle, and `cargo-deny` license/ban/source policy.
 
 ---
 

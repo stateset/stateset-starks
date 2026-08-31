@@ -53,12 +53,13 @@ otherwise consistent with the payload hashes in the public inputs. This reposito
 canonical protocol-level binding artifact for that purpose, but the payload parser/derivation logic
 and any signatures or attestations around it remain part of the surrounding protocol.
 
-## Open Upstream Vulnerabilities (Winterfell deserialization)
+## Upstream Vulnerabilities (Winterfell deserialization) — contained
 
 Both were found by `cargo +nightly fuzz run fuzz_proof_deserialization` and are
 reachable from the public verifier API with well under `MAX_PROOF_SIZE` bytes.
-Neither is a soundness break — a malformed proof is still never *accepted* — but
-both are availability defects on a surface that accepts input from anyone.
+Neither is a soundness break — a malformed proof is still never *accepted* — both
+were availability defects on a surface that accepts input from anyone. Both are now
+contained in-repo; the upstream code is unchanged.
 
 ### 1. Integer overflow on the trace-length byte — CONTAINED
 
@@ -84,7 +85,7 @@ this panics. With `panic = "abort"` it would kill the process.
 deliberately does not set `panic = "abort"` — the guard needs unwinding.
 Regression tests: `tests/untrusted_input_test.rs`.
 
-### 2. Unbounded allocation from a length prefix — NOT CONTAINED
+### 2. Unbounded allocation from a length prefix — CONTAINED
 
 `winter-utils-0.10.2`, `src/serde/byte_reader.rs:194`:
 
@@ -94,37 +95,22 @@ fn read_many<D>(&mut self, num_elements: usize) -> Result<Vec<D>, Deserializatio
 ```
 
 `num_elements` is a length prefix read straight from the input. A 39-byte proof
-can declare 2^56 elements; the measured request is 72,057,607,577,400,833 bytes
-(~72 PB).
+can declare 2^56 elements; the measured request was 72,057,607,577,400,833 bytes
+(~72 PB). Rust aborts on allocation failure rather than unwinding, so this was
+confirmed to SIGABRT in both debug and release, and no `catch_unwind` could
+contain it. Still present in the latest upstream release (`winter-air 0.13.1`).
 
-*Impact.* Rust calls `handle_alloc_error` on allocation failure, which
-**aborts** rather than unwinding. Confirmed to abort with SIGABRT in both debug
-and release. No `catch_unwind` can contain it, so the guard above does not help.
-A single 39-byte request kills a verification process and every other request
-in flight in it.
+*Mitigation, in place.* `read_many` is a *provided* method of the `ByteReader`
+trait, and `Deserializable::read_from` accepts any reader — so
+`ves_stark_primitives::bounded_reader::BoundedReader` overrides `read_many` to
+reject any declared count larger than the bytes remaining (every element needs
+at least one byte) before allocating. Both verifiers parse through
+`deserialize_bounded` instead of `Proof::from_bytes`. The upstream deserializers
+are otherwise unchanged; this is the same code path with a bound.
+Regression test: `oversized_declared_allocation_is_rejected_not_attempted`.
 
-*No in-repo fix is available.* Winterfell constructs the `ByteReader` inside
-`Proof::from_bytes`, so there is no injection point to bound the reader, and the
-offending field sits after variable-length data so it cannot be pre-checked at a
-fixed offset. Both defects are still present in the latest release
-(`winter-air 0.13.1`, verified).
-
-*Mitigations available today:*
-
-- **Deployment (recommended).** Verify proofs in a process with an address-space
-  limit (`RLIMIT_AS`) or a container memory cap, so an abort takes down only a
-  sacrificial worker rather than a shared service. Do not verify untrusted proofs
-  in-process alongside unrelated work.
-- **Vendor a patched Winterfell** via `[patch.crates-io]`, adding
-  `num_elements <= source.remaining()` to `read_many` and an upper bound to the
-  trace-length check. This is the real fix; it costs a maintained fork of a
-  cryptographic dependency and has not been taken here without a decision from
-  the maintainers.
-- **Report upstream.** Both are straightforward: one missing upper bound and one
-  missing length-vs-remaining check.
-
-Reproduce with
-`cargo test --test untrusted_input_test -- --ignored --exact oversized_declared_allocation_is_rejected_not_attempted`.
+*Still worth doing.* Report both bounds upstream — every Winterfell consumer that
+calls `Proof::from_bytes` on untrusted input has this abort.
 
 ## Adversary Model
 

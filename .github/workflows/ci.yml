@@ -122,16 +122,6 @@ jobs:
   fuzz:
     name: Fuzz (smoke)
     runs-on: ubuntu-latest
-    # Reports findings without blocking the merge queue. `fuzz_proof_deserialization`
-    # currently reproduces an *open upstream* defect — `winter-utils` sizes a Vec
-    # from an unchecked length prefix, which aborts the process on allocation
-    # failure (docs/THREAT_MODEL.md, "Open Upstream Vulnerabilities"). That is a
-    # real finding, not a flake, so the job stays and stays visible; it must not
-    # gate unrelated work while the fix lives in a dependency.
-    #
-    # Flip this back to blocking as soon as the upstream bound lands, or if this
-    # workspace vendors a patched Winterfell.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
