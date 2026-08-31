@@ -90,7 +90,7 @@ divergence.
 | `SOUNDNESS.md` does not claim the salt limbs are pinned to zero | `soundness_doc_does_not_claim_the_salt_limbs_are_pinned` |
 | README security numbers equal what the estimator returns | `readme_security_levels_match_the_estimator` |
 | Superseded (mutually contradictory) security claims removed | `readme_does_not_carry_superseded_security_claims` |
-| Rescue variant disclosed in the soundness argument | `docs_disclose_the_rescue_variant` |
+| Permutation described as canonical Rescue-Prime | `docs_describe_canonical_rescue_prime` |
 
 ## 6. Hash primitive correctness (Rescue)
 
@@ -107,7 +107,8 @@ once passed the entire workspace. These tests close that class.
 | Permutation output pinned to externally generated vectors | `kat_permutation_of_zero_state` |
 | Merkle 2-to-1 compression output pinned | `kat_hash_pair` |
 | Sponge output pinned across the rate boundary (len 0/1/8/9) | `kat_hash_across_input_lengths` |
-| Effective linear layer `MDS^2` retains the MDS property | `effective_linear_layer_between_sboxes_is_still_mds` |
+| Lane-mixing layer `MDS` is MDS (canonical Rescue-Prime) | `mds_matrix_is_mds` |
+| Permutation is canonical Rescue-Prime, docs say so | `docs_describe_canonical_rescue_prime` (it/docs_consistency_test) |
 | Permutation diffuses across lanes | `diffusion_regression` tests (prim/rescue) |
 
 ## 7. Proof parameter soundness

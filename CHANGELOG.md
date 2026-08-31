@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-31
+
+### Changed
+
+- **The hash permutation is now canonical Rescue-Prime (Rescue-XLIX), not a variant.** The backward
+  half-round previously applied the MDS *before* the inverse S-box (`MDS -> S-box⁻¹ -> +c`), which
+  made the two MDS layers within a round adjacent — the effective linear layer was `MDS²` and the
+  construction was non-standard, so published Rescue-Prime cryptanalysis did not transfer. It now
+  applies `S-box⁻¹ -> MDS -> +c`, the same layer order as the forward half-round, matching textbook
+  Rescue-Prime with these parameters (Goldilocks, width 12, 7 rounds, α=7). This removes the single
+  largest unquantified soundness assumption in the system.
+
+  The change touched the native permutation (`rescue.rs`) and both in-circuit AIR encodings (the
+  per-event `compliance.rs` and the batch `merkle.rs` helper, rewritten to the degree-7 form
+  `pow7(MDS_inv·(next − c)) = curr`). The trace builders drive off the native permutation, so they
+  needed no change. Constraint counts and degrees are unchanged (157/76, degree 7). Round constants
+  and the MDS matrix are unchanged, so `rescue_constants.json` and its pinned digest are unchanged.
+  KAT vectors were regenerated from an independent Python computation and cross-checked by the
+  from-spec reference in `rescue_kat_test.rs`; the full prove/verify suite (per-event + all batch
+  roundtrips) confirms native and in-circuit agree.
+
+  BREAKING: every proof and witness commitment changes; proofs from ≤0.6.0 no longer verify, and
+  amount witness commitments (Rescue outputs) differ. Downstream must re-prove.
+
 ## [0.6.0] - 2026-08-31
 
 ### Fixed
