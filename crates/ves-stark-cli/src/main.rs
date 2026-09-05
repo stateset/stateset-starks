@@ -125,7 +125,7 @@ impl PolicyType {
     }
 }
 
-/// VES STARK - Zero-Knowledge Compliance Proofs
+/// VES STARK - Computational Integrity Proofs
 #[derive(Parser)]
 #[command(name = "ves-stark")]
 #[command(author = "StateSet Engineering")]
@@ -138,6 +138,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Prove and verify context-bound commerce caps
+    Commerce {
+        #[command(subcommand)]
+        command: commands::commerce::CommerceCommand,
+    },
     /// Generate a compliance proof
     Prove {
         /// The amount to prove (must satisfy policy constraint)
@@ -361,6 +366,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Commerce { command } => command.run(),
         Commands::Prove {
             amount,
             limit,
@@ -642,6 +648,7 @@ fn ensure_authorization_receipt_match(
 mod commands {
     use super::*;
     pub(crate) mod batch;
+    pub(crate) mod commerce;
     pub(crate) mod inspect;
     pub(crate) mod prove;
     pub(crate) mod sequencer;

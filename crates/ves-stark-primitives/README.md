@@ -1,5 +1,7 @@
 # ves-stark-primitives
 
+> **Integrity only:** proof bytes can disclose witness amounts. This documentation describes the 0.8.0 checkout, not a guarantee of registry availability. See [the security advisory](../../docs/SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md).
+
 [![crates.io](https://img.shields.io/crates/v/ves-stark-primitives.svg)](https://crates.io/crates/ves-stark-primitives)
 [![license](https://img.shields.io/crates/l/ves-stark-primitives.svg)](../LICENSE)
 
@@ -17,7 +19,7 @@ Foundation crate providing the core field arithmetic, hash functions, and data t
 
 ```toml
 [dependencies]
-ves-stark-primitives = "0.3"
+ves-stark-primitives = "0.7"
 ```
 
 ## Modules

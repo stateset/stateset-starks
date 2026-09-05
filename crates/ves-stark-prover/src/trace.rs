@@ -119,7 +119,7 @@ impl TraceBuilder {
             .map_err(|e| ProverError::policy_validation_failed(format!("{e}")))?;
 
         // Compute bit decomposition for amount limbs 0-1 only
-        // Limbs 2-7 are boundary-asserted to zero, no decomposition needed
+        // Limbs 2-5 carry salt and 6-7 are reserved; neither is part of the amount comparison.
         let limb0_bits = decompose_to_bits(amount_limbs[0]);
         let limb1_bits = decompose_to_bits(amount_limbs[1]);
 
@@ -209,7 +209,7 @@ impl TraceBuilder {
                 trace[cols::AMOUNT_BITS_LIMB1_START + i][row] = row_limb1_bits[i];
             }
 
-            // Note: Limbs 2-7 are boundary-asserted to zero, no bit decomposition needed
+            // Salt/reserved limbs do not participate in the amount bit decomposition.
 
             // Set subtraction witness columns (row 0 = real, other rows = junk)
             let row_diff = if use_real_witness { diff } else { junk_limbs };

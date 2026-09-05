@@ -62,6 +62,7 @@ fn parse_witness_commitment(witness_commitment: Vec<String>) -> Result<[u64; 4]>
 
 fn verifier_error_to_napi(err: VerifierError) -> Error {
     let status = match err {
+        VerifierError::ConfidentialityUnavailable(_) => Status::InvalidArg,
         VerifierError::PublicInputMismatch(_)
         | VerifierError::InvalidHexFormat { .. }
         | VerifierError::DeserializationError(_)

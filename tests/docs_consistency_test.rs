@@ -23,6 +23,40 @@ fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
+#[test]
+fn documentation_states_actual_privacy_capability_and_profile_parameters() {
+    let readme = read_doc("README.md");
+    assert!(readme.contains("Confidentiality is unavailable"));
+    assert!(readme.contains("--allow-amount-disclosure"));
+    let soundness = read_doc("docs/SOUNDNESS.md");
+    for (name, options) in [
+        ("default", ProofOptions::default()),
+        ("fast", ProofOptions::fast()),
+        ("secure", ProofOptions::secure()),
+    ] {
+        let section = soundness
+            .split(&format!("- `{name}`:"))
+            .nth(1)
+            .unwrap()
+            .split("\n- ")
+            .next()
+            .unwrap();
+        for parameter in [
+            format!("num_queries={}", options.num_queries),
+            format!("blowup_factor={}", options.blowup_factor),
+            format!("grinding_factor={}", options.grinding_factor),
+            format!("field_extension={:?}", options.field_extension),
+            format!("fri_folding_factor={}", options.fri_folding_factor),
+        ] {
+            assert!(section.contains(&parameter), "{name} missing {parameter}");
+        }
+    }
+    assert!(soundness.contains(&format!(
+        "minimum {} rows",
+        ves_stark_air::trace::MIN_TRACE_LENGTH
+    )));
+}
+
 fn read_doc(rel: &str) -> String {
     fs::read_to_string(repo_root().join(rel)).unwrap_or_else(|e| panic!("{rel} must exist: {e}"))
 }

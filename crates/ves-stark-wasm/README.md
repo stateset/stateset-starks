@@ -1,9 +1,11 @@
 # ves-stark-wasm
 
+> **Integrity only:** proof bytes can disclose witness amounts. This documentation describes the 0.8.0 checkout, not a guarantee of registry availability. See [the security advisory](../../docs/SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md).
+
 [![crates.io](https://img.shields.io/crates/v/ves-stark-wasm.svg)](https://crates.io/crates/ves-stark-wasm)
 [![license](https://img.shields.io/crates/l/ves-stark-wasm.svg)](../LICENSE)
 
-WebAssembly bindings for the VES STARK proof system. Generate and verify zero-knowledge compliance proofs directly in the browser.
+WebAssembly bindings for the VES STARK proof system. Generate and verify integrity-only compliance proofs directly in the browser.
 
 ## Build
 

@@ -1,9 +1,9 @@
 //! # VES Compliance AIR (Algebraic Intermediate Representation)
 //!
 //! This module defines the constraint system for proving policy compliance
-//! in zero-knowledge. The AIR encodes the statement "amount < threshold"
+//! for computational integrity. The AIR encodes the statement "amount < threshold"
 //! (or "amount <= cap") as algebraic constraints that can be verified
-//! without revealing the actual amount.
+//! with a transcript that can disclose the amount.
 //!
 //! ## Soundness Argument
 //!

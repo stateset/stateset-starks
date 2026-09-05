@@ -1,22 +1,20 @@
 //! Budget witness construction for the `agent.budget.v1` policy.
 //!
-//! The budget policy proves that an agent's cumulative spending does not exceed
-//! a budget limit, without revealing the running total or individual amounts.
+//! The budget policy proves a caller-supplied total is within a limit. It does
+//! not prove spending history, addition, or continuity between commitments.
+//! Proof transcripts can disclose the total; this is not a confidential API.
 //!
 //! # How It Works
 //!
 //! The caller computes `new_total = prev_running_total + this_amount` and passes
 //! it as the witness amount. The AIR proves `new_total <= budget_limit` using
 //! the standard LTE comparison gadget. The witness commitment binds `new_total`
-//! via a Rescue hash, creating a verifiable chain of accumulator commitments.
+//! via a Rescue hash. Addition is performed here in Rust, outside the AIR.
 //!
 //! # Sequencer Chaining
 //!
-//! The sequencer tracks the chain of witness commitments:
-//! - Proof N commits `total_N` via `witness_commitment_N`
-//! - Proof N+1's public inputs reference `witness_commitment_N` as the
-//!   previous accumulator
-//! - The sequencer verifies the chain is consistent
+//! A surrounding ledger must authenticate previous totals and atomically
+//! consume approvals. This helper does not establish that chain.
 
 use crate::witness::ComplianceWitness;
 use crate::Policy;
@@ -72,7 +70,11 @@ pub fn build_budget_witness(
     let policy = Policy::agent_budget(budget_limit);
 
     // The witness amount is the new cumulative total — the AIR proves new_total <= budget_limit
-    let witness = ComplianceWitness::new(new_total, public_inputs);
+    let witness = ComplianceWitness::try_new(new_total, public_inputs)
+        .map_err(|e| BudgetWitnessError::InvalidInputs(e.to_string()))?;
+    witness
+        .validate(&policy)
+        .map_err(|e| BudgetWitnessError::InvalidInputs(e.to_string()))?;
 
     Ok((witness, policy))
 }
@@ -92,6 +94,9 @@ pub fn budget_policy_params(
 /// Errors from budget witness construction.
 #[derive(Debug, thiserror::Error)]
 pub enum BudgetWitnessError {
+    /// Malformed inputs or a policy that does not match the requested budget.
+    #[error("invalid budget public inputs: {0}")]
+    InvalidInputs(String),
     /// Cumulative total would overflow u64
     #[error("cumulative total overflows u64: prev_running_total + this_amount > u64::MAX")]
     Overflow,
@@ -171,6 +176,21 @@ mod tests {
         let inputs = sample_budget_inputs(u64::MAX);
         let result = build_budget_witness(1, u64::MAX, u64::MAX, inputs);
         assert!(matches!(result, Err(BudgetWitnessError::Overflow)));
+    }
+
+    #[test]
+    fn test_budget_witness_rejects_wrong_policy_and_malformed_bindings_without_panicking() {
+        let inputs = sample_budget_inputs(50_000);
+        assert!(matches!(
+            build_budget_witness(1, 1, 40_000, inputs),
+            Err(BudgetWitnessError::InvalidInputs(_))
+        ));
+        let mut inputs = sample_budget_inputs(50_000);
+        inputs.witness_commitment = Some("0".repeat(64));
+        assert!(matches!(
+            build_budget_witness(1, 1, 50_000, inputs),
+            Err(BudgetWitnessError::InvalidInputs(_))
+        ));
     }
 
     #[test]

@@ -28,6 +28,10 @@ pub type VectorCommit = MerkleTree<Hasher>;
 /// Result of batch proof verification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchVerificationResult {
+    /// True only when independent V2 event proofs and the reconstructed state
+    /// root were checked. Aggregate-only verification always reports false.
+    #[serde(default)]
+    pub payload_binding_verified: bool,
     /// Whether the proof is valid
     pub valid: bool,
 
@@ -139,6 +143,7 @@ fn verify_batch_proof_with_options(
 
     match result {
         Ok(_) => Ok(BatchVerificationResult {
+            payload_binding_verified: false,
             valid: true,
             verification_time_ms: verification_time.as_millis() as u64,
             error: None,
@@ -148,6 +153,7 @@ fn verify_batch_proof_with_options(
             all_compliant: public_inputs.is_all_compliant(),
         }),
         Err(e) => Ok(BatchVerificationResult {
+            payload_binding_verified: false,
             valid: false,
             verification_time_ms: verification_time.as_millis() as u64,
             error: Some(format!("{e}")),
@@ -461,6 +467,7 @@ mod tests {
     #[test]
     fn test_verification_result_conversion() {
         let result = BatchVerificationResult {
+            payload_binding_verified: false,
             valid: true,
             verification_time_ms: 100,
             error: None,

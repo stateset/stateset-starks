@@ -55,6 +55,7 @@ enum Binding<'a> {
 /// Builder for a single compliance-proof verification. See the module docs.
 #[must_use = "a verification that is never run checks nothing"]
 pub struct ComplianceVerification<'a> {
+    privacy: ves_stark_primitives::privacy::ProofPrivacy,
     proof_bytes: &'a [u8],
     public_inputs: &'a CompliancePublicInputs,
     policy: Option<&'a Policy>,
@@ -69,12 +70,20 @@ impl<'a> ComplianceVerification<'a> {
     /// [`policy`](Self::policy) is given.
     pub fn new(proof_bytes: &'a [u8], public_inputs: &'a CompliancePublicInputs) -> Self {
         Self {
+            privacy: ves_stark_primitives::privacy::ProofPrivacy::AllowDisclosure,
             proof_bytes,
             public_inputs,
             policy: None,
             binding: None,
             strict: false,
         }
+    }
+
+    /// Enforce an explicit privacy requirement. Confidentiality is unsupported
+    /// and fails before proof parsing. Legacy builder calls verify integrity only.
+    pub fn privacy(mut self, privacy: ves_stark_primitives::privacy::ProofPrivacy) -> Self {
+        self.privacy = privacy;
+        self
     }
 
     /// Verify against this policy instead of the one named in the public
@@ -124,6 +133,7 @@ impl<'a> ComplianceVerification<'a> {
     /// made — the builder refuses to pick the weaker statement on your behalf.
     /// Otherwise, whatever the underlying verifier returns.
     pub fn run(self) -> Result<VerificationResult, VerifierError> {
+        self.privacy.enforce()?;
         let binding = self.binding.ok_or_else(|| {
             VerifierError::PayloadAmountBindingRequired(
                 "choose .amount_binding(&b) for payload-complete verification, or \

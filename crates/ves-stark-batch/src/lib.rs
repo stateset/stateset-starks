@@ -1,5 +1,9 @@
 //! VES STARK Batch Proofs
 //!
+//! **No confidentiality guarantee:** proof transcripts can disclose witness amounts.
+//! Use only for disclosed computational integrity; zero-knowledge requirements fail closed
+//! through the privacy-aware APIs. Legacy low-level APIs remain integrity-only.
+//!
 //! This crate provides batch state transition proofs for VES compliance.
 //! It enables proving that N compliance events were all verified correctly
 //! with a single STARK proof, along with state transition integrity.
@@ -85,7 +89,9 @@ pub use prover::{
 };
 
 // Verifier types
-pub use verifier::{verify_batch_proof, BatchVerificationResult, BatchVerifier};
+pub use verifier::{
+    verify_batch_proof, verify_batch_with_event_proofs, BatchVerificationResult, BatchVerifier,
+};
 
 // Serialization
 pub use serialization::{SerializableBatchProof, SerializableBatchPublicInputs};

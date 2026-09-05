@@ -1,8 +1,10 @@
 # ves-stark
 
+> **Integrity only:** proof bytes can disclose witness amounts. This documentation describes the 0.8.0 checkout, not a guarantee of registry availability. See [the security advisory](../../docs/SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md).
+
 [![crates.io](https://img.shields.io/crates/v/ves-stark-python.svg)](https://crates.io/crates/ves-stark-python)
 
-Python bindings for the VES STARK proof system. Generate and verify zero-knowledge compliance proofs for VES events.
+Python bindings for the VES STARK proof system. Generate and verify integrity-only compliance proofs for VES events.
 
 ## Installation
 

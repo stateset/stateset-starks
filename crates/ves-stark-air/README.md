@@ -1,5 +1,7 @@
 # ves-stark-air
 
+> **Integrity only:** proof bytes can disclose witness amounts. This documentation describes the 0.8.0 checkout, not a guarantee of registry availability. See [the security advisory](../../docs/SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md).
+
 [![crates.io](https://img.shields.io/crates/v/ves-stark-air.svg)](https://crates.io/crates/ves-stark-air)
 [![license](https://img.shields.io/crates/l/ves-stark-air.svg)](../LICENSE)
 
@@ -18,7 +20,7 @@ Defines the constraint system that enforces compliance rules inside STARK proofs
 
 ```toml
 [dependencies]
-ves-stark-air = "0.3"
+ves-stark-air = "0.7"
 ```
 
 ## Proof Options

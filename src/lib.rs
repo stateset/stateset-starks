@@ -1,12 +1,12 @@
-//! VES STARK - Zero-Knowledge Compliance Proofs for StateSet
+//! VES STARK - Computational Integrity Proofs for StateSet
 //!
-//! This crate provides STARK-based zero-knowledge proofs for verifiable
+//! This crate provides STARK-based integrity proofs for verifiable
 //! compliance in the StateSet ecosystem.
 //!
 //! # Overview
 //!
 //! The VES STARK system allows proving witness-level compliance with policies
-//! (e.g., AML thresholds) without revealing sensitive data. It uses the
+//! (e.g., AML thresholds). Proof transcripts can disclose witness amounts. It uses the
 //! Winterfell STARK library for proof generation and verification.
 //!
 //! # Crates
@@ -41,6 +41,7 @@
 // Re-export sub-crates
 pub use ves_stark_air as air;
 pub use ves_stark_client as client;
+pub use ves_stark_commerce as commerce;
 pub use ves_stark_primitives as primitives;
 pub use ves_stark_prover as prover;
 pub use ves_stark_verifier as verifier;

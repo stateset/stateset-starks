@@ -1,0 +1,83 @@
+{
+  "build": "optimized",
+  "finalRefunded": 5000,
+  "pendingExecutions": 0,
+  "proveP95Us": 51426,
+  "sampleCount": 10,
+  "samples": [
+    {
+      "proofBytes": 59206,
+      "proveUs": 51426,
+      "reserveUs": 3709923,
+      "signedBaselineVerifyUs": 122,
+      "verifyUs": 1214
+    },
+    {
+      "proofBytes": 62790,
+      "proveUs": 33971,
+      "reserveUs": 88862,
+      "signedBaselineVerifyUs": 371,
+      "verifyUs": 1243
+    },
+    {
+      "proofBytes": 63370,
+      "proveUs": 12018,
+      "reserveUs": 2245987,
+      "signedBaselineVerifyUs": 171,
+      "verifyUs": 7409
+    },
+    {
+      "proofBytes": 63500,
+      "proveUs": 35391,
+      "reserveUs": 107891,
+      "signedBaselineVerifyUs": 171,
+      "verifyUs": 1219
+    },
+    {
+      "proofBytes": 61064,
+      "proveUs": 33780,
+      "reserveUs": 4227885,
+      "signedBaselineVerifyUs": 228,
+      "verifyUs": 1385
+    },
+    {
+      "proofBytes": 60998,
+      "proveUs": 11019,
+      "reserveUs": 56502,
+      "signedBaselineVerifyUs": 411,
+      "verifyUs": 3117
+    },
+    {
+      "proofBytes": 63436,
+      "proveUs": 10602,
+      "reserveUs": 17008,
+      "signedBaselineVerifyUs": 169,
+      "verifyUs": 1209
+    },
+    {
+      "proofBytes": 63176,
+      "proveUs": 11011,
+      "reserveUs": 25572,
+      "signedBaselineVerifyUs": 187,
+      "verifyUs": 4083
+    },
+    {
+      "proofBytes": 63434,
+      "proveUs": 24702,
+      "reserveUs": 39655,
+      "signedBaselineVerifyUs": 195,
+      "verifyUs": 3447
+    },
+    {
+      "proofBytes": 58688,
+      "proveUs": 18146,
+      "reserveUs": 37715,
+      "signedBaselineVerifyUs": 165,
+      "verifyUs": 1100
+    }
+  ],
+  "signedBaselineVerifyP95Us": 411,
+  "synthetic": true,
+  "verifyP95Us": 7409,
+  "zeroKnowledge": false
+}

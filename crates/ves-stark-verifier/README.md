@@ -1,5 +1,7 @@
 # ves-stark-verifier
 
+> **Integrity only:** proof bytes can disclose witness amounts. This documentation describes the 0.8.0 checkout, not a guarantee of registry availability. See [the security advisory](../../docs/SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md).
+
 [![crates.io](https://img.shields.io/crates/v/ves-stark-verifier.svg)](https://crates.io/crates/ves-stark-verifier)
 [![license](https://img.shields.io/crates/l/ves-stark-verifier.svg)](../LICENSE)
 
@@ -13,7 +15,7 @@ Stateless verifier for VES STARK proofs. Supports multiple verification modes in
 
 ```toml
 [dependencies]
-ves-stark-verifier = "0.3"
+ves-stark-verifier = "0.7"
 ```
 
 ## Usage

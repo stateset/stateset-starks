@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/ves-stark-commerce",
     "crates/ves-stark-primitives",
     "crates/ves-stark-air",
     "crates/ves-stark-prover",
@@ -16,18 +17,19 @@ members = [
 
 [package]
 name = "ves-stark"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 rust-version = "1.90"
 license = "MIT"
 publish = false
 
 [dependencies]
-ves-stark-primitives = { version = "0.7.0", path = "crates/ves-stark-primitives" }
-ves-stark-air = { version = "0.7.0", path = "crates/ves-stark-air" }
-ves-stark-prover = { version = "0.7.0", path = "crates/ves-stark-prover" }
-ves-stark-verifier = { version = "0.7.0", path = "crates/ves-stark-verifier" }
-ves-stark-client = { version = "0.7.0", path = "crates/ves-stark-client" }
+ves-stark-commerce = { version = "0.8.0", path = "crates/ves-stark-commerce" }
+ves-stark-primitives = { version = "0.8.0", path = "crates/ves-stark-primitives" }
+ves-stark-air = { version = "0.8.0", path = "crates/ves-stark-air" }
+ves-stark-prover = { version = "0.8.0", path = "crates/ves-stark-prover" }
+ves-stark-verifier = { version = "0.8.0", path = "crates/ves-stark-verifier" }
+ves-stark-client = { version = "0.8.0", path = "crates/ves-stark-client" }
 
 [dev-dependencies]
 uuid = { workspace = true }
@@ -37,14 +39,14 @@ proptest = { workspace = true }
 winter-utils = { workspace = true }
 winter-crypto = { workspace = true }
 winter-math = { workspace = true }
-ves-stark-batch = { version = "0.7.0", path = "crates/ves-stark-batch" }
+ves-stark-batch = { version = "0.8.0", path = "crates/ves-stark-batch" }
 
 [[bench]]
 name = "stark_bench"
 harness = false
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 rust-version = "1.90"
 license = "MIT"

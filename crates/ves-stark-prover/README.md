@@ -1,18 +1,20 @@
 # ves-stark-prover
 
+> **Integrity only:** proof bytes can disclose witness amounts. This documentation describes the 0.8.0 checkout, not a guarantee of registry availability. See [the security advisory](../../docs/SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md).
+
 [![crates.io](https://img.shields.io/crates/v/ves-stark-prover.svg)](https://crates.io/crates/ves-stark-prover)
 
 STARK proof generation for VES compliance proofs.
 
 ## Overview
 
-Generates zero-knowledge STARK proofs that attest to commerce event compliance without revealing sensitive transaction data. Produces ~42 KB proofs in ~17ms.
+Generates STARK proofs of computational integrity. The proof transcript can disclose transaction amounts; proof sizes and times depend on the profile and hardware.
 
 ## Installation
 
 ```toml
 [dependencies]
-ves-stark-prover = "0.3"
+ves-stark-prover = "0.7"
 ```
 
 ## Usage

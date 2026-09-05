@@ -1,5 +1,7 @@
 # ves-stark-client
 
+> **Integrity only:** proof bytes can disclose witness amounts. This documentation describes the 0.8.0 checkout, not a guarantee of registry availability. See [the security advisory](../../docs/SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md).
+
 [![crates.io](https://img.shields.io/crates/v/ves-stark-client.svg)](https://crates.io/crates/ves-stark-client)
 [![license](https://img.shields.io/crates/l/ves-stark-client.svg)](../LICENSE)
 
@@ -9,7 +11,7 @@ HTTP client for submitting VES STARK proofs to the StateSet sequencer and anchor
 
 ```toml
 [dependencies]
-ves-stark-client = "0.3"
+ves-stark-client = "0.7"
 ```
 
 ## Overview

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-05
+
+### Commerce integrity hardening
+
+- Confirmed amount/salt disclosure in proof transcripts; confidential commerce APIs
+  now fail closed. Explicit `_disclosed` APIs and CLI disclosure acknowledgment are
+  required for new integrity-only workflows. Legacy low-level APIs remain disclosing.
+- Added domain-separated, scoped Ed25519 approvals with policy revision, nonce,
+  expiration, key validity, and revocation checks. These signatures are not post-quantum.
+- Added public refund transitions, exact amount-to-proof checks, and an optional
+  SQLite ledger with atomic reservations, event/nonce consumption, and durable
+  idempotent execution requests. Arithmetic is verified natively, not privately in AIR.
+- Added batch composition verification with independent V2 event proofs and full
+  Merkle/state-root reconstruction. Aggregate-only verification explicitly reports
+  that payload binding was not checked; aggregate AIR/compression is unchanged.
+- Added the signed-refund CLI lifecycle, crash/concurrency/tamper tests, and a
+  synthetic optimized pilot with a signed-record verification baseline.
+- Corrected stale security parameter documentation and withdrew confidentiality
+  claims from historical whitepapers. A reviewed zero-knowledge backend, independent
+  audit, real provider integration, and customer validation remain release gates.
+
 ## [0.7.0] - 2026-08-31
 
 ### Changed

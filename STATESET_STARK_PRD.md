@@ -1,5 +1,7 @@
 # StateSet STARK: Product Requirements Document (Aligned PRD v1.1)
 
+> **Historical design document — confidentiality claims withdrawn (2026-09-05).** The current proof transcript can disclose amounts. Statements below about zero knowledge, private computation, or production readiness are not supported guarantees. Current implementation status is in [the security advisory](docs/SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md) and [refund pilot contract](docs/REFUND_PILOT.md).
+
 **Document Version:** 1.1  
 **Status:** Draft (rewrite overlay; legacy preserved below)  
 **Last Updated:** December 2025  

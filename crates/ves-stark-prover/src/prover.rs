@@ -159,7 +159,18 @@ impl ComplianceProver {
         &self.policy
     }
 
-    /// Generate a proof for the given witness
+    /// Generate a proof only if the backend meets the requested privacy requirement.
+    pub fn prove_with_privacy(
+        &self,
+        witness: &ComplianceWitness,
+        privacy: ves_stark_primitives::privacy::ProofPrivacy,
+    ) -> Result<ComplianceProof, ProverError> {
+        privacy.enforce()?;
+        self.prove(witness)
+    }
+
+    /// Generate an integrity-only proof. The proof transcript can reveal the witness.
+    /// Use `prove_with_privacy` when the caller has a confidentiality requirement.
     pub fn prove(&self, witness: &ComplianceWitness) -> Result<ComplianceProof, ProverError> {
         let start = start_timer();
 

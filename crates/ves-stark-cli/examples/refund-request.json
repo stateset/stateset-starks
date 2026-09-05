@@ -1,0 +1,11 @@
+{
+  "eventId": "00000000-0000-0000-0000-000000000001",
+  "tenantId": "00000000-0000-0000-0000-000000000002",
+  "storeId": "00000000-0000-0000-0000-000000000003",
+  "sequenceNumber": 42,
+  "operation": "refund",
+  "reference": "capture-123/refund-1",
+  "currency": "USD",
+  "decimalPlaces": 2,
+  "cap": 5000
+}

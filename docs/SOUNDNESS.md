@@ -1,5 +1,7 @@
 # VES-STARK Soundness Notes
 
+**Integrity only: the proof transcript can disclose witness amounts. No zero-knowledge guarantee is provided.** See [the disclosure advisory](SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md).
+
 This document summarizes what the current per-event compliance proof proves, and the key algebraic
 checks that make the statement sound.
 
@@ -10,8 +12,8 @@ Given:
 - A public effective policy limit `L`
 - A public witness commitment `C` (4 field elements)
 
-A valid proof attests that there exists a private witness `(amount, salt)` (a u64 amount and a
-128-bit blinding salt as four u32 limbs) such that:
+A valid proof attests that there exists a private witness `(amount, salt)` (a u64 amount and four salt field elements; the honest prover samples a
+128-bit salt as four u32 limbs, but the AIR does not range-check those salt limbs) such that:
 - `amount <= L`
 - `C == Rescue([amount_lo, amount_hi, salt0..salt3, 0, 0])` (a Rescue commitment to the salted
   witness block, constrained in-AIR; a zero salt reproduces the legacy unsalted commitment
@@ -40,7 +42,7 @@ For `aml.threshold`, the verifier uses `L = threshold - 1` (and requires `thresh
 the `C` the proof was verified against (`ves_stark_primitives::payload_v2`). Since the AIR proves
 `C = Rescue(amount ‖ salt)`, the statement for a V2 event is that **the proved amount is the
 amount on the event**, up to Rescue collision resistance — with no circuit change. This closes
-the non-statement below for V2 **per-event** proofs; see `docs/AMOUNT_BINDING_DESIGN.md`.
+the non-statement below for V2 **per-event** proofs, provided the expected payload hash is independently authenticated; see `docs/AMOUNT_BINDING_DESIGN.md`.
 
 > **Batch proofs do not yet apply this check.** `BatchVerifier` verifies the aggregate STARK and
 > binds each event's public inputs, but does not recompute `SHA-256(domain ‖ C ‖ restHash)` per
@@ -49,6 +51,11 @@ the non-statement below for V2 **per-event** proofs; see `docs/AMOUNT_BINDING_DE
 > `witnessCommitment` folded into the batch accumulator is never proven equal to the in-circuit
 > compliant-amount commitment, so a verifier-only re-hash would be forgeable.
 > `docs/AMOUNT_BINDING_DESIGN.md` has the analysis and the required change.
+> The new `verify_batch_with_event_proofs` composition path checks every independent V2
+> proof, expected event scope/order, and reconstructed Merkle/state root. This provides
+> the stronger event binding with N event proofs plus the aggregate; it does not change
+> the aggregate AIR or compress those proofs. Aggregate-only results report
+> `payload_binding_verified = false`.
 
 Non-statement (V1 events): the AIR does **not** prove that `amount` is derived from or consistent with the
 payload hashes contained in `P`. This repository now supports a canonical protocol-level binding
@@ -57,7 +64,7 @@ is extended.
 
 ## Constraint System Overview
 
-The per-event AIR (`ComplianceAir`) is built over a power-of-two trace (minimum 128 rows).
+The per-event AIR (`ComplianceAir`) is built over a power-of-two trace (minimum 16 rows).
 
 High-level structure:
 - The comparison/range gadget is enforced only at row 0 via a periodic selector `rescue_init`.
@@ -128,14 +135,14 @@ This requires a minimum LDE blowup factor of 16 for the current AIR profiles in 
 `ves_stark_air::options::ProofOptions`).
 
 Proof security/size/performance are parameterized by `ProofOptions`:
-- `default`: `num_queries=28`, `blowup_factor=16`, `grinding_factor=16`, `field_extension=None`,
-  `fri_folding_factor=8`
-- `fast`: `num_queries=20`, `blowup_factor=16`, `grinding_factor=8`, `field_extension=None`,
+- `default`: `num_queries=24`, `blowup_factor=16`, `grinding_factor=16`, `field_extension=Quadratic`,
+  `fri_folding_factor=16`
+- `fast`: `num_queries=18`, `blowup_factor=16`, `grinding_factor=8`, `field_extension=Quadratic`,
   `fri_folding_factor=8`
 - `secure`: `num_queries=40`, `blowup_factor=16`, `grinding_factor=20`,
-  `field_extension=Quadratic`, `fri_folding_factor=8`
+  `field_extension=Cubic`, `fri_folding_factor=8`
 
-The helper `ProofOptions::try_security_level()` provides an internal rough estimate; it is not a
+The helper `ProofOptions::conjectured_security_level(trace_length)` provides an internal rough estimate; it is not a
 formal security proof.
 
 ## Batch State-Transition Soundness

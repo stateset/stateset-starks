@@ -1,5 +1,9 @@
 //! VES STARK Prover
 //!
+//! **No confidentiality guarantee:** proof transcripts can disclose witness amounts.
+//! Use only for disclosed computational integrity; zero-knowledge requirements fail closed
+//! through the privacy-aware APIs. Legacy low-level APIs remain integrity-only.
+//!
 //! This crate provides STARK proof generation for VES compliance proofs.
 //! It handles:
 //! - Witness generation from VES event data

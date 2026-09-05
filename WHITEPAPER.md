@@ -1,5 +1,7 @@
 # StateSet STARK: Technical Whitepaper
 
+> **Historical design document — confidentiality claims withdrawn (2026-09-05).** The current proof transcript can disclose amounts. Statements below about zero knowledge, private computation, or production readiness are not supported guarantees. Current implementation status is in [the security advisory](docs/SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md) and [refund pilot contract](docs/REFUND_PILOT.md).
+
 **Version 2.2 — March 2026**
 
 ---

@@ -7,7 +7,11 @@ STARK proving system for VES (Verifiable Event Sync) compliance proofs.
 
 ## Overview
 
-`stateset-stark` provides witness-level cryptographic proofs that a private amount satisfies compliance policies without revealing the amount itself. Built on [Winterfell](https://github.com/facebook/winterfell), it uses STARKs (Scalable Transparent ARguments of Knowledge) for transparent, post-quantum secure proofs.
+`stateset-stark` provides STARK proofs of computational integrity for amount policies and event state transitions, using [Winterfell](https://github.com/facebook/winterfell).
+
+**Confidentiality is unavailable. Public proof bytes can reveal the amount and witness salt.** Salted commitments do not make the proof transcript zero knowledge. The commerce API rejects confidential operations by default; integrity-only operations require explicitly named `_disclosed` APIs or `--allow-amount-disclosure` in the CLI. Legacy low-level APIs remain integrity-only. See the [security advisory](docs/SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md).
+
+The disclosed [refund pilot](docs/REFUND_PILOT.md) provides signed approvals, checked state transitions, atomic balance reservations, replay protection, and a durable execution queue. Its balances and arithmetic are public; it does not implement private state-transition constraints.
 
 ### Performance
 
@@ -31,16 +35,30 @@ order-of-magnitude guidance, not a benchmarked guarantee — reproduce with
 | `aml.threshold` | Proves amount < threshold (strict) |
 | `order_total.cap` | Proves amount <= cap (non-strict) |
 | `agent.authorization.v1` | Proves amount <= maxTotal for a delegated commerce intent hash |
+| `agent.budget.v1` | Proves a supplied total <= budgetLimit; history and addition are not proven |
 
 ## Quick Start
+
+For context-bound order, payment, refund, and payout limits, use the new
+[`ves-stark-commerce` API](crates/ves-stark-commerce/README.md). It provides salted
+V2 commitments, explicit currency units, and verification against the expected
+business request and a trusted payload hash. Try the end-to-end refund flow:
+
+```bash
+cargo run -p ves-stark-commerce --example refund_cap
+```
+
+For JSON-based integrations, the [commerce CLI](crates/ves-stark-cli/README.md)
+provides `commerce prove` and `commerce verify`, with private amount input and
+separate approval records.
 
 Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ves-stark-prover = "0.3"
-ves-stark-verifier = "0.3"
-ves-stark-primitives = "0.3"
+ves-stark-prover = "0.7"
+ves-stark-verifier = "0.7"
+ves-stark-primitives = "0.7"
 ```
 
 ### Generate a Proof
@@ -55,17 +73,17 @@ let witness = ComplianceWitness::new(amount, public_inputs);
 let policy = Policy::aml_threshold(10000);
 let prover = ComplianceProver::with_policy(policy);
 
-// Generate proof (~17ms)
+// Generate an integrity-only proof (the transcript can disclose the amount)
 let proof = prover.prove(&witness)?;
-println!("Proof size: {} bytes", proof.proof_bytes.len()); // ~42 KB
+println!("Proof size: {} bytes", proof.proof_bytes.len()); // Size depends on the profile and inputs
 ```
 
 ### Verify a Proof
 
 ```rust
-use ves_stark_verifier::verify_compliance_proof_auto_bound_strict;
+use ves_stark_verifier::verify_compliance_proof_auto_bound_witness_strict;
 
-let result = verify_compliance_proof_auto_bound_strict(&proof.proof_bytes, &public_inputs)?;
+let result = verify_compliance_proof_auto_bound_witness_strict(&proof.proof_bytes, &public_inputs)?;
 assert!(result.valid);
 ```
 
@@ -101,6 +119,7 @@ stateset-stark/
 │   ├── ves-stark-verifier/     # Proof verification
 │   ├── ves-stark-batch/        # Batch proofs for aggregate state transitions
 │   ├── ves-stark-client/       # Sequencer/Set Chain HTTP client
+│   ├── ves-stark-commerce/     # Context-bound order/payment/refund/payout caps
 │   ├── ves-stark-cli/          # CLI tool (binary: ves-stark)
 │   ├── ves-stark-wasm/         # WebAssembly bindings
 │   ├── ves-stark-nodejs/       # Node.js bindings (@stateset/ves-stark)
@@ -109,7 +128,7 @@ stateset-stark/
 └── tests/                       # Integration tests
 ```
 
-All crates are published on [crates.io](https://crates.io/search?q=ves-stark) at version 0.3.3.
+This checkout uses workspace version 0.8.0. New commerce APIs described here require this checkout; publication to a package registry is a separate release step.
 
 ## Public Inputs Format
 

@@ -1,5 +1,7 @@
 # ves-stark-batch
 
+> **Integrity only:** proof bytes can disclose witness amounts. This documentation describes the 0.8.0 checkout, not a guarantee of registry availability. See [the security advisory](../../docs/SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md).
+
 [![crates.io](https://img.shields.io/crates/v/ves-stark-batch.svg)](https://crates.io/crates/ves-stark-batch)
 [![license](https://img.shields.io/crates/l/ves-stark-batch.svg)](../LICENSE)
 
@@ -9,7 +11,7 @@ Batch state transition proofs for VES compliance.
 
 ```toml
 [dependencies]
-ves-stark-batch = "0.3"
+ves-stark-batch = "0.7"
 ```
 
 ## Overview
@@ -29,6 +31,23 @@ Proves compliance for multiple commerce events in a single STARK proof with Merk
 - **145 boundary assertions**
 - `ROWS_PER_MERKLE_NODE` = 15 (14 half-rounds + 1 output)
 - `FINALIZE_ROWS` = 15
+
+## Payload-bound verification
+
+`verify_batch_proof` checks aggregate integrity and reports
+`payload_binding_verified: false`. It does not establish V2 amount-to-payload
+binding for every event.
+
+Use `verify_batch_with_event_proofs(batch_bytes, batch_inputs, expected_events,
+event_proofs, ProofPrivacy::AllowDisclosure)` when that binding is required.
+It verifies every independent V2 proof, exact event scope/order/policy, ordered
+accumulator, and the reconstructed Merkle/final state root. Supply authenticated
+expected events and batch inputs independently of the prover. Missing, reordered,
+substituted, or V1 event proofs are rejected. Success reports
+`payload_binding_verified: true`. A confidentiality requirement is rejected.
+
+This path retains N event proofs plus the aggregate and their verification cost.
+It is not a compressed replacement for the missing aggregate AIR binding.
 
 ## Public API
 

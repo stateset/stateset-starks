@@ -4,8 +4,8 @@
 //! 1. Public inputs are bound to the trace via boundary assertions (row 0)
 //! 2. A private `amount` value satisfies the selected policy inequality
 //! 3. The witness amount is bound to the proof via an in-AIR Rescue commitment
-//! 4. Range validity for u32 limbs via bit decomposition (limbs 0-1 only; limbs 2-7 are
-//!    boundary-asserted to 0 to represent a u64)
+//! 4. Range validity for the u64 amount via bit decomposition of limbs 0-1;
+//!    limbs 2-5 carry the salt and reserved limbs 6-7 are zero
 //!
 //! For the `aml.threshold` policy, the AIR enforces `amount < threshold` by proving
 //! `amount <= threshold - 1` (effective limit) via a 2-limb (u64) subtraction gadget.
@@ -32,8 +32,8 @@ use ves_stark_primitives::Felt;
 /// - Columns 121-128: Legacy `is_less[i]` (unused by current AIR)
 /// - Columns 129-136: Legacy `is_equal[i]` (unused by current AIR)
 ///
-/// Note: Limbs 2-7 are boundary-asserted to zero (for u64 amounts), so no binary
-/// decomposition is needed. The value 0 is trivially a valid u32.
+/// Only amount limbs 0-1 are bit-decomposed. Limbs 2-5 carry the salt;
+/// reserved limbs 6-7 are boundary-asserted to zero.
 /// Winterfell has a 255-column limit, so we stay within that bound.
 ///
 /// **25 legacy columns** (COMPARISON 28-35, RESCUE_COMMIT_FLAG 104, IS_LESS 121-128, IS_EQUAL
@@ -49,8 +49,7 @@ pub const TRACE_WIDTH_LEGACY: usize = 40;
 
 /// Number of rows in the trace (power of 2)
 /// Rescue permutation uses 15 rows (14 half-rounds + 1 output).
-/// 64 is the smallest power-of-2 that provides headroom for the
-/// comparison gadget and satisfies Winterfell's FRI requirements.
+/// 16 rows fit the constrained permutation and the row-zero comparison gadget.
 pub const MIN_TRACE_LENGTH: usize = 16;
 
 /// Column indices for the trace

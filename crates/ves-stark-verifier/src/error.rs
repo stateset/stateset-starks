@@ -11,6 +11,9 @@ pub const MAX_PROOF_SIZE: usize = 10 * 1024 * 1024;
 /// Errors that can occur during proof verification
 #[derive(Debug, Error)]
 pub enum VerifierError {
+    /// This backend cannot satisfy a requested confidentiality guarantee.
+    #[error(transparent)]
+    ConfidentialityUnavailable(#[from] ves_stark_primitives::privacy::ConfidentialityUnavailable),
     /// Invalid proof structure
     #[error("Invalid proof structure: {0}")]
     InvalidProofStructure(String),

@@ -1,5 +1,7 @@
 # 90-Day Roadmap: StateSet STARK for Intelligent Commerce
 
+> **Historical design document — confidentiality claims withdrawn (2026-09-05).** The current proof transcript can disclose amounts. Statements below about zero knowledge, private computation, or production readiness are not supported guarantees. Current implementation status is in [the security advisory](docs/SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md) and [refund pilot contract](docs/REFUND_PILOT.md).
+
 ## Objective
 Build an STARK-native commerce platform layer that turns event-level policy checks and batch state transitions into a global, privacy-preserving fraud/compliance runtime.
 

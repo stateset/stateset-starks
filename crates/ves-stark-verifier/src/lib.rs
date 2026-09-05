@@ -1,5 +1,9 @@
 //! VES STARK Verifier
 //!
+//! **No confidentiality guarantee:** proof transcripts can disclose witness amounts.
+//! Use only for disclosed computational integrity; zero-knowledge requirements fail closed
+//! through the privacy-aware APIs. Legacy low-level APIs remain integrity-only.
+//!
 //! This crate provides STARK proof verification for VES compliance proofs.
 //! The verifier is stateless and can verify proofs using only the proof
 //! bytes and public inputs.

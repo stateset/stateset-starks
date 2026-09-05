@@ -1,5 +1,7 @@
 # ves-stark-zig
 
+> **Integrity only:** proof bytes can disclose witness amounts. This documentation describes the 0.8.0 checkout, not a guarantee of registry availability. See [the security advisory](../../docs/SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md).
+
 [![crates.io](https://img.shields.io/crates/v/ves-stark-zig.svg)](https://crates.io/crates/ves-stark-zig)
 [![license](https://img.shields.io/crates/l/ves-stark-zig.svg)](../LICENSE)
 

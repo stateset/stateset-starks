@@ -60,6 +60,27 @@ fn prove(inputs: &CompliancePublicInputs) -> (Vec<u8>, [u64; 4]) {
     (proof.proof_bytes, proof.witness_commitment)
 }
 
+/// V2 already binds the salted amount, so do not publish a guessable amount hash.
+#[test]
+fn test_v2_salted_witness_omits_unsalted_amount_binding_hash() {
+    let inputs = v2_inputs(&commitment(AMOUNT, &SALT), &[0x11; 32]);
+    let witness = ComplianceWitness::try_new_with_salt(AMOUNT, SALT, inputs.clone()).unwrap();
+    assert!(witness.public_inputs.amount_binding_hash.is_none());
+    witness.validate(&Policy::aml_threshold(THRESHOLD)).unwrap();
+
+    // Existing V2 records with an explicit artifact remain supported and checked.
+    let mut legacy = inputs;
+    legacy.amount_binding_hash = Some(legacy.payload_amount_binding(AMOUNT).unwrap().binding_hash);
+    let witness = ComplianceWitness::try_new_with_salt(AMOUNT, SALT, legacy.clone()).unwrap();
+    assert_eq!(
+        witness.public_inputs.amount_binding_hash,
+        legacy.amount_binding_hash
+    );
+    witness.validate(&Policy::aml_threshold(THRESHOLD)).unwrap();
+    legacy.amount_binding_hash = Some("0".repeat(64));
+    assert!(ComplianceWitness::try_new_with_salt(AMOUNT, SALT, legacy).is_err());
+}
+
 /// Honest V2 flow verifies, and the proof's commitment equals the one the
 /// sequencer hashed — the two computations of `C` agree.
 #[test]

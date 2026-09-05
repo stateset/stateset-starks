@@ -1,0 +1,32 @@
+[package]
+name = "ves-stark-commerce"
+description = "Context-bound commerce amount cap proofs for StateSet"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ves-stark-primitives = { version = "0.8.0", path = "../ves-stark-primitives" }
+ves-stark-prover = { version = "0.8.0", path = "../ves-stark-prover" }
+ves-stark-verifier = { version = "0.8.0", path = "../ves-stark-verifier" }
+serde = { workspace = true }
+serde_jcs = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
+serde_json = { workspace = true }
+ed25519-dalek = "2.2"
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+
+[features]
+default = []
+ledger = ["dep:rusqlite"]
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[[example]]
+name = "refund_pilot"
+required-features = ["ledger"]

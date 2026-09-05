@@ -236,6 +236,7 @@ impl CompliancePublicInputs {
 fn verifier_error_to_py(err: VerifierError) -> PyErr {
     let message = format!("Verification error: {}", err);
     match err {
+        VerifierError::ConfidentialityUnavailable(_) => PyValueError::new_err(message),
         VerifierError::PublicInputMismatch(_)
         | VerifierError::InvalidHexFormat { .. }
         | VerifierError::DeserializationError(_)
@@ -659,7 +660,7 @@ pub fn create_payload_amount_binding(
 /// VES STARK Python module
 ///
 /// This module provides Python bindings for the VES STARK proof system,
-/// enabling generation and verification of zero-knowledge compliance proofs.
+/// enabling generation and verification of integrity-only compliance proofs.
 ///
 /// Example:
 ///     >>> import ves_stark

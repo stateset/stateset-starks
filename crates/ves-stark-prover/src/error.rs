@@ -5,6 +5,9 @@ use thiserror::Error;
 /// Errors that can occur during proof generation
 #[derive(Debug, Error)]
 pub enum ProverError {
+    /// The backend cannot meet a requested confidentiality guarantee.
+    #[error(transparent)]
+    ConfidentialityUnavailable(#[from] ves_stark_primitives::privacy::ConfidentialityUnavailable),
     /// Invalid witness data
     #[error("Invalid witness: {0}")]
     InvalidWitness(String),

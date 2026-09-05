@@ -2,6 +2,18 @@
 
 This document defines a concrete threat model for the current VES-STARK proof system.
 
+**Confirmed confidentiality failure:** proof bytes can disclose the witness amount and salt.
+Commitment hiding is not transcript zero knowledge. See [the security advisory](SECURITY_ADVISORY_AMOUNT_DISCLOSURE.md).
+Current commerce defaults reject confidentiality requirements. Explicit disclosed APIs support
+integrity checks; legacy bindings also provide integrity only.
+
+The optional refund ledger verifies Ed25519 approval signatures against independently configured,
+tenant/store-scoped keys, policy revisions, revocation, and validity intervals. A SQLite immediate
+transaction checks the current state commitment, reserves funds, consumes event/nonce, and inserts
+an immutable execution request. Trusted capture ingestion, database integrity, clock correctness,
+key distribution/revocation freshness, and provider idempotency remain integration assumptions.
+Refund arithmetic is disclosed and checked natively, not proved privately in the AIR.
+
 ## Scope
 
 This threat model covers:
@@ -18,8 +30,8 @@ Given:
 - Public inputs (event metadata, payload hashes, policy id/params/hash)
 - A public witness commitment `C`
 
-A valid proof attests that there exists a private witness `(amount, salt)` — a u64 amount and a
-128-bit blinding salt carried as four u32 limbs — such that:
+A valid proof attests that there exists a private witness `(amount, salt)` — a u64 amount and four salt field elements; the honest prover samples
+128 bits as four u32 limbs, but the AIR does not range-check the salt — such that:
 - The policy inequality holds:
   - `aml.threshold`: `amount < threshold` (implemented as `amount <= threshold - 1`)
   - `order_total.cap`: `amount <= cap`
@@ -145,7 +157,7 @@ row to match the public commitment `C`. This binds the witness `amount` (limbs) 
 
 The AIR range-checks the active limbs:
 - Amount limbs 0-1 and diff limbs 0-1 are constrained via 32-bit bit decomposition.
-- Upper limbs 2-7 are boundary-asserted to 0.
+- Amount reserved limbs 6-7 are boundary-asserted to 0; limbs 2-5 carry the salt.
 
 ### Policy Binding
 
